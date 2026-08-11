@@ -1238,15 +1238,17 @@
         }
 
         .account-panel.minimal-mode .account-body {
-            gap: 0;
+            gap: 4px;
             display: flex;
-            align-items: flex-start;
+            flex-direction: column;
+            align-items: stretch;
             min-height: unset;
         }
 
         .account-panel.minimal-mode .account-title-row {
             margin-bottom: 0;
-            flex: 1;
+            flex: 0 0 auto;
+            width: 100%;
             align-items: center;
             justify-content: space-between;
         }
@@ -1263,10 +1265,24 @@
             align-self: center;
         }
 
+        .account-panel.minimal-mode .account-remark {
+            display: inline-block !important;
+            max-width: 100%;
+            margin: 0;
+            font-size: 11px;
+            line-height: 1.3;
+        }
+
+        .account-panel.minimal-mode .account-remark.remark-color-chip {
+            padding: 1px 7px;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            overflow: hidden;
+        }
+
         .account-panel.minimal-mode .account-meta-row,
         .account-panel.minimal-mode .account-group-summary,
         .account-panel.minimal-mode .account-aliases,
-        .account-panel.minimal-mode .account-remark,
         .account-panel.minimal-mode .account-tags,
         .account-panel.minimal-mode .account-refresh-row {
             display: none !important;
