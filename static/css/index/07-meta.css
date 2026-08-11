@@ -52,6 +52,18 @@
             overflow: hidden;
         }
 
+        .mail-folder-tree.is-collapsed {
+            max-height: none;
+        }
+
+        .mail-folder-tree.is-collapsed .mail-folder-tree-toolbar {
+            border-bottom: none;
+        }
+
+        .mail-folder-tree.is-collapsed .mail-folder-tree-list {
+            display: none;
+        }
+
         .mail-folder-tree-toolbar {
             display: flex;
             align-items: center;
@@ -61,6 +73,7 @@
             background: var(--skin-surface-muted, #f8fafc);
         }
 
+        .mail-folder-tree-collapse,
         .mail-folder-tree-all,
         .mail-folder-tree-refresh {
             border: 1px solid var(--skin-border-strong, #d1d5db);
@@ -71,6 +84,11 @@
             padding: 0 10px;
             font-size: 12px;
             cursor: pointer;
+        }
+
+        .mail-folder-tree-collapse {
+            flex: 0 0 auto;
+            font-weight: 600;
         }
 
         .mail-folder-tree-all.active {

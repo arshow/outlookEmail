@@ -783,6 +783,16 @@
             color: #137333;
         }
 
+        .account-status-pill.info {
+            background-color: #e8f1ff;
+            color: #1d4ed8;
+        }
+
+        .account-status-pill.discover {
+            background-color: #ecfdf5;
+            color: #047857;
+        }
+
         .account-status-pill.danger {
             background-color: #fdebec;
             color: #b42318;

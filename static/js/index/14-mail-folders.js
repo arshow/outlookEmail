@@ -6,6 +6,51 @@
         let mailFolderTreeAccount = '';
         // 前端会话内按账号缓存目录树；存在则不再自动请求，仅「刷新文件夹」强制拉取
         const mailFolderTreeCacheByAccount = {};
+        const MAIL_FOLDER_TREE_PANEL_COLLAPSED_KEY = 'outlook_mail_folder_tree_panel_collapsed';
+        let mailFolderTreePanelCollapsed = loadMailFolderTreePanelCollapsed();
+
+        function loadMailFolderTreePanelCollapsed() {
+            try {
+                const saved = localStorage.getItem(MAIL_FOLDER_TREE_PANEL_COLLAPSED_KEY);
+                if (saved === null || saved === undefined || saved === '') {
+                    return true; // 默认收起
+                }
+                return String(saved) !== 'false';
+            } catch (error) {
+                return true;
+            }
+        }
+
+        function saveMailFolderTreePanelCollapsed(collapsed) {
+            try {
+                localStorage.setItem(MAIL_FOLDER_TREE_PANEL_COLLAPSED_KEY, collapsed ? 'true' : 'false');
+            } catch (error) {
+                // ignore storage failures
+            }
+        }
+
+        function syncMailFolderTreePanelCollapsed() {
+            const tree = document.getElementById('mailFolderTree');
+            const btn = document.getElementById('mailFolderTreeCollapseBtn');
+            if (tree) {
+                tree.classList.toggle('is-collapsed', mailFolderTreePanelCollapsed);
+            }
+            if (btn) {
+                btn.setAttribute('aria-expanded', mailFolderTreePanelCollapsed ? 'false' : 'true');
+                btn.title = mailFolderTreePanelCollapsed ? '展开文件夹' : '收起文件夹';
+                btn.textContent = mailFolderTreePanelCollapsed ? '▸ 文件夹' : '▾ 文件夹';
+            }
+        }
+
+        function toggleMailFolderTreePanel(forceCollapsed) {
+            if (typeof forceCollapsed === 'boolean') {
+                mailFolderTreePanelCollapsed = forceCollapsed;
+            } else {
+                mailFolderTreePanelCollapsed = !mailFolderTreePanelCollapsed;
+            }
+            saveMailFolderTreePanelCollapsed(mailFolderTreePanelCollapsed);
+            syncMailFolderTreePanelCollapsed();
+        }
 
         function isCustomMailFolderKey(folder) {
             const value = String(folder || '').trim().toLowerCase();
@@ -63,6 +108,9 @@
             if (tree) {
                 tree.style.display = showTree ? 'flex' : 'none';
                 tree.hidden = !showTree;
+                if (showTree) {
+                    syncMailFolderTreePanelCollapsed();
+                }
             }
             if (tabs) {
                 tabs.style.display = showTabs ? 'flex' : 'none';

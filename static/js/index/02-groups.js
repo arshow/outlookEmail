@@ -1319,6 +1319,12 @@
                 : '';
         }
 
+        function showInboxPollStatusLabel(enabled) {
+            return enabled
+                ? '<span class="account-status-pill discover" title="已开启自动发现">探</span>'
+                : '';
+        }
+
         function renderAccountTagSummary(tags, accountId) {
             const safeTags = Array.isArray(tags) ? tags : [];
             const visibleTags = safeTags.slice(0, 2);
@@ -1581,6 +1587,7 @@
                             </span>
                             ${showForwardStatusLabel(!!acc.forward_enabled)}
                             ${showAggregatedInboxStatusLabel(!!acc.aggregated_inbox_enabled)}
+                            ${showInboxPollStatusLabel(acc.inbox_poll_enabled !== false)}
                             ${acc.status === 'inactive' ? '<span class="account-status-pill muted">已停用</span>' : ''}
                             ${acc.last_refresh_status === 'failed' ? '<span class="account-status-pill danger">刷新失败</span>' : ''}
                         </div>

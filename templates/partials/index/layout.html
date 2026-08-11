@@ -382,8 +382,12 @@
                             ⚠️ 垃圾邮件
                         </button>
                     </div>
-                    <div class="mail-folder-tree" id="mailFolderTree" style="display: none;" hidden>
+                    <div class="mail-folder-tree is-collapsed" id="mailFolderTree" style="display: none;" hidden>
                         <div class="mail-folder-tree-toolbar">
+                            <button type="button" class="mail-folder-tree-collapse" id="mailFolderTreeCollapseBtn"
+                                onclick="toggleMailFolderTreePanel()" title="展开文件夹" aria-expanded="false">
+                                ▸ 文件夹
+                            </button>
                             <button type="button" class="mail-folder-tree-all" id="mailFolderTreeAllBtn" onclick="selectMailFolderWellKnown('all')">全部邮件</button>
                             <button type="button" class="mail-folder-tree-refresh" id="mailFolderTreeRefreshBtn" onclick="refreshMailFolderTree()" title="刷新文件夹">刷新</button>
                         </div>

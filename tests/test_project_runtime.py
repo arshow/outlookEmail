@@ -2211,6 +2211,15 @@ class FrontendAccountUnreadBadgeTests(unittest.TestCase):
         self.assertIn('adjustAccountUnreadCount(accountId, delta)', emails_js)
         self.assertIn('.account-unread-badge', css)
 
+    def test_account_list_renders_inbox_poll_status_marker(self):
+        groups_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '02-groups.js').read_text(encoding='utf-8')
+        css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '04-account-panel.css').read_text(encoding='utf-8')
+
+        self.assertIn('function showInboxPollStatusLabel(enabled)', groups_js)
+        self.assertIn('showInboxPollStatusLabel(acc.inbox_poll_enabled !== false)', groups_js)
+        self.assertIn('已开启自动发现', groups_js)
+        self.assertIn('.account-status-pill.discover', css)
+
 
 class FrontendAccountRemarkShortcutTests(unittest.TestCase):
     def test_account_remark_shortcut_is_wired_for_menu_and_contextmenu(self):

@@ -168,7 +168,12 @@ class MailFolderTreeTests(unittest.TestCase):
         self.assertIn('loadMailFolderTree', folders_js)
         self.assertIn('buildMailFolderListParams', folders_js)
         self.assertIn('mailFolderTreeCacheByAccount', folders_js)
+        self.assertIn('toggleMailFolderTreePanel', folders_js)
+        self.assertIn('mailFolderTreePanelCollapsed = loadMailFolderTreePanelCollapsed()', folders_js)
+        self.assertIn("return true; // 默认收起", folders_js)
         self.assertIn('mailFolderTree', layout_html)
+        self.assertIn('id="mailFolderTreeCollapseBtn"', layout_html)
+        self.assertIn('is-collapsed', layout_html)
         self.assertIn('folder_id', folders_js)
 
         emails_js = Path(
