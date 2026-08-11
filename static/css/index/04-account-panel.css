@@ -1241,10 +1241,10 @@
             }
         }
 
-        /* 极简模式样式 */
+        /* 极简模式样式：加大字号，收紧间距以保持行高 */
         .account-panel.minimal-mode .account-item {
             margin-bottom: 6px;
-            padding: 8px 12px;
+            padding: 6px 10px;
             align-items: center;
             border-radius: 12px;
             box-shadow: 0 2px 6px rgba(15, 23, 42, 0.02);
@@ -1256,7 +1256,7 @@
         }
 
         .account-panel.minimal-mode .account-body {
-            gap: 4px;
+            gap: 2px;
             display: flex;
             flex-direction: column;
             align-items: stretch;
@@ -1269,12 +1269,20 @@
             width: 100%;
             align-items: center;
             justify-content: space-between;
+            gap: 6px;
         }
 
         .account-panel.minimal-mode .account-email {
-            font-size: 13px;
-            font-weight: 500;
-            line-height: 1.4;
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 1.25;
+        }
+
+        .account-panel.minimal-mode .account-unread-badge {
+            min-width: 18px;
+            height: 18px;
+            padding: 0 5px;
+            font-size: 11px;
         }
 
         .account-panel.minimal-mode .account-select-checkbox,
@@ -1294,12 +1302,14 @@
             display: inline-block !important;
             max-width: 100%;
             margin: 0;
-            font-size: 11px;
-            line-height: 1.3;
+            font-size: 13px;
+            line-height: 1.25;
         }
 
         .account-panel.minimal-mode .account-remark.remark-color-chip {
-            padding: 1px 7px;
+            padding: 0 7px;
+            min-height: 20px;
+            line-height: 20px;
             white-space: nowrap;
             text-overflow: ellipsis;
             overflow: hidden;
@@ -1307,9 +1317,16 @@
 
         .account-panel.minimal-mode .account-feature-markers .account-status-pill.info,
         .account-panel.minimal-mode .account-feature-markers .account-status-pill.discover {
-            min-height: 18px;
-            padding: 1px 7px;
-            font-size: 10px;
+            min-height: 20px;
+            padding: 0 7px;
+            font-size: 12px;
+            line-height: 20px;
+        }
+
+        .account-panel.minimal-mode .account-menu-trigger {
+            width: 28px;
+            height: 28px;
+            font-size: 16px;
         }
 
         .account-panel.minimal-mode .account-meta-row,
