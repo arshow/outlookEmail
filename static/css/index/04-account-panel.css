@@ -1280,7 +1280,29 @@
             overflow: hidden;
         }
 
-        .account-panel.minimal-mode .account-meta-row,
+        /* 极简模式保留「聚 / 探」标记，隐藏其它元信息 */
+        .account-panel.minimal-mode .account-meta-row {
+            display: flex !important;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin: 0;
+        }
+
+        .account-panel.minimal-mode .account-meta-row .account-status-pill.provider,
+        .account-panel.minimal-mode .account-meta-row .account-status-pill.success,
+        .account-panel.minimal-mode .account-meta-row .account-status-pill.muted,
+        .account-panel.minimal-mode .account-meta-row .account-status-pill.danger,
+        .account-panel.minimal-mode .account-meta-row .account-status-pill.outline {
+            display: none !important;
+        }
+
+        .account-panel.minimal-mode .account-meta-row .account-status-pill.info,
+        .account-panel.minimal-mode .account-meta-row .account-status-pill.discover {
+            min-height: 18px;
+            padding: 1px 7px;
+            font-size: 10px;
+        }
+
         .account-panel.minimal-mode .account-group-summary,
         .account-panel.minimal-mode .account-aliases,
         .account-panel.minimal-mode .account-tags,
