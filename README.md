@@ -140,6 +140,49 @@ docker run -d \
 
 原项目在 GitHub Releases 提供 `OutlookEmail` 的 Windows zip / macOS dmg。桌面包行为以原项目发布说明为准；本仓库以源码与自建镜像为主。
 
+### 方式四：VPS Git Push 自动部署
+
+本仓库可按服务器现有项目的模式部署：服务器使用裸仓库接收 `main`，`post-receive` 自动检出到 `/opt/outlook-email` 并重启 systemd 服务。数据库、皮肤和密钥位于 Git 工作树外，因此后续 `git push` 不会覆盖生产数据。
+
+首次在服务器初始化：
+
+```bash
+scp -P 55231 scripts/setup_git_deploy_debian.sh root@23.145.120.84:/tmp/
+ssh root@23.145.120.84 -p 55231 "bash /tmp/setup_git_deploy_debian.sh"
+```
+
+初始化会创建：
+
+```text
+/opt/git/outlook-email.git                 # 裸仓库，接收 git push
+/opt/outlook-email                         # 应用工作树
+/etc/outlook-email/outlook-email.env       # 生产环境变量与 SECRET_KEY
+/var/lib/outlook-email/data/               # SQLite 数据库与皮肤文件
+/etc/systemd/system/outlook-email.service
+```
+
+然后在本地添加远程并部署：
+
+```bash
+git remote add vps ssh://root@23.145.120.84:55231/opt/git/outlook-email.git
+git push vps main
+```
+
+服务默认监听 `0.0.0.0:5001`（服务器现有项目已使用 5000 和 8000），并以单 worker、4 线程运行 Gunicorn，确保内存内的任务状态与 SSE 订阅保持一致。后续更新只需：
+
+```bash
+git push vps main
+```
+
+服务器排查命令：
+
+```bash
+systemctl status outlook-email
+journalctl -u outlook-email -f
+```
+
+生产登录密码的初始值是 `admin123`；请在首次登录后立刻修改。若需要修改端口、密钥或数据库位置，编辑 `/etc/outlook-email/outlook-email.env` 后执行 `systemctl restart outlook-email`。
+
 ---
 
 ## 使用说明
