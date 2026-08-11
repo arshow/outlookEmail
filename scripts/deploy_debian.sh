@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# This script is intentionally kept in the repository. The VPS bare-repository
-# hook runs it after every successful push to main.
+# This script is intentionally kept in the repository. The bare-repository
+# hook runs it after every successful push to the deployment branch.
 APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SERVICE_NAME="${SERVICE_NAME:-outlook-email}"
 SERVICE_USER="${SERVICE_USER:-outlook-email}"

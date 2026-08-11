@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# One-time VPS bootstrap. Future releases are deployed with: git push vps main
+# One-time deployment-server bootstrap. Future releases are deployed by pushing
+# the selected branch to the bare repository created by this script.
 APP_DIR="/opt/outlook-email"
 GIT_DIR="/opt/git/outlook-email.git"
 SERVICE_NAME="outlook-email"
@@ -123,11 +124,11 @@ State directory: ${STATE_DIR}
 Environment:     ${ENV_FILE}
 
 Next, from the local repository:
-  git remote add vps ssh://root@23.145.120.84:55231${GIT_DIR}
-  git push vps ${BRANCH}
+  git remote add deploy ssh://DEPLOY_USER@SERVER_HOST:SSH_PORT${GIT_DIR}
+  git push deploy ${BRANCH}
 
 Subsequent deployments:
-  git push vps ${BRANCH}
+  git push deploy ${BRANCH}
 
 Server diagnostics:
   systemctl status ${SERVICE_NAME}
