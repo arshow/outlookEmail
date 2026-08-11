@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, adjustIframeHeight, aggregatedInboxGroupId, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderColoredRemarkMarkup, renderEmptyStateMarkup, scheduleEmailListLoadCheck, showEmailFetchErrorModal, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, accountsCache, adjustAccountUnreadCount, adjustIframeHeight, aggregatedInboxGroupId, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderColoredRemarkMarkup, renderEmptyStateMarkup, scheduleEmailListLoadCheck, showEmailFetchErrorModal, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
 
         // ==================== 邮件相关 ====================
 
@@ -1422,19 +1422,70 @@
                 return (key && updatedKeys.has(key)) || updatedIds.has(String(email.id));
             };
 
-            const applyToEmailList = (emails) => {
+            const unreadDeltasByAccountId = new Map();
+            const resolveUnreadAccountId = (email) => {
+                const directId = Number(email?.account_id);
+                if (Number.isFinite(directId) && directId > 0) {
+                    return directId;
+                }
+                const accountEmail = (
+                    getEmailAccountAddress(email)
+                    || (!isAggregatedInboxMode() ? currentAccount : '')
+                ).toLowerCase();
+                if (!accountEmail || !accountsCache || typeof accountsCache !== 'object') {
+                    return 0;
+                }
+                for (const list of Object.values(accountsCache)) {
+                    if (!Array.isArray(list)) continue;
+                    const matched = list.find(item => String(item?.email || '').toLowerCase() === accountEmail);
+                    if (matched?.id != null) {
+                        return Number(matched.id) || 0;
+                    }
+                }
+                return 0;
+            };
+            const trackUnreadDelta = (email) => {
+                const folder = String(email?.folder || currentFolder || 'inbox').trim().toLowerCase();
+                if (folder !== 'inbox') {
+                    return;
+                }
+                const accountId = resolveUnreadAccountId(email);
+                if (!Number.isFinite(accountId) || accountId <= 0) {
+                    return;
+                }
+                const wasUnread = email.is_read === false;
+                const willBeUnread = isRead === false;
+                if (wasUnread === willBeUnread) {
+                    return;
+                }
+                const delta = willBeUnread ? 1 : -1;
+                unreadDeltasByAccountId.set(
+                    accountId,
+                    (unreadDeltasByAccountId.get(accountId) || 0) + delta
+                );
+            };
+
+            const applyToEmailList = (emails, trackDelta = false) => {
                 if (!Array.isArray(emails)) {
                     return;
                 }
 
                 emails.forEach(email => {
                     if (matchesUpdated(email)) {
+                        if (trackDelta) {
+                            trackUnreadDelta(email);
+                        }
                         email.is_read = isRead;
                     }
                 });
             };
 
-            applyToEmailList(currentEmails);
+            applyToEmailList(currentEmails, true);
+            if (typeof adjustAccountUnreadCount === 'function') {
+                unreadDeltasByAccountId.forEach((delta, accountId) => {
+                    adjustAccountUnreadCount(accountId, delta);
+                });
+            }
 
             const cachePrefixes = new Set([`${currentAccount || ''}_`]);
             if (isAggregatedInboxMode()) {

@@ -2199,6 +2199,19 @@ class FrontendAccountSearchScopeTests(unittest.TestCase):
         self.assertIn('saveAccountSearchQueryPreference(event.target.value);', core_js)
 
 
+class FrontendAccountUnreadBadgeTests(unittest.TestCase):
+    def test_account_list_renders_unread_badge_helper(self):
+        groups_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '02-groups.js').read_text(encoding='utf-8')
+        emails_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '05-emails.js').read_text(encoding='utf-8')
+        css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '04-account-panel.css').read_text(encoding='utf-8')
+
+        self.assertIn('function renderAccountUnreadBadge(unreadCount)', groups_js)
+        self.assertIn('renderAccountUnreadBadge(acc.unread_count)', groups_js)
+        self.assertIn('function adjustAccountUnreadCount(accountId, delta)', groups_js)
+        self.assertIn('adjustAccountUnreadCount(accountId, delta)', emails_js)
+        self.assertIn('.account-unread-badge', css)
+
+
 class FrontendAccountRemarkShortcutTests(unittest.TestCase):
     def test_account_remark_shortcut_is_wired_for_menu_and_contextmenu(self):
         groups_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '02-groups.js').read_text(encoding='utf-8')

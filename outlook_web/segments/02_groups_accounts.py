@@ -654,16 +654,55 @@ def get_account_tags_map(account_ids: List[int], db=None) -> Dict[int, List[Dict
     return tags_by_account
 
 
+def get_account_unread_counts_map(account_ids: List[int], db=None,
+                                  folder: str = 'inbox') -> Dict[int, int]:
+    """批量读取账号未读数（基于本地保留邮件；未开启保留时返回空）。"""
+    normalized_ids = [int(account_id) for account_id in (account_ids or []) if account_id]
+    if not normalized_ids:
+        return {}
+
+    try:
+        retention_enabled = bool(is_normal_mail_local_retention_enabled())
+    except Exception:
+        retention_enabled = False
+    if not retention_enabled:
+        return {}
+
+    database = db or get_db()
+    folder_name = str(folder or 'inbox').strip().lower() or 'inbox'
+    unread_map: Dict[int, int] = {}
+    chunk_size = 200
+    for index in range(0, len(normalized_ids), chunk_size):
+        chunk = normalized_ids[index:index + chunk_size]
+        placeholders = ','.join('?' for _ in chunk)
+        rows = database.execute(
+            f'''
+            SELECT account_id, COUNT(*) AS unread_count
+            FROM retained_normal_mail_messages
+            WHERE account_id IN ({placeholders})
+              AND LOWER(COALESCE(folder, '')) = ?
+              AND COALESCE(is_read, 0) = 0
+            GROUP BY account_id
+            ''',
+            (*chunk, folder_name),
+        ).fetchall()
+        for row in rows:
+            unread_map[int(row['account_id'])] = int(row['unread_count'] or 0)
+    return unread_map
+
+
 def serialize_account_rows(rows: List[sqlite3.Row], db=None) -> List[Dict]:
     account_ids = [int(row['id']) for row in rows]
     aliases_by_account = get_account_aliases_map(account_ids, db)
     tags_by_account = get_account_tags_map(account_ids, db)
+    unread_by_account = get_account_unread_counts_map(account_ids, db)
 
     accounts = []
     for row in rows:
         account_id = int(row['id'])
         account = resolve_account_record(row, aliases=aliases_by_account.get(account_id, []))
         account['tags'] = tags_by_account.get(account_id, [])
+        account['unread_count'] = int(unread_by_account.get(account_id, 0) or 0)
         accounts.append(account)
     return accounts
 
@@ -1352,7 +1391,8 @@ def serialize_account_summary(account: Dict[str, Any], last_refresh_log: Optiona
         'last_refresh_error': refresh_state['last_refresh_error'],
         'created_at': account.get('created_at', ''),
         'updated_at': account.get('updated_at', ''),
-        'tags': account.get('tags', [])
+        'tags': account.get('tags', []),
+        'unread_count': max(0, int(account.get('unread_count') or 0)),
     }
     if include_client_meta:
         payload['client_id'] = (

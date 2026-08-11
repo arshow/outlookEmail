@@ -465,6 +465,51 @@ class NormalMailRetentionTests(unittest.TestCase):
             )
             db.commit()
 
+    def test_account_list_includes_inbox_unread_count_from_retained_mail(self):
+        self._seed_unread_graph_retained_row('unread-count-1')
+        self._seed_unread_graph_retained_row('unread-count-2')
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode,
+                    subject, sender, recipients, received_at, is_read, list_cached
+                )
+                VALUES (?, 'junkemail', 'unread-junk-1', 'graph',
+                        'Junk unread', 'sender@example.com',
+                        'reader@example.com', '2026-05-27T08:00:00Z', 0, 1)
+                ''',
+                (self.account['id'],)
+            )
+            db.execute(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode,
+                    subject, sender, recipients, received_at, is_read, list_cached
+                )
+                VALUES (?, 'inbox', 'read-count-1', 'graph',
+                        'Read subject', 'sender@example.com',
+                        'reader@example.com', '2026-05-27T09:00:00Z', 1, 1)
+                ''',
+                (self.account['id'],)
+            )
+            web_outlook_app.set_setting('normal_mail_local_retention_enabled', 'true')
+            if hasattr(web_outlook_app, 'clear_normal_mail_local_retention_enabled_cache'):
+                web_outlook_app.clear_normal_mail_local_retention_enabled_cache()
+            db.commit()
+
+        response = self.client.get('/api/accounts?group_id=1&limit=50&offset=0')
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        matched = next(
+            (item for item in payload['accounts'] if item['id'] == self.account['id']),
+            None,
+        )
+        self.assertIsNotNone(matched)
+        self.assertEqual(matched['unread_count'], 2)
+
     def _retained_read_state(self, message_id):
         with self.app.app_context():
             db = web_outlook_app.get_db()

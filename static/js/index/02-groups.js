@@ -1409,6 +1409,88 @@
             );
         }
 
+        function renderAccountUnreadBadge(unreadCount) {
+            const count = Math.max(0, Number(unreadCount) || 0);
+            if (count <= 0) {
+                return '';
+            }
+            const label = count > 99 ? '99+' : String(count);
+            return `<span class="account-unread-badge" title="未读 ${count} 封" aria-label="未读 ${count} 封">${escapeHtml(label)}</span>`;
+        }
+
+        function updateAccountUnreadCountDisplay(accountId, nextCount) {
+            const normalizedId = Number(accountId);
+            if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
+                return;
+            }
+            const count = Math.max(0, Number(nextCount) || 0);
+
+            if (accountsCache && typeof accountsCache === 'object') {
+                Object.values(accountsCache).forEach(list => {
+                    if (!Array.isArray(list)) return;
+                    list.forEach(item => {
+                        if (Number(item?.id) === normalizedId) {
+                            item.unread_count = count;
+                        }
+                    });
+                });
+            }
+
+            const accountItem = document.querySelector(`#accountList .account-item[data-account-id="${normalizedId}"]`);
+            if (!accountItem) {
+                return;
+            }
+            const titleRow = accountItem.querySelector('.account-title-row');
+            if (!titleRow) {
+                return;
+            }
+            const existing = titleRow.querySelector('.account-unread-badge');
+            if (count <= 0) {
+                existing?.remove();
+                return;
+            }
+            const label = count > 99 ? '99+' : String(count);
+            if (existing) {
+                existing.textContent = label;
+                existing.title = `未读 ${count} 封`;
+                existing.setAttribute('aria-label', `未读 ${count} 封`);
+                return;
+            }
+            titleRow.insertAdjacentHTML('beforeend', renderAccountUnreadBadge(count));
+        }
+
+        function adjustAccountUnreadCount(accountId, delta) {
+            const normalizedId = Number(accountId);
+            const change = Number(delta) || 0;
+            if (!Number.isFinite(normalizedId) || normalizedId <= 0 || !change) {
+                return;
+            }
+
+            let current = 0;
+            let found = false;
+            if (accountsCache && typeof accountsCache === 'object') {
+                for (const list of Object.values(accountsCache)) {
+                    if (!Array.isArray(list)) continue;
+                    const matched = list.find(item => Number(item?.id) === normalizedId);
+                    if (matched) {
+                        current = Math.max(0, Number(matched.unread_count) || 0);
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found) {
+                const badge = document.querySelector(
+                    `#accountList .account-item[data-account-id="${normalizedId}"] .account-unread-badge`
+                );
+                if (badge) {
+                    const raw = String(badge.textContent || '').replace('+', '');
+                    current = Math.max(0, parseInt(raw, 10) || 0);
+                }
+            }
+            updateAccountUnreadCountDisplay(normalizedId, current + change);
+        }
+
         function handleAccountItemClick(event, email, isTemp = false) {
             if (isAccountRowInteractiveTarget(event?.target)) {
                 return;
@@ -1490,6 +1572,7 @@
                                     ${escapeHtml(acc.email)}
                                 </div>
                             </div>
+                            ${renderAccountUnreadBadge(acc.unread_count)}
                         </div>
                         <div class="account-meta-row">
                             <span class="account-status-pill provider"
