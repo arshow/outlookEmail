@@ -1537,12 +1537,16 @@ def api_add_account():
 @login_required
 def api_update_account(account_id):
     """更新账号"""
-    data = request.json
+    data = request.json or {}
 
     # 检查是否只更新状态
     if 'status' in data and len(data) == 1:
         # 只更新状态
         return api_update_account_status(account_id, data['status'])
+
+    # 仅更新备注（右键/快捷入口）
+    if 'remark' in data and set(data.keys()) == {'remark'}:
+        return api_update_account_remark(account_id, data.get('remark', ''))
 
     current_account = get_account_by_id(account_id) or {}
     email_addr = data.get('email', '')
@@ -1666,6 +1670,30 @@ def api_update_account_status(account_id: int, status: str):
         db.commit()
         return jsonify({'success': True, 'message': '状态更新成功'})
     except Exception:
+        return jsonify({'success': False, 'error': '更新失败'})
+
+
+def api_update_account_remark(account_id: int, remark: Any):
+    """只更新账号备注"""
+    if not get_account_by_id(account_id):
+        return jsonify({'success': False, 'error': '账号不存在'}), 404
+
+    cleaned_remark = sanitize_input(str(remark or '').strip(), max_length=200)
+    db = get_db()
+    try:
+        db.execute('''
+            UPDATE accounts
+            SET remark = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (cleaned_remark, account_id))
+        db.commit()
+        return jsonify({
+            'success': True,
+            'message': '备注已更新',
+            'remark': cleaned_remark,
+        })
+    except Exception:
+        db.rollback()
         return jsonify({'success': False, 'error': '更新失败'})
 
 

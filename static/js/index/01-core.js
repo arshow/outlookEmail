@@ -1509,11 +1509,14 @@
                     const accountId = parseInt(actionBtn.dataset.accountId || '0', 10);
                     const accountEmail = actionBtn.dataset.accountEmail || '';
                     const accountStatus = actionBtn.dataset.accountStatus || 'active';
+                    const accountRemark = actionBtn.dataset.accountRemark || '';
 
                     if (action === 'copy') {
                         copyEmail(accountEmail);
                     } else if (action === 'share') {
                         showCreateEmailShareModal(accountId, accountEmail);
+                    } else if (action === 'setRemark') {
+                        showEditAccountRemarkModal(accountId, accountEmail, accountRemark);
                     } else if (action === 'forwardingLogs') {
                         showAccountForwardingLogs(accountId, accountEmail);
                     } else if (action === 'toggleStatus') {
@@ -1525,6 +1528,28 @@
                     } else if (action === 'delete') {
                         deleteAccount(accountId, accountEmail);
                     }
+                });
+
+                accountList.addEventListener('contextmenu', function (event) {
+                    const accountItem = event.target.closest('.account-item[data-account-id]');
+                    if (!accountItem || accountItem.classList.contains('aggregated-inbox-account-item')) {
+                        return;
+                    }
+                    if (event.target.closest('.account-select-checkbox, input, a, button.account-menu-trigger')) {
+                        return;
+                    }
+
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeAccountActionMenus();
+
+                    const accountId = parseInt(accountItem.dataset.accountId || '0', 10);
+                    const accountEmail = accountItem.dataset.accountEmail || '';
+                    const accountRemark = accountItem.dataset.accountRemark || '';
+                    if (!accountId) {
+                        return;
+                    }
+                    showEditAccountRemarkModal(accountId, accountEmail, accountRemark);
                 });
             }
         }

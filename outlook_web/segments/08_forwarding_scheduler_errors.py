@@ -1511,6 +1511,9 @@ def api_update_account_v2(account_id):
     if 'status' in data and len(data) == 1:
         return api_update_account_status(account_id, data['status'])
 
+    if 'remark' in data and set(data.keys()) == {'remark'}:
+        return api_update_account_remark(account_id, data.get('remark', ''))
+
     current_account = get_account_by_id(account_id) or {}
     email_addr = (data.get('email', '') or '').strip()
     password = data['password'] if 'password' in data else current_account.get('password', '')

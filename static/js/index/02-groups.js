@@ -1473,6 +1473,8 @@
             container.innerHTML = aggregatedEntry + accounts.map(acc => `
                 <div class="account-item ${!isAggregatedInboxMode() && currentAccount === acc.email ? 'active' : ''} ${acc.status === 'inactive' ? 'inactive' : ''}"
                      data-account-id="${acc.id}"
+                     data-account-email="${escapeHtml(acc.email)}"
+                     data-account-remark="${escapeHtml(acc.remark || '')}"
                      onclick="handleAccountItemClick(event, '${escapeJs(acc.email)}')">
                     <input type="checkbox" class="account-select-checkbox" value="${acc.id}" 
                            data-account-email="${escapeHtml(acc.email)}"
@@ -1510,6 +1512,7 @@
                         <div class="account-menu-panel">
                             <button class="account-action-btn" type="button" data-account-action="copy" data-account-email="${escapeHtml(acc.email)}">复制邮箱</button>
                             <button class="account-action-btn" type="button" data-account-action="share" data-account-id="${acc.id}" data-account-email="${escapeHtml(acc.email)}">分享邮箱</button>
+                            <button class="account-action-btn" type="button" data-account-action="setRemark" data-account-id="${acc.id}" data-account-email="${escapeHtml(acc.email)}" data-account-remark="${escapeHtml(acc.remark || '')}">设置账户备注</button>
                             <button class="account-action-btn" type="button" data-account-action="forwardingLogs" data-account-id="${acc.id}" data-account-email="${escapeHtml(acc.email)}">转发日志</button>
                             <button class="account-action-btn" type="button" data-account-action="toggleStatus" data-account-id="${acc.id}" data-account-status="${escapeHtml(acc.status || 'active')}">${acc.status === 'inactive' ? '启用账号' : '停用账号'}</button>
                             ${(acc.account_type || 'outlook') !== 'imap' ? `<button class="account-action-btn" type="button" data-account-action="outlookAutoAuth" data-account-id="${acc.id}" data-account-email="${escapeHtml(acc.email)}">加入自动授权</button>` : ''}

@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, applyEmailListCache, closeMobilePanels, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, hideModal, isAggregatedInbox, isAggregatedInboxMode, isTempEmailGroup, loadAccountsByGroup, loadEmails, loadGroups, renderEmailList, scheduleEmailListLoadCheck, showEmailList, showToast, updateMobileContext */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, applyEmailListCache, closeMobilePanels, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, hideModal, isAggregatedInbox, isAggregatedInboxMode, isTempEmailGroup, loadAccountsByGroup, loadEmails, loadGroups, refreshVisibleAccountList, renderEmailList, scheduleEmailListLoadCheck, showConfirmModal, showEmailList, showModal, showToast, updateMobileContext */
 
         // ==================== 账号相关 ====================
 
@@ -189,6 +189,104 @@
             }
             document.getElementById('editTagFilterDropdown')?.classList.remove('open');
             hideModal('editAccountModal');
+        }
+
+        function showEditAccountRemarkModal(accountId, accountEmail = '', currentRemark = '') {
+            const normalizedId = parseInt(accountId, 10);
+            if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
+                showToast('账号无效', 'error');
+                return;
+            }
+
+            let remark = String(currentRemark || '');
+            if (!remark && accountsCache && typeof accountsCache === 'object') {
+                for (const list of Object.values(accountsCache)) {
+                    if (!Array.isArray(list)) continue;
+                    const matched = list.find(item => Number(item?.id) === normalizedId);
+                    if (matched) {
+                        remark = String(matched.remark || '');
+                        if (!accountEmail) {
+                            accountEmail = String(matched.email || '');
+                        }
+                        break;
+                    }
+                }
+            }
+
+            document.getElementById('editAccountRemarkId').value = String(normalizedId);
+            document.getElementById('editAccountRemarkEmail').textContent = accountEmail || `账号 #${normalizedId}`;
+            document.getElementById('editAccountRemarkInput').value = remark;
+            showModal('editAccountRemarkModal');
+            window.setTimeout(() => {
+                const input = document.getElementById('editAccountRemarkInput');
+                input?.focus();
+                input?.setSelectionRange?.(input.value.length, input.value.length);
+            }, 0);
+        }
+
+        function hideEditAccountRemarkModal() {
+            hideModal('editAccountRemarkModal');
+        }
+
+        async function saveAccountRemark() {
+            const accountId = parseInt(document.getElementById('editAccountRemarkId')?.value || '0', 10);
+            const remarkInput = document.getElementById('editAccountRemarkInput');
+            const saveBtn = document.getElementById('saveAccountRemarkBtn');
+            if (!Number.isFinite(accountId) || accountId <= 0) {
+                showToast('账号无效', 'error');
+                return;
+            }
+
+            const remark = String(remarkInput?.value || '').trim();
+            if (saveBtn) {
+                saveBtn.disabled = true;
+            }
+            try {
+                const response = await fetch(`/api/accounts/${accountId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ remark })
+                });
+                const result = await response.json();
+                if (!result.success) {
+                    handleApiError(result, '备注更新失败');
+                    return;
+                }
+
+                const nextRemark = String(result.remark ?? remark);
+                if (accountsCache && typeof accountsCache === 'object') {
+                    Object.values(accountsCache).forEach(list => {
+                        if (!Array.isArray(list)) return;
+                        list.forEach(item => {
+                            if (Number(item?.id) === accountId) {
+                                item.remark = nextRemark;
+                            }
+                        });
+                    });
+                }
+
+                const accountItem = document.querySelector(`#accountList .account-item[data-account-id="${accountId}"]`);
+                if (accountItem) {
+                    accountItem.dataset.accountRemark = nextRemark;
+                    accountItem.querySelectorAll('[data-account-action="setRemark"]').forEach(btn => {
+                        btn.dataset.accountRemark = nextRemark;
+                    });
+                }
+
+                showToast(result.message || '备注已更新', 'success');
+                hideEditAccountRemarkModal();
+                if (typeof refreshVisibleAccountList === 'function') {
+                    refreshVisibleAccountList();
+                } else if (currentGroupId) {
+                    loadAccountsByGroup(currentGroupId, true);
+                }
+            } catch (error) {
+                showToast('备注更新失败', 'error');
+            } finally {
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                }
+            }
         }
 
         // 删除当前编辑的账号

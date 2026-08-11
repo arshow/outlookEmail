@@ -196,6 +196,35 @@ class ProjectRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 404)
 
+    def test_update_account_remark_only_updates_remark_field(self):
+        account_id = self._insert_account('remark-only@example.com')
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                '''
+                UPDATE accounts
+                SET password = ?, client_id = ?, refresh_token = ?, remark = ?
+                WHERE id = ?
+                ''',
+                ('keep-password', 'keep-client', 'keep-refresh', 'old-remark', account_id)
+            )
+            db.commit()
+
+        response = self.client.put(f'/api/accounts/{account_id}', json={
+            'remark': '  new remark  ',
+        })
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['remark'], 'new remark')
+
+        with self.app.app_context():
+            account = web_outlook_app.get_account_by_id(account_id)
+        self.assertEqual(account['remark'], 'new remark')
+        self.assertEqual(account['password'], 'keep-password')
+        self.assertEqual(account['client_id'], 'keep-client')
+        self.assertEqual(account['refresh_token'], 'keep-refresh')
+
     def test_update_account_preserves_password_when_field_is_omitted(self):
         account_id = self._insert_account('preserve-password@example.com')
         with self.app.app_context():
@@ -2168,6 +2197,24 @@ class FrontendAccountSearchScopeTests(unittest.TestCase):
         self.assertIn('function saveAccountSearchQueryPreference(value)', groups_js)
         self.assertIn('initAccountSearchInput();', core_js)
         self.assertIn('saveAccountSearchQueryPreference(event.target.value);', core_js)
+
+
+class FrontendAccountRemarkShortcutTests(unittest.TestCase):
+    def test_account_remark_shortcut_is_wired_for_menu_and_contextmenu(self):
+        groups_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '02-groups.js').read_text(encoding='utf-8')
+        core_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '01-core.js').read_text(encoding='utf-8')
+        accounts_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '04-accounts.js').read_text(encoding='utf-8')
+        layout = pathlib.Path(ROOT_DIR, 'templates', 'partials', 'index', 'dialogs-primary.html').read_text(encoding='utf-8')
+
+        self.assertIn('data-account-action="setRemark"', groups_js)
+        self.assertIn('设置账户备注', groups_js)
+        self.assertIn("addEventListener('contextmenu'", core_js)
+        self.assertIn("action === 'setRemark'", core_js)
+        self.assertIn('showEditAccountRemarkModal(accountId, accountEmail, accountRemark)', core_js)
+        self.assertIn('function showEditAccountRemarkModal(accountId, accountEmail = \'\', currentRemark = \'\')', accounts_js)
+        self.assertIn('async function saveAccountRemark()', accounts_js)
+        self.assertIn('id="editAccountRemarkModal"', layout)
+        self.assertIn('id="editAccountRemarkInput"', layout)
 
 
 class FrontendAccountListPreferenceTests(unittest.TestCase):

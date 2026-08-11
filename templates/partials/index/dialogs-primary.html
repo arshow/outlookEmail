@@ -199,6 +199,31 @@
         </div>
     </div>
 
+    <!-- 设置账户备注模态框 -->
+    <div class="modal" id="editAccountRemarkModal" onmousedown="if(event.target === this) hideEditAccountRemarkModal()">
+        <div class="modal-content" style="max-width: 420px;">
+            <div class="modal-header">
+                <h3>设置账户备注</h3>
+                <button class="modal-close" onclick="hideEditAccountRemarkModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editAccountRemarkId">
+                <div class="form-group">
+                    <label class="form-label">邮箱账号</label>
+                    <div id="editAccountRemarkEmail" class="form-hint" style="margin: 0; word-break: break-all;"></div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">备注</label>
+                    <textarea class="form-textarea" id="editAccountRemarkInput" placeholder="可选，最多 200 字" rows="4" maxlength="200"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideEditAccountRemarkModal()">取消</button>
+                <button class="btn btn-primary" id="saveAccountRemarkBtn" onclick="saveAccountRemark()">保存</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 编辑账号模态框 -->
     <div class="modal" id="editAccountModal" onmousedown="if(event.target === this) hideEditAccountModal()">
         <div class="modal-content edit-account-modal-content">
