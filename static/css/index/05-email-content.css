@@ -279,6 +279,63 @@
             white-space: nowrap;
         }
 
+        /* 聚合收件箱：加大字号、收紧间距，提升辨识度 */
+        .aggregated-inbox-account-item {
+            background: linear-gradient(180deg, #f8fbff 0%, #ffffff 72%);
+            border-color: #bfdbfe;
+            box-shadow: 0 6px 16px rgba(37, 99, 235, 0.08);
+        }
+
+        .aggregated-inbox-account-item:hover {
+            border-color: #93c5fd;
+            box-shadow: 0 10px 22px rgba(37, 99, 235, 0.12);
+        }
+
+        .aggregated-inbox-account-item.active {
+            background: linear-gradient(180deg, #eff6ff 0%, #ffffff 78%);
+            border-color: #2563eb;
+        }
+
+        .aggregated-inbox-account-item .cloudflare-global-account-title {
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            line-height: 1.2;
+            color: #0f172a;
+        }
+
+        .aggregated-inbox-account-item .account-body {
+            gap: 6px;
+        }
+
+        .aggregated-inbox-account-item .account-meta-row {
+            gap: 6px;
+        }
+
+        .aggregated-inbox-account-item .account-status-pill {
+            min-height: 22px;
+            padding: 0 10px;
+            font-size: 12px;
+            line-height: 22px;
+        }
+
+        .aggregated-inbox-account-item .account-status-pill.provider {
+            background: #2563eb;
+            color: #ffffff;
+        }
+
+        .aggregated-inbox-account-item .account-status-pill.muted {
+            background: #e2e8f0;
+            color: #334155;
+            font-weight: 600;
+        }
+
+        .aggregated-inbox-account-item .account-unread-badge {
+            min-width: 22px;
+            height: 22px;
+            font-size: 12px;
+        }
+
         .email-account-meta {
             display: flex;
             align-items: flex-start;

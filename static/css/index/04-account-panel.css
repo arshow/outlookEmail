@@ -1337,6 +1337,45 @@
             display: none !important;
         }
 
+        /* 极简模式下聚合收件箱保留标签，避免只剩标题显得空洞 */
+        .account-panel.minimal-mode .aggregated-inbox-account-item {
+            padding: 7px 10px;
+            border-color: #93c5fd;
+            background: linear-gradient(180deg, #f0f7ff 0%, #ffffff 70%);
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.1);
+        }
+
+        .account-panel.minimal-mode .aggregated-inbox-account-item .account-body {
+            gap: 4px;
+        }
+
+        .account-panel.minimal-mode .aggregated-inbox-account-item .cloudflare-global-account-title,
+        .account-panel.minimal-mode .aggregated-inbox-account-item .account-email {
+            font-size: 16px;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+
+        .account-panel.minimal-mode .aggregated-inbox-account-item .account-meta-row {
+            display: flex !important;
+            flex-wrap: nowrap;
+            gap: 6px;
+            width: 100%;
+        }
+
+        .account-panel.minimal-mode .aggregated-inbox-account-item .account-status-pill {
+            min-height: 20px;
+            padding: 0 9px;
+            font-size: 12px;
+            line-height: 20px;
+        }
+
+        .account-panel.minimal-mode .aggregated-inbox-account-item .account-unread-badge {
+            min-width: 20px;
+            height: 20px;
+            font-size: 12px;
+        }
+
         .panel-action-btn.active {
             background-color: #111827 !important;
             border-color: #111827 !important;
