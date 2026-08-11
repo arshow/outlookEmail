@@ -13,6 +13,7 @@ HOST="${HOST:-0.0.0.0}"
 GUNICORN_THREADS="${GUNICORN_THREADS:-4}"
 VENV_DIR="${APP_DIR}/.venv"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+DEPENDENCY_STAMP="${STATE_DIR}/.requirements.sha256"
 
 log() {
   printf '[OutlookEmail deploy] %s\n' "$*"
@@ -46,9 +47,20 @@ ensure_runtime() {
     "${PYTHON_BIN}" -m venv "${VENV_DIR}"
   fi
 
+  local requirements_hash
+  requirements_hash="$(sha256sum "${APP_DIR}/requirements.txt" | awk '{print $1}')"
+  if [[ -x "${VENV_DIR}/bin/gunicorn" ]] \
+    && [[ -f "${DEPENDENCY_STAMP}" ]] \
+    && [[ "$(<"${DEPENDENCY_STAMP}")" == "${requirements_hash}" ]]; then
+    log "Python dependencies unchanged; skipping installation"
+    return
+  fi
+
   log "Installing Python dependencies"
-  "${VENV_DIR}/bin/python" -m pip install --disable-pip-version-check --upgrade pip
-  "${VENV_DIR}/bin/python" -m pip install --disable-pip-version-check -r "${APP_DIR}/requirements.txt" gunicorn
+  "${VENV_DIR}/bin/python" -m pip install --disable-pip-version-check --quiet --upgrade pip
+  "${VENV_DIR}/bin/python" -m pip install --disable-pip-version-check --quiet -r "${APP_DIR}/requirements.txt" gunicorn
+  printf '%s\n' "${requirements_hash}" > "${DEPENDENCY_STAMP}"
+  chown "${SERVICE_USER}:${SERVICE_USER}" "${DEPENDENCY_STAMP}"
 }
 
 write_service() {
@@ -68,9 +80,11 @@ EnvironmentFile=${ENV_FILE}
 Environment=PYTHONUTF8=1
 Environment=PYTHONUNBUFFERED=1
 Environment=PATH=${VENV_DIR}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-ExecStart=${VENV_DIR}/bin/gunicorn -k gthread -w 1 --threads ${GUNICORN_THREADS} --bind ${HOST}:${PORT} --timeout 300 --graceful-timeout 30 --access-logfile - --error-logfile - --capture-output web_outlook_app:app
+ExecStart=${VENV_DIR}/bin/gunicorn -k gthread -w 1 --threads ${GUNICORN_THREADS} --bind ${HOST}:${PORT} --timeout 300 --graceful-timeout 10 --access-logfile - --error-logfile - --capture-output web_outlook_app:app
 Restart=always
 RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=15
 UMask=0077
 
 [Install]
@@ -109,8 +123,10 @@ main() {
   write_service
   systemctl daemon-reload
   systemctl enable "${SERVICE_NAME}" >/dev/null
+  log "Restarting ${SERVICE_NAME} (old worker has at most 15 seconds to exit)"
   systemctl restart "${SERVICE_NAME}"
   systemctl is-active --quiet "${SERVICE_NAME}" || fail "${SERVICE_NAME} did not start"
+  log "Waiting for health check"
   verify_service
   log "Deployment completed"
 }
