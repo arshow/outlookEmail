@@ -2216,9 +2216,13 @@ class FrontendAccountUnreadBadgeTests(unittest.TestCase):
         css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '04-account-panel.css').read_text(encoding='utf-8')
 
         self.assertIn('function showInboxPollStatusLabel(enabled)', groups_js)
-        self.assertIn('showInboxPollStatusLabel(acc.inbox_poll_enabled !== false)', groups_js)
+        self.assertIn('function renderAccountRemarkRow(account)', groups_js)
+        self.assertIn('renderAccountRemarkRow(acc)', groups_js)
+        self.assertIn('account-feature-markers', groups_js)
         self.assertIn('已开启自动发现', groups_js)
         self.assertIn('.account-status-pill.discover', css)
+        self.assertIn('.account-remark-row', css)
+        self.assertIn('.account-feature-markers', css)
 
 
 class FrontendAccountRemarkShortcutTests(unittest.TestCase):
@@ -2246,7 +2250,7 @@ class FrontendAccountRemarkShortcutTests(unittest.TestCase):
         self.assertIn('function getRemarkColorPalette(remark)', core_js)
         self.assertIn('function renderColoredRemarkMarkup(remark, className)', core_js)
         self.assertIn('hashStringToHue(text.toLowerCase()) % 360', core_js)
-        self.assertIn("renderColoredRemarkMarkup(acc.remark, 'account-remark')", groups_js)
+        self.assertIn("renderColoredRemarkMarkup(account.remark, 'account-remark')", groups_js)
         self.assertIn("renderColoredRemarkMarkup(accountRemark, 'email-account-remark')", emails_js)
 
 

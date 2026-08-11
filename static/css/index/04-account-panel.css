@@ -612,6 +612,22 @@
             margin-top: 1px;
         }
 
+        .account-remark-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px 8px;
+            min-width: 0;
+            width: 100%;
+        }
+
+        .account-feature-markers {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            flex: 0 0 auto;
+        }
+
         .account-remark {
             font-size: 12px;
             color: #5b6472;
@@ -622,11 +638,12 @@
             -webkit-line-clamp: 2;
             overflow: hidden;
             word-break: break-word;
+            min-width: 0;
         }
 
         .account-remark.remark-color-chip {
             display: inline-block;
-            max-width: 100%;
+            max-width: min(100%, 220px);
             padding: 2px 8px;
             border-radius: 999px;
             border: 1px solid var(--remark-border, #dbe2ea);
@@ -638,6 +655,7 @@
             white-space: nowrap;
             text-overflow: ellipsis;
             vertical-align: top;
+            flex: 0 1 auto;
         }
 
         .account-aliases {
@@ -1265,6 +1283,13 @@
             align-self: center;
         }
 
+        .account-panel.minimal-mode .account-remark-row {
+            display: flex !important;
+            align-items: center;
+            gap: 6px;
+            width: 100%;
+        }
+
         .account-panel.minimal-mode .account-remark {
             display: inline-block !important;
             max-width: 100%;
@@ -1280,29 +1305,14 @@
             overflow: hidden;
         }
 
-        /* 极简模式保留「聚 / 探」标记，隐藏其它元信息 */
-        .account-panel.minimal-mode .account-meta-row {
-            display: flex !important;
-            flex-wrap: wrap;
-            gap: 4px;
-            margin: 0;
-        }
-
-        .account-panel.minimal-mode .account-meta-row .account-status-pill.provider,
-        .account-panel.minimal-mode .account-meta-row .account-status-pill.success,
-        .account-panel.minimal-mode .account-meta-row .account-status-pill.muted,
-        .account-panel.minimal-mode .account-meta-row .account-status-pill.danger,
-        .account-panel.minimal-mode .account-meta-row .account-status-pill.outline {
-            display: none !important;
-        }
-
-        .account-panel.minimal-mode .account-meta-row .account-status-pill.info,
-        .account-panel.minimal-mode .account-meta-row .account-status-pill.discover {
+        .account-panel.minimal-mode .account-feature-markers .account-status-pill.info,
+        .account-panel.minimal-mode .account-feature-markers .account-status-pill.discover {
             min-height: 18px;
             padding: 1px 7px;
             font-size: 10px;
         }
 
+        .account-panel.minimal-mode .account-meta-row,
         .account-panel.minimal-mode .account-group-summary,
         .account-panel.minimal-mode .account-aliases,
         .account-panel.minimal-mode .account-tags,

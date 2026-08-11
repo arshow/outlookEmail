@@ -1325,6 +1325,25 @@
                 : '';
         }
 
+        function renderAccountRemarkRow(account) {
+            const remarkHtml = account?.remark && String(account.remark).trim()
+                ? renderColoredRemarkMarkup(account.remark, 'account-remark')
+                : '';
+            const markersHtml = [
+                showAggregatedInboxStatusLabel(!!account?.aggregated_inbox_enabled),
+                showInboxPollStatusLabel(account?.inbox_poll_enabled !== false),
+            ].join('');
+            if (!remarkHtml && !markersHtml) {
+                return '';
+            }
+            return `
+                <div class="account-remark-row">
+                    ${remarkHtml}
+                    ${markersHtml ? `<div class="account-feature-markers">${markersHtml}</div>` : ''}
+                </div>
+            `;
+        }
+
         function renderAccountTagSummary(tags, accountId) {
             const safeTags = Array.isArray(tags) ? tags : [];
             const visibleTags = safeTags.slice(0, 2);
@@ -1586,14 +1605,12 @@
                                 ${escapeHtml(getProviderLabel(acc.provider || (acc.account_type === 'imap' ? 'custom' : 'outlook')))}
                             </span>
                             ${showForwardStatusLabel(!!acc.forward_enabled)}
-                            ${showAggregatedInboxStatusLabel(!!acc.aggregated_inbox_enabled)}
-                            ${showInboxPollStatusLabel(acc.inbox_poll_enabled !== false)}
                             ${acc.status === 'inactive' ? '<span class="account-status-pill muted">已停用</span>' : ''}
                             ${acc.last_refresh_status === 'failed' ? '<span class="account-status-pill danger">刷新失败</span>' : ''}
                         </div>
                         ${renderAccountGroupSummary(acc, showSearchGroupInfo)}
                         ${renderAccountAliasSummary(acc.aliases)}
-                        ${acc.remark && acc.remark.trim() ? renderColoredRemarkMarkup(acc.remark, 'account-remark') : ''}
+                        ${renderAccountRemarkRow(acc)}
                         ${(acc.tags || []).length ? `<div class="account-tags">${renderAccountTagSummary(acc.tags, acc.id)}</div>` : ''}
                         ${renderAccountFooter(acc)}
                     </div>
