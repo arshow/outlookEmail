@@ -655,8 +655,12 @@ def get_account_tags_map(account_ids: List[int], db=None) -> Dict[int, List[Dict
 
 
 def get_account_unread_counts_map(account_ids: List[int], db=None,
-                                  folder: str = 'inbox') -> Dict[int, int]:
-    """批量读取账号未读数（基于本地保留邮件；未开启保留时返回空）。"""
+                                  folder: str = 'all') -> Dict[int, int]:
+    """批量读取账号未读数（基于本地保留邮件；未开启保留时返回空）。
+
+    folder 默认 all：统计 inbox + junkemail（与「全部邮件」一致）。
+    也可传入单一文件夹名（如 inbox / junkemail）。
+    """
     normalized_ids = [int(account_id) for account_id in (account_ids or []) if account_id]
     if not normalized_ids:
         return {}
@@ -669,7 +673,13 @@ def get_account_unread_counts_map(account_ids: List[int], db=None,
         return {}
 
     database = db or get_db()
-    folder_name = str(folder or 'inbox').strip().lower() or 'inbox'
+    folder_name = str(folder or 'all').strip().lower() or 'all'
+    if folder_name in {'all', '*'}:
+        folder_filters = ('inbox', 'junkemail')
+    else:
+        folder_filters = (folder_name,)
+
+    folder_placeholders = ','.join('?' for _ in folder_filters)
     unread_map: Dict[int, int] = {}
     chunk_size = 200
     for index in range(0, len(normalized_ids), chunk_size):
@@ -680,11 +690,11 @@ def get_account_unread_counts_map(account_ids: List[int], db=None,
             SELECT account_id, COUNT(*) AS unread_count
             FROM retained_normal_mail_messages
             WHERE account_id IN ({placeholders})
-              AND LOWER(COALESCE(folder, '')) = ?
+              AND LOWER(COALESCE(folder, '')) IN ({folder_placeholders})
               AND COALESCE(is_read, 0) = 0
             GROUP BY account_id
             ''',
-            (*chunk, folder_name),
+            (*chunk, *folder_filters),
         ).fetchall()
         for row in rows:
             unread_map[int(row['account_id'])] = int(row['unread_count'] or 0)

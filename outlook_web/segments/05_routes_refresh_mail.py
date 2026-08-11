@@ -4129,11 +4129,24 @@ def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: 
                 'has_more': False,
             }
 
+        raw_emails = result.get('emails') or []
+        new_message_ids = []
+        if (
+            not use_local
+            and is_normal_mail_local_retention_enabled()
+        ):
+            storage_folder = normalize_folder_name(folder)
+            if skip == 0:
+                new_message_ids = find_new_retained_normal_mail_identifiers(
+                    account, storage_folder, raw_emails
+                )
+            upsert_retained_normal_mail_list_items(account, storage_folder, raw_emails)
+
         emails = [
             annotate_aggregated_email_item(email_item, account)
-            for email_item in (result.get('emails') or [])
+            for email_item in raw_emails
         ]
-        return {
+        response = {
             'success': True,
             'account_id': account_id,
             'account_email': account_email,
@@ -4143,6 +4156,10 @@ def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: 
             'folder_summaries': result.get('folder_summaries'),
             'source': 'local' if use_local else 'remote',
         }
+        if new_message_ids:
+            response['new_count'] = len(new_message_ids)
+            response['new_message_ids'] = new_message_ids
+        return response
 
 
 @app.route('/api/emails/aggregated', methods=['GET'])
@@ -4237,6 +4254,8 @@ def api_get_aggregated_emails():
             'accounts_used': 0,
             'accounts_truncated': False,
             'account_summaries': [],
+            'unread_by_account': {},
+            'unread_total': 0,
         })
 
     account_results: List[Dict[str, Any]] = []
@@ -4314,6 +4333,19 @@ def api_get_aggregated_emails():
     merged['accounts_truncated'] = accounts_truncated
     if use_local and merged.get('success') and not merged.get('method'):
         merged['method'] = 'Local Retention'
+    if merged.get('success'):
+        unread_account_ids = [
+            int(account['id'])
+            for account in selected_accounts
+            if account.get('id') is not None
+        ]
+        unread_by_account = get_account_unread_counts_map(unread_account_ids)
+        # JSON 键统一为字符串，便于前端 Object.entries 使用
+        merged['unread_by_account'] = {
+            str(account_id): int(count)
+            for account_id, count in unread_by_account.items()
+        }
+        merged['unread_total'] = int(sum(unread_by_account.values()))
     status_code = 200 if merged.get('success') else 502
     return jsonify(merged), status_code
 

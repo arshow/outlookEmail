@@ -289,6 +289,79 @@ class AggregatedInboxTests(unittest.TestCase):
         payload = response.get_json()
         self.assertFalse(payload['success'])
 
+    def test_aggregated_remote_refresh_upserts_retention_and_returns_unread(self):
+        with self.app.app_context():
+            web_outlook_app.set_setting('normal_mail_local_retention_enabled', 'true')
+            if hasattr(web_outlook_app, 'clear_normal_mail_local_retention_enabled_cache'):
+                web_outlook_app.clear_normal_mail_local_retention_enabled_cache()
+
+        def fake_fetch(account, folder, skip, top):
+            if account['email'] == 'alpha@example.com':
+                return {
+                    'success': True,
+                    'emails': [
+                        self._email_item('a-unread', '2026-05-27T10:00:00Z', account['email']),
+                        {
+                            **self._email_item('a-read', '2026-05-27T09:00:00Z', account['email']),
+                            'is_read': True,
+                        },
+                    ],
+                    'method': 'Graph API',
+                    'has_more': False,
+                }
+            return {
+                'success': True,
+                'emails': [
+                    {
+                        **self._email_item('b-junk', '2026-05-28T10:00:00Z', account['email']),
+                        'folder': 'junkemail',
+                        'is_read': False,
+                    }
+                ],
+                'method': 'Graph API',
+                'has_more': False,
+            }
+
+        with patch.object(web_outlook_app, 'fetch_account_emails', side_effect=fake_fetch):
+            response = self.client.get('/api/emails/aggregated?group_id=1&folder=all&skip=0&top=20')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload.get('source'), 'remote')
+
+        unread_by_account = payload.get('unread_by_account') or {}
+        self.assertEqual(int(unread_by_account.get(str(self.account_alpha['id']), 0)), 1)
+        self.assertEqual(int(unread_by_account.get(str(self.account_beta['id']), 0)), 1)
+        self.assertEqual(int(payload.get('unread_total') or 0), 2)
+
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            alpha_rows = db.execute(
+                '''
+                SELECT provider_message_id, folder, is_read
+                FROM retained_normal_mail_messages
+                WHERE account_id = ?
+                ORDER BY provider_message_id
+                ''',
+                (self.account_alpha['id'],),
+            ).fetchall()
+            beta_rows = db.execute(
+                '''
+                SELECT provider_message_id, folder, is_read
+                FROM retained_normal_mail_messages
+                WHERE account_id = ?
+                ''',
+                (self.account_beta['id'],),
+            ).fetchall()
+
+        self.assertEqual(len(alpha_rows), 2)
+        self.assertEqual({row['provider_message_id'] for row in alpha_rows}, {'a-unread', 'a-read'})
+        self.assertEqual(len(beta_rows), 1)
+        self.assertEqual(beta_rows[0]['provider_message_id'], 'b-junk')
+        self.assertEqual(str(beta_rows[0]['folder']).lower(), 'junkemail')
+        self.assertEqual(int(beta_rows[0]['is_read'] or 0), 0)
+
 
 if __name__ == '__main__':
     unittest.main()

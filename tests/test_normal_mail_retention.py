@@ -508,7 +508,8 @@ class NormalMailRetentionTests(unittest.TestCase):
             None,
         )
         self.assertIsNotNone(matched)
-        self.assertEqual(matched['unread_count'], 2)
+        # inbox 未读 2 + junkemail 未读 1
+        self.assertEqual(matched['unread_count'], 3)
 
     def _retained_read_state(self, message_id):
         with self.app.app_context():

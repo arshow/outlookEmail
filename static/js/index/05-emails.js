@@ -1,6 +1,35 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, accountsCache, adjustAccountUnreadCount, adjustIframeHeight, aggregatedInboxGroupId, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderColoredRemarkMarkup, renderEmptyStateMarkup, scheduleEmailListLoadCheck, showEmailFetchErrorModal, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, accountsCache, adjustAccountUnreadCount, adjustIframeHeight, aggregatedInboxGroupId, applyAccountUnreadCountsMap, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderColoredRemarkMarkup, renderEmptyStateMarkup, scheduleEmailListLoadCheck, showEmailFetchErrorModal, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
 
         // ==================== 邮件相关 ====================
+
+        function syncCachesAfterAggregatedFetch(data, options = {}) {
+            if (!data || data.success !== true) {
+                return;
+            }
+
+            const folder = String(options.folder || currentFolder || 'all').trim().toLowerCase() || 'all';
+            const source = String(options.source || data.source || '').trim().toLowerCase();
+            const isRemote = !['local', 'retained', 'cache'].includes(source);
+
+            // 远程聚合刷新后失效各账号列表缓存，避免点进单账号仍读旧数据
+            if (isRemote && Array.isArray(data.account_summaries)) {
+                data.account_summaries.forEach(summary => {
+                    if (!summary || summary.success === false) {
+                        return;
+                    }
+                    const accountEmail = String(summary.account_email || '').trim();
+                    if (accountEmail && typeof invalidateEmailListCache === 'function') {
+                        invalidateEmailListCache(accountEmail, folder);
+                    }
+                });
+            }
+
+            if (typeof applyAccountUnreadCountsMap === 'function') {
+                applyAccountUnreadCountsMap(data.unread_by_account, {
+                    aggregatedTotal: data.unread_total
+                });
+            }
+        }
 
         function isNormalMailboxListRequest() {
             return !isTempEmailGroup && currentMethod !== 'cloudflare-admin' && !isAggregatedInboxMode();
@@ -645,6 +674,12 @@
                         if (aggregated && data.partial && Array.isArray(data.account_errors) && data.account_errors.length) {
                             showToast(`部分账号拉取失败（${data.account_errors.length}）`, 'warning');
                         }
+                    }
+                    if (aggregated) {
+                        syncCachesAfterAggregatedFetch(data, {
+                            folder: requestFolder,
+                            source: options.source || ''
+                        });
                     }
                 }
                 return data;
@@ -1446,7 +1481,7 @@
             };
             const trackUnreadDelta = (email) => {
                 const folder = String(email?.folder || currentFolder || 'inbox').trim().toLowerCase();
-                if (folder !== 'inbox') {
+                if (!['inbox', 'junkemail', 'all'].includes(folder)) {
                     return;
                 }
                 const accountId = resolveUnreadAccountId(email);

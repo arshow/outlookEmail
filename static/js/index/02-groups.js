@@ -1443,7 +1443,61 @@
             return `<span class="account-unread-badge" title="未读 ${count} 封" aria-label="未读 ${count} 封">${escapeHtml(label)}</span>`;
         }
 
-        function updateAccountUnreadCountDisplay(accountId, nextCount) {
+        function getAggregatedInboxUnreadTotal(accounts = []) {
+            return (Array.isArray(accounts) ? accounts : []).reduce((sum, account) => {
+                if (!account?.aggregated_inbox_enabled) {
+                    return sum;
+                }
+                return sum + Math.max(0, Number(account.unread_count) || 0);
+            }, 0);
+        }
+
+        function updateAggregatedInboxUnreadBadge(totalCount) {
+            const accountItem = document.querySelector('#accountList .aggregated-inbox-account-item');
+            if (!accountItem) {
+                return;
+            }
+            const titleRow = accountItem.querySelector('.account-title-row');
+            if (!titleRow) {
+                return;
+            }
+            const count = Math.max(0, Number(totalCount) || 0);
+            const existing = titleRow.querySelector('.account-unread-badge');
+            if (count <= 0) {
+                existing?.remove();
+                return;
+            }
+            const label = count > 99 ? '99+' : String(count);
+            if (existing) {
+                existing.textContent = label;
+                existing.title = `未读 ${count} 封`;
+                existing.setAttribute('aria-label', `未读 ${count} 封`);
+                return;
+            }
+            titleRow.insertAdjacentHTML('beforeend', renderAccountUnreadBadge(count));
+        }
+
+        function applyAccountUnreadCountsMap(unreadByAccount, options = {}) {
+            const unreadMap = unreadByAccount && typeof unreadByAccount === 'object'
+                ? unreadByAccount
+                : {};
+            Object.entries(unreadMap).forEach(([accountId, count]) => {
+                updateAccountUnreadCountDisplay(accountId, count, { skipAggregatedBadge: true });
+            });
+
+            if (options.aggregatedTotal != null) {
+                updateAggregatedInboxUnreadBadge(options.aggregatedTotal);
+                return;
+            }
+
+            const groupKey = String(currentGroupId);
+            const list = accountsCache?.[groupKey];
+            if (Array.isArray(list)) {
+                updateAggregatedInboxUnreadBadge(getAggregatedInboxUnreadTotal(list));
+            }
+        }
+
+        function updateAccountUnreadCountDisplay(accountId, nextCount, options = {}) {
             const normalizedId = Number(accountId);
             if (!Number.isFinite(normalizedId) || normalizedId <= 0) {
                 return;
@@ -1462,26 +1516,32 @@
             }
 
             const accountItem = document.querySelector(`#accountList .account-item[data-account-id="${normalizedId}"]`);
-            if (!accountItem) {
-                return;
+            if (accountItem) {
+                const titleRow = accountItem.querySelector('.account-title-row');
+                if (titleRow) {
+                    const existing = titleRow.querySelector('.account-unread-badge');
+                    if (count <= 0) {
+                        existing?.remove();
+                    } else {
+                        const label = count > 99 ? '99+' : String(count);
+                        if (existing) {
+                            existing.textContent = label;
+                            existing.title = `未读 ${count} 封`;
+                            existing.setAttribute('aria-label', `未读 ${count} 封`);
+                        } else {
+                            titleRow.insertAdjacentHTML('beforeend', renderAccountUnreadBadge(count));
+                        }
+                    }
+                }
             }
-            const titleRow = accountItem.querySelector('.account-title-row');
-            if (!titleRow) {
-                return;
+
+            if (options.skipAggregatedBadge !== true) {
+                const groupKey = String(currentGroupId);
+                const list = accountsCache?.[groupKey];
+                if (Array.isArray(list)) {
+                    updateAggregatedInboxUnreadBadge(getAggregatedInboxUnreadTotal(list));
+                }
             }
-            const existing = titleRow.querySelector('.account-unread-badge');
-            if (count <= 0) {
-                existing?.remove();
-                return;
-            }
-            const label = count > 99 ? '99+' : String(count);
-            if (existing) {
-                existing.textContent = label;
-                existing.title = `未读 ${count} 封`;
-                existing.setAttribute('aria-label', `未读 ${count} 封`);
-                return;
-            }
-            titleRow.insertAdjacentHTML('beforeend', renderAccountUnreadBadge(count));
         }
 
         function adjustAccountUnreadCount(accountId, delta) {
@@ -1561,6 +1621,7 @@
                 && normalizedGroupId > 0
                 && !isTempEmailGroup
                 && !(isSearchMode && getAccountSearchScope() === 'all');
+            const aggregatedUnreadTotal = getAggregatedInboxUnreadTotal(accounts);
             const aggregatedEntry = canShowAggregatedInbox ? `
                 <div class="account-item aggregated-inbox-account-item cloudflare-global-account-item ${isAggregatedInboxMode() && Number(aggregatedInboxGroupId) === normalizedGroupId ? 'active' : ''}"
                      onclick="selectAggregatedInbox(event, ${normalizedGroupId})">
@@ -1569,6 +1630,7 @@
                             <div class="account-email-wrap">
                                 <div class="account-email cloudflare-global-account-title" title="聚合收件箱">聚合收件箱</div>
                             </div>
+                            ${renderAccountUnreadBadge(aggregatedUnreadTotal)}
                         </div>
                         <div class="account-meta-row">
                             <span class="account-status-pill provider" style="--pill-accent: #2563eb">当前分组</span>

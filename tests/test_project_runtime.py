@@ -2207,8 +2207,14 @@ class FrontendAccountUnreadBadgeTests(unittest.TestCase):
 
         self.assertIn('function renderAccountUnreadBadge(unreadCount)', groups_js)
         self.assertIn('renderAccountUnreadBadge(acc.unread_count)', groups_js)
+        self.assertIn('renderAccountUnreadBadge(aggregatedUnreadTotal)', groups_js)
+        self.assertIn('function getAggregatedInboxUnreadTotal(accounts = [])', groups_js)
+        self.assertIn('function applyAccountUnreadCountsMap(unreadByAccount, options = {})', groups_js)
         self.assertIn('function adjustAccountUnreadCount(accountId, delta)', groups_js)
         self.assertIn('adjustAccountUnreadCount(accountId, delta)', emails_js)
+        self.assertIn('function syncCachesAfterAggregatedFetch(data, options = {})', emails_js)
+        self.assertIn('syncCachesAfterAggregatedFetch(data,', emails_js)
+        self.assertIn('invalidateEmailListCache(accountEmail, folder)', emails_js)
         self.assertIn('.account-unread-badge', css)
 
     def test_account_list_renders_inbox_poll_status_marker(self):
