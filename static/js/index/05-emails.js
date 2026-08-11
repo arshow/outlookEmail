@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, adjustIframeHeight, aggregatedInboxGroupId, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderEmptyStateMarkup, scheduleEmailListLoadCheck, showEmailFetchErrorModal, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, adjustIframeHeight, aggregatedInboxGroupId, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderColoredRemarkMarkup, renderEmptyStateMarkup, scheduleEmailListLoadCheck, showEmailFetchErrorModal, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
 
         // ==================== 邮件相关 ====================
 
@@ -1291,7 +1291,7 @@
                         </div>
                         ${accountLabel ? `<div class="email-account-meta">
                             <div class="email-account-label" title="${escapeHtml(accountLabel)}">${escapeHtml(accountLabel)}</div>
-                            ${accountRemark ? `<div class="email-account-remark" title="${escapeHtml(accountRemark)}">${escapeHtml(accountRemark)}</div>` : ''}
+                            ${accountRemark ? renderColoredRemarkMarkup(accountRemark, 'email-account-remark') : ''}
                         </div>` : ''}
                         <div class="email-subject">${escapeHtml(email.subject || '无主题')}</div>
                         <div class="email-preview">${escapeHtml((email.body_preview || '').trim() || '暂无预览内容')}</div>

@@ -459,7 +459,7 @@ def normalize_account_pagination(limit: Any = None, offset: Any = 0) -> tuple[Op
 
 def normalize_account_sort(sort_by: Any = 'created_at', sort_order: Any = 'desc') -> tuple[str, str]:
     normalized_sort_by = str(sort_by or '').strip().lower()
-    if normalized_sort_by not in {'sort_order', 'created_at', 'email'}:
+    if normalized_sort_by not in {'sort_order', 'created_at', 'email', 'remark'}:
         normalized_sort_by = 'created_at'
 
     normalized_sort_order = str(sort_order or '').strip().lower()
@@ -484,6 +484,14 @@ def build_account_order_clause(sort_by: Any = 'created_at', sort_order: Any = 'd
         '''
     if normalized_sort_by == 'email':
         return f'ORDER BY a.email COLLATE NOCASE {direction}, a.created_at DESC, a.id DESC'
+    if normalized_sort_by == 'remark':
+        return f'''
+            ORDER BY
+                CASE WHEN TRIM(COALESCE(a.remark, '')) = '' THEN 1 ELSE 0 END ASC,
+                a.remark COLLATE NOCASE {direction},
+                a.email COLLATE NOCASE ASC,
+                a.id DESC
+        '''
     return f'ORDER BY a.created_at {direction}, a.email COLLATE NOCASE ASC, a.id DESC'
 
 

@@ -1,4 +1,4 @@
-        /* global ACCOUNT_LIST_DEFAULT_PAGE_SIZE, ACCOUNT_LIST_MAX_PAGE_SIZE, accountListPageSize, accountListRequestSeq, accountPaginationState, accountSelectionMode, accountsCache, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentEmails, currentGroupId, currentSkip, currentSortBy, currentSortOrder, deleteAccount, editingGroupId, escapeHtml, formatAbsoluteDateTime, generateTempEmail, groups, handleAccountRowSelectionClick, handleAccountSelectionCheckboxClick, handleApiError, hasMoreEmails, hideModal, isMobileLayout, isTempEmailGroup, loadCloudflareChannelsForImport, loadTempEmails, localStorage, matchesSelectedTagFilters, normalizeTagFilterSelectionValue, openMobilePanel, renderEmptyStateMarkup, renderTempEmailList, resetSelectedAccountView, selectedColor, selectedTagFilters, setModalVisible, shouldShowAccountCreatedAt, shouldShowAccountSortOrder, showAddAccountModal, showGetRefreshTokenModal, showModal, showRefreshError, showTagManagementModal, showToast, suppressGroupClickUntil, tempEmailGroupId, toggleAccountSelectionMode, updateCurrentGroupHeader, updateMobileContext */
+        /* global ACCOUNT_LIST_DEFAULT_PAGE_SIZE, ACCOUNT_LIST_MAX_PAGE_SIZE, accountListPageSize, accountListRequestSeq, accountPaginationState, accountSelectionMode, accountsCache, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentEmails, currentGroupId, currentSkip, currentSortBy, currentSortOrder, deleteAccount, editingGroupId, escapeHtml, formatAbsoluteDateTime, generateTempEmail, groups, handleAccountRowSelectionClick, handleAccountSelectionCheckboxClick, handleApiError, hasMoreEmails, hideModal, isMobileLayout, isTempEmailGroup, loadCloudflareChannelsForImport, loadTempEmails, localStorage, matchesSelectedTagFilters, normalizeTagFilterSelectionValue, openMobilePanel, renderColoredRemarkMarkup, renderEmptyStateMarkup, renderTempEmailList, resetSelectedAccountView, selectedColor, selectedTagFilters, setModalVisible, shouldShowAccountCreatedAt, shouldShowAccountSortOrder, showAddAccountModal, showGetRefreshTokenModal, showModal, showRefreshError, showTagManagementModal, showToast, suppressGroupClickUntil, tempEmailGroupId, toggleAccountSelectionMode, updateCurrentGroupHeader, updateMobileContext */
 
         // ==================== 分组相关 ====================
 
@@ -1503,7 +1503,7 @@
                         </div>
                         ${renderAccountGroupSummary(acc, showSearchGroupInfo)}
                         ${renderAccountAliasSummary(acc.aliases)}
-                        ${acc.remark && acc.remark.trim() ? `<div class="account-remark" title="${escapeHtml(acc.remark)}">${escapeHtml(acc.remark)}</div>` : ''}
+                        ${acc.remark && acc.remark.trim() ? renderColoredRemarkMarkup(acc.remark, 'account-remark') : ''}
                         ${(acc.tags || []).length ? `<div class="account-tags">${renderAccountTagSummary(acc.tags, acc.id)}</div>` : ''}
                         ${renderAccountFooter(acc)}
                     </div>
@@ -1536,7 +1536,8 @@
         const ACCOUNT_SORT_DEFAULT_ORDERS = {
             sort_order: 'asc',
             created_at: 'desc',
-            email: 'asc'
+            email: 'asc',
+            remark: 'asc'
         };
 
         function normalizeAccountSortBy(value) {
@@ -1661,6 +1662,24 @@
             return order === 'asc'
                 ? emailA.localeCompare(emailB)
                 : emailB.localeCompare(emailA);
+        }
+
+        function compareAccountsByRemark(a, b, order = 'asc') {
+            const remarkA = String(a?.remark || '').trim();
+            const remarkB = String(b?.remark || '').trim();
+            const hasRemarkA = !!remarkA;
+            const hasRemarkB = !!remarkB;
+
+            // 无备注的账号排在有备注的后面，便于按备注浏览
+            if (hasRemarkA !== hasRemarkB) {
+                return hasRemarkA ? -1 : 1;
+            }
+            if (!hasRemarkA && !hasRemarkB) {
+                return 0;
+            }
+
+            const compare = remarkA.localeCompare(remarkB, undefined, { sensitivity: 'base' });
+            return order === 'asc' ? compare : -compare;
         }
 
         // 排序账号列表
@@ -1851,6 +1870,14 @@
                     const createdCompare = compareAccountsByCreatedAt(a, b, currentSortOrder);
                     if (createdCompare !== 0) {
                         return createdCompare;
+                    }
+                    return compareAccountsByEmail(a, b, 'asc');
+                }
+
+                if (currentSortBy === 'remark') {
+                    const remarkCompare = compareAccountsByRemark(a, b, currentSortOrder);
+                    if (remarkCompare !== 0) {
+                        return remarkCompare;
                     }
                     return compareAccountsByEmail(a, b, 'asc');
                 }

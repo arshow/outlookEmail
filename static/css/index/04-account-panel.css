@@ -606,6 +606,22 @@
             word-break: break-word;
         }
 
+        .account-remark.remark-color-chip {
+            display: inline-block;
+            max-width: 100%;
+            padding: 2px 8px;
+            border-radius: 999px;
+            border: 1px solid var(--remark-border, #dbe2ea);
+            background: var(--remark-bg, #f8fafc);
+            color: var(--remark-fg, #5b6472);
+            font-weight: 600;
+            -webkit-box-orient: initial;
+            -webkit-line-clamp: initial;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            vertical-align: top;
+        }
+
         .account-aliases {
             font-size: 12px;
             color: #64748b;

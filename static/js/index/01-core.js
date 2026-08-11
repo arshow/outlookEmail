@@ -2216,6 +2216,47 @@
                 .replace(/'/g, '&#39;');
         }
 
+        function hashStringToHue(value) {
+            const text = String(value || '');
+            let hash = 2166136261;
+            for (let i = 0; i < text.length; i += 1) {
+                hash ^= text.charCodeAt(i);
+                hash = Math.imul(hash, 16777619);
+            }
+            return hash >>> 0;
+        }
+
+        function getRemarkColorPalette(remark) {
+            const text = String(remark || '').trim();
+            if (!text) {
+                return null;
+            }
+            // 同一备注文本始终映射到同一色相，左右列表保持一致
+            const hue = hashStringToHue(text.toLowerCase()) % 360;
+            return {
+                fg: `hsl(${hue} 62% 30%)`,
+                bg: `hsl(${hue} 78% 94%)`,
+                border: `hsl(${hue} 48% 78%)`,
+            };
+        }
+
+        function buildRemarkColorStyle(remark) {
+            const palette = getRemarkColorPalette(remark);
+            if (!palette) {
+                return '';
+            }
+            return `--remark-fg: ${palette.fg}; --remark-bg: ${palette.bg}; --remark-border: ${palette.border};`;
+        }
+
+        function renderColoredRemarkMarkup(remark, className) {
+            const text = String(remark || '').trim();
+            if (!text) {
+                return '';
+            }
+            const style = buildRemarkColorStyle(text);
+            return `<div class="${escapeHtml(className)} remark-color-chip" style="${style}" title="${escapeHtml(text)}">${escapeHtml(text)}</div>`;
+        }
+
         function renderEmptyStateMarkup(icon, text, options = {}) {
             const {
                 allowHtml = false,

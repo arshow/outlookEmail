@@ -2216,6 +2216,17 @@ class FrontendAccountRemarkShortcutTests(unittest.TestCase):
         self.assertIn('id="editAccountRemarkModal"', layout)
         self.assertIn('id="editAccountRemarkInput"', layout)
 
+    def test_remark_color_is_deterministic_and_shared_across_lists(self):
+        core_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '01-core.js').read_text(encoding='utf-8')
+        groups_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '02-groups.js').read_text(encoding='utf-8')
+        emails_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '05-emails.js').read_text(encoding='utf-8')
+
+        self.assertIn('function getRemarkColorPalette(remark)', core_js)
+        self.assertIn('function renderColoredRemarkMarkup(remark, className)', core_js)
+        self.assertIn('hashStringToHue(text.toLowerCase()) % 360', core_js)
+        self.assertIn("renderColoredRemarkMarkup(acc.remark, 'account-remark')", groups_js)
+        self.assertIn("renderColoredRemarkMarkup(accountRemark, 'email-account-remark')", emails_js)
+
 
 class FrontendAccountListPreferenceTests(unittest.TestCase):
     def test_account_sort_preference_is_loaded_saved_and_synced(self):
@@ -2620,6 +2631,7 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
         self.assertNotIn('data-sort="refresh_time"', layout_html)
         self.assertIn('data-sort="sort_order"', layout_html)
         self.assertIn('data-sort="created_at"', layout_html)
+        self.assertIn('data-sort="remark"', layout_html)
         self.assertIn('id="settingsShowAccountCreatedAt"', settings_html)
         self.assertIn('id="settingsShowAccountSortOrder"', settings_html)
         self.assertIn('id="settingsShowGroupId"', settings_html)
@@ -2628,6 +2640,9 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
         self.assertIn('const savedAccountSort = loadAccountSortPreference();', groups_js)
         self.assertIn("currentSortBy === 'sort_order'", groups_js)
         self.assertIn("currentSortBy === 'created_at'", groups_js)
+        self.assertIn("currentSortBy === 'remark'", groups_js)
+        self.assertIn('function compareAccountsByRemark(a, b, order = \'asc\')', groups_js)
+        self.assertIn("remark: 'asc'", groups_js)
         self.assertNotIn("currentSortBy === 'refresh_time'", groups_js)
         self.assertIn('shouldShowAccountCreatedAt()', groups_js)
         self.assertIn('shouldShowAccountSortOrder()', groups_js)

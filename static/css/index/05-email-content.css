@@ -315,6 +315,20 @@
             white-space: normal;
         }
 
+        .email-account-remark.remark-color-chip {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            border: 1px solid var(--remark-border, #dbe2ea);
+            background: var(--remark-bg, #f8fafc);
+            color: var(--remark-fg, #374151);
+            -webkit-box-orient: initial;
+            -webkit-line-clamp: initial;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            vertical-align: top;
+        }
+
         .email-item {
             margin: 0 12px 10px;
             padding: 14px;
