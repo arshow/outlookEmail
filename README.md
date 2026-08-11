@@ -142,15 +142,74 @@ docker run -d \
 
 ---
 
-## 使用提示（极简）
+## 使用说明
 
-1. **Outlook OAuth**：在 Azure 注册应用（或使用内置默认 Client ID），获取 Refresh Token 后在 Web 中导入账号。界面内也提供 OAuth 助手。
-2. **IMAP 账号**：按服务商填写服务器、端口、账号密码或应用专用密码。
-3. **查看邮件**：左侧选账号或「聚合收件箱」；单账号可展开文件夹树切换目录。
-4. **本地保留 / 发现**：在系统设置中开启普通邮件本地保留与收件箱发现相关选项，按需配置轮询间隔与并发。
-5. **外部 API**：在设置中配置 API Key，对接方式见 [docs/api.md](docs/api.md)。
+### 1. 获取 OAuth2 凭证（Azure）
 
-OAuth 截图与逐步说明仍可参考原项目 README 与本仓库 `img/` 目录中的示意图。
+这一步非必须：若购买的账号已自带令牌可跳过；项目也内置了默认 Client ID，跳过自定义应用注册时可直接从下面的**步骤 5**开始。
+
+要使用本工具，您需要获取以下 OAuth2 凭证：
+
+1. **Client ID** — Microsoft Azure 应用注册的客户端 ID
+2. **Refresh Token** — OAuth2 刷新令牌
+
+界面中的 OAuth2 助手会读取服务启动时的 `OAUTH_CLIENT_ID` 和 `OAUTH_REDIRECT_URI`。若在 Docker / Docker Compose 里配置了自己的值，授权链接和换取 Token 都会使用这些值；未配置则使用项目内置默认值。账号导入时，Client ID 要和同一次授权换出的 Refresh Token 配套使用。
+
+#### 步骤 1：注册 Azure 应用
+
+（按目前情况，通常需要 E3 / E5 或其他具备创建权限的开发者账号。）
+
+访问 [Azure Portal](https://portal.azure.com/)，进入「应用注册」：
+
+![应用注册](img/应用注册.png)
+
+#### 步骤 2：创建新应用
+
+点击「新注册」，填写应用信息：
+
+![注册应用程序](img/注册应用程序.png)
+
+- **名称**：自定义应用名称
+- **支持的账户类型**：选择「任何组织目录中的账户和个人 Microsoft 账户」
+- **重定向 URI**：选择「公共客户端/本机」，填写 `http://localhost:8080`
+
+#### 步骤 3：获取应用程序 ID
+
+创建完成后，复制「应用程序(客户端) ID」：
+
+![获取应用程序ID](img/获取应用程序ID.png)
+
+#### 步骤 4：配置 API 权限
+
+这一步多数情况下可省略；内置 Client ID 未单独配置此项也能正常使用。
+
+手动 OAuth 助手默认走 GraphAPI 单资源权限，避免 Microsoft OAuth v2 在同一次授权中混用 Graph 和 Outlook 资源时报 `AADSTS70011`：
+
+- `offline_access` — 获取刷新令牌
+- `Mail.Read` / `Mail.ReadWrite` / `Mail.Send` / `User.Read` — Graph 读信、标已读、发信与基本用户信息（旧账号需重新授权后才能发信）
+
+如需 IMAP 访问，请在「Outlook邮箱授权」面板选择 `IMAP授权`（自动授权默认是 GraphAPI），不要和 Graph 权限放在同一次手动授权链接里。
+
+#### 步骤 5：获取 Refresh Token
+
+使用本工具内置的 OAuth2 助手获取 Refresh Token：
+
+![换取token](img/换取token.png)
+
+1. 在 Web 界面点击「获取 Token」按钮
+2. 点击「生成授权链接」
+3. 复制链接到浏览器打开，完成授权
+4. 复制授权后的完整 URL（出于安全考虑，没有统一建设外部授权回调服务，授权都在你自己部署的服务内完成，不会外泄。重定向 URI 为 `http://localhost:8080`，浏览器里该地址本身往往打不开，需要把完整回调 URL 复制回本服务，继续换取 Refresh Token）
+5. 粘贴到「授权后的 URL」输入框
+6. 点击「换取 Token」按钮
+7. 复制获得的 Refresh Token
+
+### 2. 其他常用操作
+
+1. **导入账号**：在 Web 中导入 Outlook/Hotmail OAuth 或标准 IMAP 账号。
+2. **查看邮件**：左侧选账号或「聚合收件箱」；单账号可展开文件夹树切换目录。
+3. **本地保留 / 发现**：在系统设置中开启普通邮件本地保留与收件箱发现相关选项，按需配置轮询间隔与并发。
+4. **外部 API**：在设置中配置 API Key，对接方式见 [docs/api.md](docs/api.md)。
 
 ---
 
