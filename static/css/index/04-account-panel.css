@@ -1079,6 +1079,61 @@
             flex-shrink: 0;
         }
 
+        /* 邮件批量栏：紧凑单行，避免窄列折成多层 */
+        #emailBatchActionBar {
+            justify-content: flex-start;
+            flex-wrap: nowrap;
+            padding: 8px;
+            gap: 8px;
+            overflow-x: auto;
+        }
+
+        #emailBatchActionBar .batch-action-bar__summary {
+            appearance: none;
+            -webkit-appearance: none;
+            flex-shrink: 0;
+            min-height: 28px;
+            padding: 0 10px;
+            margin: 0;
+            font: inherit;
+            color: inherit;
+            text-align: left;
+            cursor: pointer;
+            transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
+        }
+
+        #emailBatchActionBar .batch-action-bar__summary:hover {
+            background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
+            border-color: #94a3b8;
+        }
+
+        #emailBatchActionBar .batch-action-bar__summary:focus-visible {
+            outline: 2px solid rgba(15, 23, 42, 0.28);
+            outline-offset: 2px;
+        }
+
+        #emailBatchActionBar .batch-action-bar__controls {
+            flex: 0 1 auto;
+            flex-wrap: nowrap;
+            justify-content: flex-end;
+            gap: 6px;
+            margin-left: auto;
+            min-width: 0;
+        }
+
+        #emailBatchActionBar .batch-action-group {
+            flex-wrap: nowrap;
+            flex-shrink: 0;
+            gap: 4px;
+            padding: 0;
+        }
+
+        #emailBatchActionBar .batch-btn {
+            flex-shrink: 0;
+            min-height: 26px;
+            padding: 0 8px;
+        }
+
 
         @media (min-width: 769px) {
             .account-panel.batch-toolbar-active .account-list {

@@ -1335,6 +1335,9 @@ def serialize_account_summary(account: Dict[str, Any], last_refresh_log: Optiona
         'account_type': account.get('account_type', 'outlook'),
         'provider': account.get('provider', 'outlook'),
         'forward_enabled': bool(account.get('forward_enabled')),
+        'inbox_poll_enabled': bool(account['inbox_poll_enabled']) if account.get('inbox_poll_enabled') is not None else True,
+        'inbox_poll_last_checked_at': account.get('inbox_poll_last_checked_at', '') or '',
+        'aggregated_inbox_enabled': bool(account.get('aggregated_inbox_enabled')),
         'proxy_override_enabled': account_has_proxy_override(account),
         'last_refresh_at': refresh_state['last_refresh_at'],
         'last_refresh_status': refresh_state['last_refresh_status'],
@@ -1350,17 +1353,61 @@ def serialize_account_summary(account: Dict[str, Any], last_refresh_log: Optiona
     if include_imap_meta:
         payload['imap_host'] = account.get('imap_host', '')
         payload['imap_port'] = account.get('imap_port', 993)
+        payload['smtp_host'] = account.get('smtp_host', '') or ''
+        payload['smtp_port'] = int(account.get('smtp_port') or 0)
+        payload['smtp_use_tls'] = bool(account.get('smtp_use_tls'))
+        payload['smtp_use_ssl'] = bool(account.get('smtp_use_ssl'))
+        smtp_ready = True
+        if (account.get('account_type') or 'outlook') == 'imap':
+            provider_key = (account.get('provider') or 'custom').strip().lower()
+            if provider_key == 'custom':
+                smtp_ready = bool(payload['smtp_host'])
+            else:
+                provider_meta = get_provider_meta(provider_key, account.get('email', ''))
+                smtp_ready = bool(payload['smtp_host'] or provider_meta.get('smtp_host'))
+        payload['smtp_ready'] = smtp_ready
     return payload
 
 
 ACCOUNT_INSERT_SQL = '''
     INSERT OR IGNORE INTO accounts (
         email, password, client_id, refresh_token, group_id, sort_order, remark,
-        status, account_type, provider, imap_host, imap_port, imap_password, forward_enabled,
+        status, account_type, provider, imap_host, imap_port, imap_password,
+        smtp_host, smtp_port, smtp_use_tls, smtp_use_ssl, forward_enabled,
         forward_last_checked_at, proxy_url, fallback_proxy_url_1, fallback_proxy_url_2
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 '''
+
+
+def normalize_account_smtp_fields(provider: str, email_addr: str = '', smtp_host: str = '',
+                                  smtp_port: Any = 0, smtp_use_tls: Any = False,
+                                  smtp_use_ssl: Any = False) -> Dict[str, Any]:
+    provider_meta = get_provider_meta(provider, email_addr)
+    host = str(smtp_host or '').strip()
+    try:
+        port = int(smtp_port or 0)
+    except (TypeError, ValueError):
+        port = 0
+    use_tls = bool(smtp_use_tls) if not isinstance(smtp_use_tls, str) else str(smtp_use_tls).lower() in (
+        '1', 'true', 'yes', 'on'
+    )
+    use_ssl = bool(smtp_use_ssl) if not isinstance(smtp_use_ssl, str) else str(smtp_use_ssl).lower() in (
+        '1', 'true', 'yes', 'on'
+    )
+    if provider_meta['key'] != 'custom' and not host:
+        host = str(provider_meta.get('smtp_host', '') or '').strip()
+        port = int(provider_meta.get('smtp_port', 0) or 0)
+        use_tls = bool(provider_meta.get('smtp_use_tls', False))
+        use_ssl = bool(provider_meta.get('smtp_use_ssl', False))
+    if port < 0 or port > 65535:
+        port = 0
+    return {
+        'smtp_host': host,
+        'smtp_port': port,
+        'smtp_use_tls': 1 if use_tls else 0,
+        'smtp_use_ssl': 1 if use_ssl else 0,
+    }
 
 
 def build_account_insert_values(email_addr: str, password: str, client_id: str = '', refresh_token: str = '',
@@ -1369,7 +1416,9 @@ def build_account_insert_values(email_addr: str, password: str, client_id: str =
                                 imap_password: str = '', forward_enabled: bool = False,
                                 sort_order: Optional[int] = None, status: str = 'active',
                                 proxy_url: str = '', fallback_proxy_url_1: str = '',
-                                fallback_proxy_url_2: str = '') -> tuple:
+                                fallback_proxy_url_2: str = '', smtp_host: str = '',
+                                smtp_port: Any = 0, smtp_use_tls: Any = False,
+                                smtp_use_ssl: Any = False) -> tuple:
     encrypted_password = encrypt_data(password) if password else password
     encrypted_refresh_token = encrypt_data(refresh_token) if refresh_token else refresh_token
     encrypted_imap_password = encrypt_data(imap_password) if imap_password else imap_password
@@ -1380,6 +1429,9 @@ def build_account_insert_values(email_addr: str, password: str, client_id: str =
     normalized_imap_port = int(imap_port or provider_meta.get('imap_port', 993) or 993)
     normalized_sort_order = parse_account_sort_order_input(sort_order)
     normalized_status = normalize_account_status(status)
+    smtp_fields = normalize_account_smtp_fields(
+        normalized_provider, email_addr, smtp_host, smtp_port, smtp_use_tls, smtp_use_ssl
+    )
 
     return (
         email_addr,
@@ -1395,6 +1447,10 @@ def build_account_insert_values(email_addr: str, password: str, client_id: str =
         normalized_imap_host,
         normalized_imap_port,
         encrypted_imap_password,
+        smtp_fields['smtp_host'],
+        smtp_fields['smtp_port'],
+        smtp_fields['smtp_use_tls'],
+        smtp_fields['smtp_use_ssl'],
         1 if forward_enabled else 0,
         datetime.now(timezone.utc).isoformat() if forward_enabled else None,
         str(proxy_url or '').strip(),
@@ -1409,7 +1465,9 @@ def add_account(email_addr: str, password: str, client_id: str = '', refresh_tok
                 imap_password: str = '', forward_enabled: bool = False,
                 sort_order: Optional[int] = None, status: str = 'active',
                 proxy_url: str = '', fallback_proxy_url_1: str = '',
-                fallback_proxy_url_2: str = '') -> bool:
+                fallback_proxy_url_2: str = '', smtp_host: str = '',
+                smtp_port: Any = 0, smtp_use_tls: Any = False,
+                smtp_use_ssl: Any = False) -> bool:
     """添加邮箱账号"""
     db = get_db()
     try:
@@ -1418,7 +1476,8 @@ def add_account(email_addr: str, password: str, client_id: str = '', refresh_tok
             email_addr, password, client_id, refresh_token, group_id, remark,
             account_type, provider, imap_host, imap_port, imap_password,
             forward_enabled, sort_order, status,
-            proxy_url, fallback_proxy_url_1, fallback_proxy_url_2
+            proxy_url, fallback_proxy_url_1, fallback_proxy_url_2,
+            smtp_host, smtp_port, smtp_use_tls, smtp_use_ssl
         ))
         db.commit()
         return db.total_changes > before_changes
@@ -1990,7 +2049,10 @@ def update_account(account_id: int, email_addr: str, password: str, client_id: s
                    account_type: str = 'outlook', provider: str = 'outlook',
                    imap_host: str = '', imap_port: int = 993, imap_password: str = '',
                    forward_enabled: bool = False, proxy_url: str = '',
-                   fallback_proxy_url_1: str = '', fallback_proxy_url_2: str = '') -> bool:
+                   fallback_proxy_url_1: str = '', fallback_proxy_url_2: str = '',
+                   smtp_host: str = '', smtp_port: Any = 0, smtp_use_tls: Any = False,
+                   smtp_use_ssl: Any = False, inbox_poll_enabled: bool = True,
+                   aggregated_inbox_enabled: bool = False) -> bool:
     """更新邮箱账号"""
     db = get_db()
     try:
@@ -2002,6 +2064,11 @@ def update_account(account_id: int, email_addr: str, password: str, client_id: s
         normalized_proxy_url = str(proxy_url or '').strip()
         normalized_fallback_proxy_url_1 = str(fallback_proxy_url_1 or '').strip()
         normalized_fallback_proxy_url_2 = str(fallback_proxy_url_2 or '').strip()
+        smtp_fields = normalize_account_smtp_fields(
+            provider, email_addr, smtp_host, smtp_port, smtp_use_tls, smtp_use_ssl
+        )
+        inbox_poll_value = 1 if inbox_poll_enabled else 0
+        aggregated_inbox_value = 1 if aggregated_inbox_enabled else 0
 
         current_account = db.execute(
             'SELECT forward_enabled, forward_last_checked_at FROM accounts WHERE id = ?',
@@ -2016,15 +2083,21 @@ def update_account(account_id: int, email_addr: str, password: str, client_id: s
                 UPDATE accounts
                 SET email = ?, password = ?, client_id = ?, refresh_token = ?,
                     group_id = ?, sort_order = ?, remark = ?, status = ?, account_type = ?, provider = ?,
-                    imap_host = ?, imap_port = ?, imap_password = ?, forward_enabled = ?,
-                    forward_last_checked_at = ?, proxy_url = ?, fallback_proxy_url_1 = ?,
+                    imap_host = ?, imap_port = ?, imap_password = ?,
+                    smtp_host = ?, smtp_port = ?, smtp_use_tls = ?, smtp_use_ssl = ?,
+                    forward_enabled = ?,
+                    forward_last_checked_at = ?, inbox_poll_enabled = ?, aggregated_inbox_enabled = ?,
+                    proxy_url = ?, fallback_proxy_url_1 = ?,
                     fallback_proxy_url_2 = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             ''', (
                 email_addr, encrypted_password, client_id, encrypted_refresh_token, group_id, normalized_sort_order,
                 remark, status,
-                account_type, provider, imap_host, imap_port, encrypted_imap_password, 1,
-                datetime.now(timezone.utc).isoformat(), normalized_proxy_url,
+                account_type, provider, imap_host, imap_port, encrypted_imap_password,
+                smtp_fields['smtp_host'], smtp_fields['smtp_port'],
+                smtp_fields['smtp_use_tls'], smtp_fields['smtp_use_ssl'], 1,
+                datetime.now(timezone.utc).isoformat(), inbox_poll_value, aggregated_inbox_value,
+                normalized_proxy_url,
                 normalized_fallback_proxy_url_1, normalized_fallback_proxy_url_2, account_id
             ))
         else:
@@ -2032,14 +2105,19 @@ def update_account(account_id: int, email_addr: str, password: str, client_id: s
                 UPDATE accounts
                 SET email = ?, password = ?, client_id = ?, refresh_token = ?,
                     group_id = ?, sort_order = ?, remark = ?, status = ?, account_type = ?, provider = ?,
-                    imap_host = ?, imap_port = ?, imap_password = ?, forward_enabled = ?,
+                    imap_host = ?, imap_port = ?, imap_password = ?,
+                    smtp_host = ?, smtp_port = ?, smtp_use_tls = ?, smtp_use_ssl = ?,
+                    forward_enabled = ?, inbox_poll_enabled = ?, aggregated_inbox_enabled = ?,
                     proxy_url = ?, fallback_proxy_url_1 = ?, fallback_proxy_url_2 = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             ''', (
                 email_addr, encrypted_password, client_id, encrypted_refresh_token, group_id, normalized_sort_order,
                 remark, status,
-                account_type, provider, imap_host, imap_port, encrypted_imap_password, 1 if forward_enabled else 0,
+                account_type, provider, imap_host, imap_port, encrypted_imap_password,
+                smtp_fields['smtp_host'], smtp_fields['smtp_port'],
+                smtp_fields['smtp_use_tls'], smtp_fields['smtp_use_ssl'],
+                1 if forward_enabled else 0, inbox_poll_value, aggregated_inbox_value,
                 normalized_proxy_url, normalized_fallback_proxy_url_1, normalized_fallback_proxy_url_2, account_id
             ))
         db.commit()
@@ -3276,6 +3354,123 @@ def update_accounts_forwarding_by_ids(account_ids: List[int], forward_enabled: b
                     ''',
                     updated_ids
                 )
+            db.commit()
+
+        return {
+            'success': True,
+            'updated_count': len(updated_ids),
+            'updated_accounts': updated_accounts,
+            'unchanged_count': unchanged_count,
+            'missing_ids': missing_ids,
+        }
+    except Exception as e:
+        db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+def update_accounts_inbox_poll_by_ids(account_ids: List[int], inbox_poll_enabled: bool) -> Dict[str, Any]:
+    """批量更新账号收件箱自动发现开关。"""
+    db = get_db()
+    normalized_ids = normalize_account_ids(account_ids)
+
+    if not normalized_ids:
+        return {'success': False, 'error': '请选择要修改的账号'}
+
+    placeholders = ','.join('?' * len(normalized_ids))
+    rows = db.execute(
+        f'''
+        SELECT id, email, COALESCE(inbox_poll_enabled, 1) AS inbox_poll_enabled
+        FROM accounts
+        WHERE id IN ({placeholders})
+        ORDER BY email COLLATE NOCASE ASC
+        ''',
+        normalized_ids
+    ).fetchall()
+
+    if not rows:
+        return {'success': False, 'error': '未找到可修改的账号'}
+
+    target_value = 1 if inbox_poll_enabled else 0
+    existing_ids = [row['id'] for row in rows]
+    existing_id_set = set(existing_ids)
+    missing_ids = [account_id for account_id in normalized_ids if account_id not in existing_id_set]
+    updated_rows = [row for row in rows if int(row['inbox_poll_enabled'] if row['inbox_poll_enabled'] is not None else 1) != target_value]
+    updated_ids = [row['id'] for row in updated_rows]
+    updated_accounts = [{'id': row['id'], 'email': row['email']} for row in updated_rows]
+    unchanged_count = len(rows) - len(updated_rows)
+
+    try:
+        if updated_ids:
+            update_placeholders = ','.join('?' * len(updated_ids))
+            db.execute(
+                f'''
+                UPDATE accounts
+                SET inbox_poll_enabled = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id IN ({update_placeholders})
+                ''',
+                [target_value] + updated_ids
+            )
+            db.commit()
+
+        return {
+            'success': True,
+            'updated_count': len(updated_ids),
+            'updated_accounts': updated_accounts,
+            'unchanged_count': unchanged_count,
+            'missing_ids': missing_ids,
+        }
+    except Exception as e:
+        db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+def update_accounts_aggregated_inbox_by_ids(account_ids: List[int], aggregated_inbox_enabled: bool) -> Dict[str, Any]:
+    """批量更新账号是否加入聚合收件箱。"""
+    db = get_db()
+    normalized_ids = normalize_account_ids(account_ids)
+
+    if not normalized_ids:
+        return {'success': False, 'error': '请选择要修改的账号'}
+
+    placeholders = ','.join('?' * len(normalized_ids))
+    rows = db.execute(
+        f'''
+        SELECT id, email, COALESCE(aggregated_inbox_enabled, 0) AS aggregated_inbox_enabled
+        FROM accounts
+        WHERE id IN ({placeholders})
+        ORDER BY email COLLATE NOCASE ASC
+        ''',
+        normalized_ids
+    ).fetchall()
+
+    if not rows:
+        return {'success': False, 'error': '未找到可修改的账号'}
+
+    target_value = 1 if aggregated_inbox_enabled else 0
+    existing_ids = [row['id'] for row in rows]
+    existing_id_set = set(existing_ids)
+    missing_ids = [account_id for account_id in normalized_ids if account_id not in existing_id_set]
+    updated_rows = [
+        row for row in rows
+        if int(row['aggregated_inbox_enabled'] if row['aggregated_inbox_enabled'] is not None else 0) != target_value
+    ]
+    updated_ids = [row['id'] for row in updated_rows]
+    updated_accounts = [{'id': row['id'], 'email': row['email']} for row in updated_rows]
+    unchanged_count = len(rows) - len(updated_rows)
+
+    try:
+        if updated_ids:
+            update_placeholders = ','.join('?' * len(updated_ids))
+            db.execute(
+                f'''
+                UPDATE accounts
+                SET aggregated_inbox_enabled = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id IN ({update_placeholders})
+                ''',
+                [target_value] + updated_ids
+            )
             db.commit()
 
         return {

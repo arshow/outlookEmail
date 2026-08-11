@@ -6,6 +6,20 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Changed
+- 聚合收件箱改为账号 opt-in：默认不加入；需在编辑账号开启「加入聚合收件箱」，或批量「加入聚合 / 移出聚合」。
+
+### Added
+- Web 登录态支持以账号身份发送新邮件、回复、全部回复与转发邮件，并可上传附件（单文件/总计 25MB）。
+- 新增内部接口 `POST /api/emails/send|reply|forward`（Session + CSRF）；Outlook 走 Graph `Mail.Send`，标准 IMAP 走账号 SMTP。
+- OAuth Graph 权限增加 `Mail.Send`；自定义 IMAP 账号可配置 SMTP 主机/端口/TLS。
+- 邮件列表增加「写邮件」，详情工具栏增加回复 / 全部回复 / 转发入口。
+
+### Important
+- 已有 Outlook 账号需重新授权以获取 `Mail.Send` 后才能发信。
+- IMAP 账号发信依赖 SMTP/应用专用密码；自定义 IMAP 未配置 SMTP 时无法发信。临时邮箱不支持发信。
+- 本能力不开放对外 API Key / `/api/external/*`。
+
 ## [3.0.3] - 2026-08-08
 
 ### Added

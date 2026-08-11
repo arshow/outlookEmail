@@ -51,3 +51,4 @@ openspec
 /.trellis/
 /scripts/compare_accounts_db.py
 /scripts/export_accounts.py
+secret_key.txt

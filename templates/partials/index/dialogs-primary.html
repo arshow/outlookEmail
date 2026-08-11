@@ -260,6 +260,20 @@
                                 <div class="form-hint">开启后会按系统设置转发到邮箱或 Telegram。</div>
                             </div>
                             <div class="form-group edit-account-span-2">
+                                <label class="settings-toggle settings-toggle--inline">
+                                    <input type="checkbox" id="editInboxPollEnabled" checked>
+                                    <span class="form-label">自动发现新邮件</span>
+                                </label>
+                                <div class="form-hint">默认开启。开启后服务端会定期抓取收件箱并写入本地保留；需同时开启「普通邮箱本地保留」。</div>
+                            </div>
+                            <div class="form-group edit-account-span-2">
+                                <label class="settings-toggle settings-toggle--inline">
+                                    <input type="checkbox" id="editAggregatedInboxEnabled">
+                                    <span class="form-label">加入聚合收件箱</span>
+                                </label>
+                                <div class="form-hint">默认关闭。开启后，该账号才会出现在分组「聚合收件箱」中。</div>
+                            </div>
+                            <div class="form-group edit-account-span-2">
                                 <label class="form-label">标签</label>
                                 <div class="tag-filter-dropdown" id="editTagFilterDropdown">
                                     <button class="tag-filter-trigger" type="button" onclick="toggleEditTagDropdown(event)">
@@ -331,6 +345,27 @@
                                     <div class="form-group">
                                         <label class="form-label">IMAP 端口</label>
                                         <input type="number" class="form-input" id="editImapPort" value="993" min="1" max="65535">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">SMTP 服务器（发信）</label>
+                                        <input type="text" class="form-input" id="editSmtpHost" placeholder="smtp.example.com">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">SMTP 端口</label>
+                                        <input type="number" class="form-input" id="editSmtpPort" value="465" min="1" max="65535">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="settings-toggle settings-toggle--inline">
+                                            <input type="checkbox" id="editSmtpUseTls">
+                                            <span class="form-label">SMTP STARTTLS</span>
+                                        </label>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="settings-toggle settings-toggle--inline">
+                                            <input type="checkbox" id="editSmtpUseSsl" checked>
+                                            <span class="form-label">SMTP SSL</span>
+                                        </label>
+                                        <div class="form-hint">自定义 IMAP 发信需配置 SMTP；未配置时无法写邮件。</div>
                                     </div>
                                 </div>
                             </div>
@@ -683,6 +718,62 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="hideEmailShareManagementModal()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 写邮件 / 回复 / 转发 -->
+    <div class="modal" id="composeEmailModal" onmousedown="if(event.target === this) hideComposeModal()">
+        <div class="modal-content compose-email-modal-content">
+            <div class="modal-header">
+                <h3 id="composeEmailModalTitle">写邮件</h3>
+                <button class="modal-close" onclick="hideComposeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="composeMode" value="new">
+                <input type="hidden" id="composeMessageId" value="">
+                <input type="hidden" id="composeFolder" value="inbox">
+                <input type="hidden" id="composeMethod" value="">
+                <div class="form-group">
+                    <label class="form-label">发件账号</label>
+                    <select class="form-select" id="composeFromEmail"></select>
+                    <div class="form-hint" id="composeFromEmailHint">聚合收件箱下请选择真实发件账号。</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">收件人</label>
+                    <input type="text" class="form-input" id="composeTo" placeholder="user@example.com，多个用逗号分隔">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">抄送</label>
+                    <input type="text" class="form-input" id="composeCc" placeholder="可选">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">密送</label>
+                    <input type="text" class="form-input" id="composeBcc" placeholder="可选">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">主题</label>
+                    <input type="text" class="form-input" id="composeSubject" placeholder="邮件主题">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">正文</label>
+                    <div class="compose-editor-toolbar">
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="formatComposeSelection('bold')">粗体</button>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="formatComposeSelection('italic')">斜体</button>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="formatComposeSelection('insertUnorderedList')">列表</button>
+                    </div>
+                    <div class="compose-editor" id="composeBodyEditor" contenteditable="true" role="textbox" aria-multiline="true"></div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">附件</label>
+                    <input type="file" id="composeAttachments" multiple>
+                    <div class="form-hint">单个/总计不超过 25MB；可执行类扩展名会被拒绝。</div>
+                    <div id="composeAttachmentList" class="compose-attachment-list"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" type="button" onclick="hideComposeModal()">取消</button>
+                <button class="btn btn-primary" type="button" id="composeSendBtn" onclick="submitComposeEmail()">发送</button>
             </div>
         </div>
     </div>

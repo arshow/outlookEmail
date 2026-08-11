@@ -221,6 +221,10 @@
             const batchCopyBtn = document.getElementById('batchCopyEmailsBtn');
             const batchExportBtn = document.getElementById('batchExportAccountsBtn');
             const batchEnableForwardingBtn = document.getElementById('batchEnableForwardingBtn');
+            const batchEnableInboxPollBtn = document.getElementById('batchEnableInboxPollBtn');
+            const batchDisableInboxPollBtn = document.getElementById('batchDisableInboxPollBtn');
+            const batchEnableAggregatedInboxBtn = document.getElementById('batchEnableAggregatedInboxBtn');
+            const batchDisableAggregatedInboxBtn = document.getElementById('batchDisableAggregatedInboxBtn');
             const batchDisableForwardingBtn = document.getElementById('batchDisableForwardingBtn');
             const batchProxyBtn = document.getElementById('batchProxyBtn');
             const batchAddTagBtn = document.getElementById('batchAddTagBtn');
@@ -232,8 +236,12 @@
             const autoAuthChecked = checked.filter(cb => (cb.dataset.accountType || 'outlook') !== 'imap');
             const enableForwardingChecked = checked.filter(cb => cb.dataset.forwardEnabled !== 'true');
             const disableForwardingChecked = checked.filter(cb => cb.dataset.forwardEnabled === 'true');
+            const enableAggregatedInboxChecked = checked.filter(cb => cb.dataset.aggregatedInboxEnabled !== 'true');
+            const disableAggregatedInboxChecked = checked.filter(cb => cb.dataset.aggregatedInboxEnabled === 'true');
             const isForwardingUpdating = batchEnableForwardingBtn?.dataset.loading === 'true'
                 || batchDisableForwardingBtn?.dataset.loading === 'true';
+            const isAggregatedInboxUpdating = batchEnableAggregatedInboxBtn?.dataset.loading === 'true'
+                || batchDisableAggregatedInboxBtn?.dataset.loading === 'true';
             const isTempContext = !!isTempEmailGroup;
             const loadedAccountCount = allCheckboxes.length;
             const totalAccountCount = Number(accountPaginationState?.total) || loadedAccountCount;
@@ -246,6 +254,10 @@
             if (batchOutlookAutoAuthBtn) batchOutlookAutoAuthBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchExportBtn) batchExportBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchEnableForwardingBtn) batchEnableForwardingBtn.style.display = isTempContext ? 'none' : 'inline-flex';
+            if (batchEnableInboxPollBtn) batchEnableInboxPollBtn.style.display = isTempContext ? 'none' : 'inline-flex';
+            if (batchDisableInboxPollBtn) batchDisableInboxPollBtn.style.display = isTempContext ? 'none' : 'inline-flex';
+            if (batchEnableAggregatedInboxBtn) batchEnableAggregatedInboxBtn.style.display = isTempContext ? 'none' : 'inline-flex';
+            if (batchDisableAggregatedInboxBtn) batchDisableAggregatedInboxBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchDisableForwardingBtn) batchDisableForwardingBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchProxyBtn) batchProxyBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchMoveGroupBtn) batchMoveGroupBtn.style.display = isTempContext ? 'none' : 'inline-flex';
@@ -334,6 +346,28 @@
                             : '取消转发';
                     }
                 }
+                if (batchEnableAggregatedInboxBtn) {
+                    batchEnableAggregatedInboxBtn.disabled = enableAggregatedInboxChecked.length === 0 || isAggregatedInboxUpdating;
+                    batchEnableAggregatedInboxBtn.title = enableAggregatedInboxChecked.length === 0
+                        ? '所选账号已全部加入聚合收件箱'
+                        : '';
+                    if (batchEnableAggregatedInboxBtn.dataset.loading !== 'true') {
+                        batchEnableAggregatedInboxBtn.textContent = enableAggregatedInboxChecked.length > 0
+                            ? `加入聚合${enableAggregatedInboxChecked.length !== checked.length ? ` (${enableAggregatedInboxChecked.length})` : ''}`
+                            : '加入聚合';
+                    }
+                }
+                if (batchDisableAggregatedInboxBtn) {
+                    batchDisableAggregatedInboxBtn.disabled = disableAggregatedInboxChecked.length === 0 || isAggregatedInboxUpdating;
+                    batchDisableAggregatedInboxBtn.title = disableAggregatedInboxChecked.length === 0
+                        ? '所选账号已全部移出聚合收件箱'
+                        : '';
+                    if (batchDisableAggregatedInboxBtn.dataset.loading !== 'true') {
+                        batchDisableAggregatedInboxBtn.textContent = disableAggregatedInboxChecked.length > 0
+                            ? `移出聚合${disableAggregatedInboxChecked.length !== checked.length ? ` (${disableAggregatedInboxChecked.length})` : ''}`
+                            : '移出聚合';
+                    }
+                }
                 if (batchDeleteBtn) {
                     const isDeleting = batchDeleteBtn.dataset.loading === 'true';
                     batchDeleteBtn.disabled = isDeleting;
@@ -387,6 +421,18 @@
                     batchDisableForwardingBtn.textContent = '取消转发';
                     batchDisableForwardingBtn.title = '';
                 }
+                if (batchEnableAggregatedInboxBtn) {
+                    batchEnableAggregatedInboxBtn.disabled = false;
+                    batchEnableAggregatedInboxBtn.dataset.loading = 'false';
+                    batchEnableAggregatedInboxBtn.textContent = '加入聚合';
+                    batchEnableAggregatedInboxBtn.title = '';
+                }
+                if (batchDisableAggregatedInboxBtn) {
+                    batchDisableAggregatedInboxBtn.disabled = false;
+                    batchDisableAggregatedInboxBtn.dataset.loading = 'false';
+                    batchDisableAggregatedInboxBtn.textContent = '移出聚合';
+                    batchDisableAggregatedInboxBtn.title = '';
+                }
                 if (batchDeleteBtn) {
                     batchDeleteBtn.disabled = false;
                     batchDeleteBtn.dataset.loading = 'false';
@@ -434,6 +480,9 @@
                         forward_enabled: typeof sourceAccount.forward_enabled === 'boolean'
                             ? sourceAccount.forward_enabled
                             : checkbox.dataset.forwardEnabled === 'true',
+                        aggregated_inbox_enabled: typeof sourceAccount.aggregated_inbox_enabled === 'boolean'
+                            ? sourceAccount.aggregated_inbox_enabled
+                            : checkbox.dataset.aggregatedInboxEnabled === 'true',
                     };
                 })
                 .filter(Boolean);
@@ -858,6 +907,152 @@
 
         async function disableForwardingForSelectedAccounts() {
             await updateForwardingForSelectedAccounts(false);
+        }
+
+        async function updateInboxPollForSelectedAccounts(targetEnabled) {
+            const context = getCurrentAccountBatchSelectionContext();
+            const btn = document.getElementById(targetEnabled ? 'batchEnableInboxPollBtn' : 'batchDisableInboxPollBtn');
+            if (!btn || btn.disabled || context.isTempContext) return;
+
+            const selectedAccounts = getAccountBatchSelectedAccounts(context);
+            const accountIds = getAccountBatchSelectedIds(context);
+            const eligibleCount = selectedAccounts.filter(account => {
+                const enabled = account.inbox_poll_enabled !== false;
+                return enabled !== targetEnabled;
+            }).length;
+            const actionLabel = targetEnabled ? '开启自动发现' : '关闭自动发现';
+            const loadingLabel = targetEnabled ? '开启中...' : '关闭中...';
+            const finishedLabel = targetEnabled ? '已全部开启自动发现' : '已全部关闭自动发现';
+            const skippedLabel = targetEnabled ? '已开启' : '已关闭';
+
+            if (!accountIds.length) {
+                showToast(`请先选择要${actionLabel}的邮箱`, 'error');
+                return;
+            }
+            if (!eligibleCount) {
+                showToast(`所选账号${finishedLabel}`, 'error');
+                return;
+            }
+
+            const skippedCount = accountIds.length - eligibleCount;
+            const confirmMessage = skippedCount > 0
+                ? `确定要为所选 ${accountIds.length} 个邮箱${actionLabel}吗？其中 ${skippedCount} 个${skippedLabel}账号会自动跳过。`
+                : `确定要为所选 ${accountIds.length} 个邮箱${actionLabel}吗？`;
+            if (!(await showConfirmModal(confirmMessage, { title: actionLabel, confirmText: '确认', danger: false }))) {
+                return;
+            }
+
+            btn.disabled = true;
+            btn.dataset.loading = 'true';
+            btn.textContent = loadingLabel;
+
+            try {
+                const response = await fetch('/api/accounts/batch-update-inbox-poll', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        account_ids: accountIds,
+                        inbox_poll_enabled: targetEnabled
+                    })
+                });
+                const data = await response.json();
+
+                if (!data.success) {
+                    handleApiError(data, `批量${actionLabel}失败`);
+                    return;
+                }
+
+                showToast(data.message || `已为 ${eligibleCount} 个账号${actionLabel}`, 'success');
+                await afterSuccessfulAccountBatchMutation(context);
+            } catch (error) {
+                showToast(`批量${actionLabel}失败`, 'error');
+            } finally {
+                btn.dataset.loading = 'false';
+                btn.textContent = actionLabel;
+                updateAccountBatchControls(context);
+            }
+        }
+
+        async function enableInboxPollForSelectedAccounts() {
+            await updateInboxPollForSelectedAccounts(true);
+        }
+
+        async function disableInboxPollForSelectedAccounts() {
+            await updateInboxPollForSelectedAccounts(false);
+        }
+
+        async function updateAggregatedInboxForSelectedAccounts(targetEnabled) {
+            const context = getCurrentAccountBatchSelectionContext();
+            const btn = document.getElementById(
+                targetEnabled ? 'batchEnableAggregatedInboxBtn' : 'batchDisableAggregatedInboxBtn'
+            );
+            if (!btn || btn.disabled || context.isTempContext) return;
+
+            const selectedAccounts = getAccountBatchSelectedAccounts(context);
+            const accountIds = getAccountBatchSelectedIds(context);
+            const eligibleCount = selectedAccounts.filter(account => {
+                const enabled = !!account.aggregated_inbox_enabled;
+                return enabled !== targetEnabled;
+            }).length;
+            const actionLabel = targetEnabled ? '加入聚合' : '移出聚合';
+            const loadingLabel = targetEnabled ? '加入中...' : '移出中...';
+            const finishedLabel = targetEnabled ? '已全部加入聚合收件箱' : '已全部移出聚合收件箱';
+            const skippedLabel = targetEnabled ? '已加入' : '已移出';
+
+            if (!accountIds.length) {
+                showToast(`请先选择要${actionLabel}的邮箱`, 'error');
+                return;
+            }
+            if (!eligibleCount) {
+                showToast(`所选账号${finishedLabel}`, 'error');
+                return;
+            }
+
+            const skippedCount = accountIds.length - eligibleCount;
+            const confirmMessage = skippedCount > 0
+                ? `确定要为所选 ${accountIds.length} 个邮箱${actionLabel}吗？其中 ${skippedCount} 个${skippedLabel}账号会自动跳过。`
+                : `确定要为所选 ${accountIds.length} 个邮箱${actionLabel}吗？`;
+            if (!(await showConfirmModal(confirmMessage, { title: actionLabel, confirmText: '确认', danger: false }))) {
+                return;
+            }
+
+            btn.disabled = true;
+            btn.dataset.loading = 'true';
+            btn.textContent = loadingLabel;
+
+            try {
+                const response = await fetch('/api/accounts/batch-update-aggregated-inbox', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        account_ids: accountIds,
+                        aggregated_inbox_enabled: targetEnabled
+                    })
+                });
+                const data = await response.json();
+
+                if (!data.success) {
+                    handleApiError(data, `批量${actionLabel}失败`);
+                    return;
+                }
+
+                showToast(data.message || `已为 ${eligibleCount} 个账号${actionLabel}`, 'success');
+                await afterSuccessfulAccountBatchMutation(context);
+            } catch (error) {
+                showToast(`批量${actionLabel}失败`, 'error');
+            } finally {
+                btn.dataset.loading = 'false';
+                btn.textContent = actionLabel;
+                updateAccountBatchControls(context);
+            }
+        }
+
+        async function enableAggregatedInboxForSelectedAccounts() {
+            await updateAggregatedInboxForSelectedAccounts(true);
+        }
+
+        async function disableAggregatedInboxForSelectedAccounts() {
+            await updateAggregatedInboxForSelectedAccounts(false);
         }
 
         async function deleteSelectedAccounts() {

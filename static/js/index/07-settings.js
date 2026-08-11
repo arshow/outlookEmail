@@ -1373,6 +1373,18 @@
                     resetEditSecretInput('editImapPassword', 'revealEditImapPasswordBtn', !!acc.has_imap_password, acc.imap_password || '', '');
                     document.getElementById('editImapHost').value = acc.imap_host || '';
                     document.getElementById('editImapPort').value = acc.imap_port || 993;
+                    if (document.getElementById('editSmtpHost')) {
+                        document.getElementById('editSmtpHost').value = acc.smtp_host || '';
+                    }
+                    if (document.getElementById('editSmtpPort')) {
+                        document.getElementById('editSmtpPort').value = acc.smtp_port || 465;
+                    }
+                    if (document.getElementById('editSmtpUseTls')) {
+                        document.getElementById('editSmtpUseTls').checked = !!acc.smtp_use_tls;
+                    }
+                    if (document.getElementById('editSmtpUseSsl')) {
+                        document.getElementById('editSmtpUseSsl').checked = acc.smtp_use_ssl !== false;
+                    }
                     document.getElementById('editGroupSelect').value = acc.group_id || 1;
                     document.getElementById('editProxyUrl').value = acc.proxy_url || '';
                     document.getElementById('editFallbackProxyUrl1').value = acc.fallback_proxy_url_1 || '';
@@ -1383,6 +1395,12 @@
                     document.getElementById('editStatus').value = acc.status || 'active';
                     if (document.getElementById('editForwardEnabled')) {
                         document.getElementById('editForwardEnabled').checked = !!acc.forward_enabled;
+                    }
+                    if (document.getElementById('editInboxPollEnabled')) {
+                        document.getElementById('editInboxPollEnabled').checked = acc.inbox_poll_enabled !== false;
+                    }
+                    if (document.getElementById('editAggregatedInboxEnabled')) {
+                        document.getElementById('editAggregatedInboxEnabled').checked = !!acc.aggregated_inbox_enabled;
                     }
                     if (document.getElementById('editProviderSelect')) {
                         document.getElementById('editProviderSelect').value = acc.provider || (acc.account_type === 'imap' ? 'custom' : 'outlook');
@@ -1421,6 +1439,10 @@
                 provider,
                 imap_host: document.getElementById('editImapHost')?.value.trim() || '',
                 imap_port: Number.isFinite(imapPort) ? imapPort : 993,
+                smtp_host: document.getElementById('editSmtpHost')?.value.trim() || '',
+                smtp_port: parseInt(document.getElementById('editSmtpPort')?.value || '0', 10) || 0,
+                smtp_use_tls: !!document.getElementById('editSmtpUseTls')?.checked,
+                smtp_use_ssl: !!document.getElementById('editSmtpUseSsl')?.checked,
                 group_id: newGroupId,
                 proxy_url: document.getElementById('editProxyUrl')?.value.trim() || '',
                 fallback_proxy_url_1: document.getElementById('editFallbackProxyUrl1')?.value.trim() || '',
@@ -1433,6 +1455,12 @@
                     .filter(Boolean),
                 status: document.getElementById('editStatus').value,
                 forward_enabled: !!document.getElementById('editForwardEnabled')?.checked,
+                inbox_poll_enabled: document.getElementById('editInboxPollEnabled')
+                    ? !!document.getElementById('editInboxPollEnabled').checked
+                    : true,
+                aggregated_inbox_enabled: document.getElementById('editAggregatedInboxEnabled')
+                    ? !!document.getElementById('editAggregatedInboxEnabled').checked
+                    : false,
                 tag_ids: getEditSelectedTagIds()
             };
             if (shouldSubmitSecretInput(passwordInput)) {
@@ -1798,6 +1826,23 @@
                     const retentionEnabled = parseSettingsBoolean(data.settings.normal_mail_local_retention_enabled);
                     document.getElementById('normalMailLocalRetentionEnabled').checked = retentionEnabled;
                     setNormalMailLocalRetentionEnabled(retentionEnabled);
+                    if (document.getElementById('inboxPollSchedulerEnabled')) {
+                        document.getElementById('inboxPollSchedulerEnabled').checked = parseSettingsBoolean(
+                            data.settings.inbox_poll_scheduler_enabled ?? 'true'
+                        );
+                    }
+                    if (document.getElementById('inboxPollIntervalSeconds')) {
+                        document.getElementById('inboxPollIntervalSeconds').value = data.settings.inbox_poll_interval_seconds || '120';
+                    }
+                    if (document.getElementById('inboxPollAccountDelaySeconds')) {
+                        document.getElementById('inboxPollAccountDelaySeconds').value = data.settings.inbox_poll_account_delay_seconds || '1';
+                    }
+                    if (document.getElementById('inboxPollConcurrency')) {
+                        document.getElementById('inboxPollConcurrency').value = data.settings.inbox_poll_concurrency || '5';
+                    }
+                    if (document.getElementById('inboxPollTop')) {
+                        document.getElementById('inboxPollTop').value = data.settings.inbox_poll_top || '20';
+                    }
                     const fallbackForwardSeconds = String((parseInt(data.settings.forward_check_interval_minutes || '5', 10) || 5) * 60);
                     document.getElementById('forwardCheckIntervalSeconds').value = data.settings.forward_check_interval_seconds || fallbackForwardSeconds;
                     document.getElementById('forwardExecutionMode').value = data.settings.forward_execution_mode === 'parallel' ? 'parallel' : 'serial';
@@ -1858,6 +1903,13 @@
             const showAccountSortOrder = !!document.getElementById('settingsShowAccountSortOrder')?.checked;
             const showGroupId = !!document.getElementById('settingsShowGroupId')?.checked;
             const normalMailLocalRetentionEnabled = !!document.getElementById('normalMailLocalRetentionEnabled')?.checked;
+            const inboxPollSchedulerEnabled = document.getElementById('inboxPollSchedulerEnabled')
+                ? !!document.getElementById('inboxPollSchedulerEnabled').checked
+                : true;
+            const inboxPollIntervalSeconds = parseInt(document.getElementById('inboxPollIntervalSeconds')?.value || '120', 10);
+            const inboxPollAccountDelaySeconds = parseInt(document.getElementById('inboxPollAccountDelaySeconds')?.value || '1', 10);
+            const inboxPollConcurrency = parseInt(document.getElementById('inboxPollConcurrency')?.value || '5', 10);
+            const inboxPollTop = parseInt(document.getElementById('inboxPollTop')?.value || '20', 10);
             const settings = {};
             const forwardChannels = getSelectedForwardChannels();
 
@@ -1888,6 +1940,19 @@
             }
             if (document.getElementById('settingsCloudflareAiClearApiKey')?.checked) {
                 settings.cloudflare_ai_username_clear_api_key = true;
+            }
+
+            if (Number.isFinite(inboxPollIntervalSeconds) && (inboxPollIntervalSeconds < 20 || inboxPollIntervalSeconds > 3600)) {
+                showToast('收件箱发现轮询间隔必须在 20-3600 秒之间', 'error');
+                return;
+            }
+            if (Number.isFinite(inboxPollAccountDelaySeconds) && (inboxPollAccountDelaySeconds < 0 || inboxPollAccountDelaySeconds > 60)) {
+                showToast('收件箱发现账号间隔必须在 0-60 秒之间', 'error');
+                return;
+            }
+            if (Number.isFinite(inboxPollTop) && (inboxPollTop < 1 || inboxPollTop > 50)) {
+                showToast('收件箱发现每次抓取条数必须在 1-50 之间', 'error');
+                return;
             }
 
             const days = parseInt(refreshDays, 10);
@@ -2016,6 +2081,11 @@
             settings.show_account_sort_order = showAccountSortOrder;
             settings.show_group_id = showGroupId;
             settings.normal_mail_local_retention_enabled = normalMailLocalRetentionEnabled;
+            settings.inbox_poll_scheduler_enabled = inboxPollSchedulerEnabled;
+            settings.inbox_poll_interval_seconds = Number.isFinite(inboxPollIntervalSeconds) ? inboxPollIntervalSeconds : 120;
+            settings.inbox_poll_account_delay_seconds = Number.isFinite(inboxPollAccountDelaySeconds) ? inboxPollAccountDelaySeconds : 1;
+            settings.inbox_poll_concurrency = Number.isFinite(inboxPollConcurrency) ? inboxPollConcurrency : 5;
+            settings.inbox_poll_top = Number.isFinite(inboxPollTop) ? inboxPollTop : 20;
             settings.forward_channels = forwardChannels;
             settings.forward_check_interval_seconds = forwardSeconds;
             settings.forward_check_interval_minutes = Math.max(1, Math.min(60, Math.ceil(forwardSeconds / 60)));

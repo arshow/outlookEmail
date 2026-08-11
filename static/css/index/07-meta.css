@@ -41,3 +41,154 @@
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
 
+        .mail-folder-tree {
+            margin-top: 10px;
+            border: 1px solid var(--skin-border, #e5e7eb);
+            border-radius: 10px;
+            background: var(--skin-surface, #fff);
+            max-height: 220px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .mail-folder-tree-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--skin-border, #e5e7eb);
+            background: var(--skin-surface-muted, #f8fafc);
+        }
+
+        .mail-folder-tree-all,
+        .mail-folder-tree-refresh {
+            border: 1px solid var(--skin-border-strong, #d1d5db);
+            background: var(--skin-surface, #fff);
+            color: var(--skin-text, #111827);
+            border-radius: 8px;
+            height: 28px;
+            padding: 0 10px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .mail-folder-tree-all.active {
+            background: #1a1a1a;
+            border-color: #1a1a1a;
+            color: #fff;
+        }
+
+        .mail-folder-tree-list {
+            overflow: auto;
+            padding: 6px 4px;
+            min-height: 0;
+        }
+
+        .mail-folder-tree-empty,
+        .mail-folder-tree-error {
+            padding: 12px 10px;
+            font-size: 12px;
+            color: var(--skin-text-soft, #6b7280);
+        }
+
+        .mail-folder-node {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-height: 28px;
+            padding-right: 8px;
+            border-radius: 6px;
+        }
+
+        .mail-folder-node:hover {
+            background: var(--skin-surface-soft, #f3f4f6);
+        }
+
+        .mail-folder-node.active {
+            background: #eef2ff;
+        }
+
+        .mail-folder-toggle {
+            width: 22px;
+            height: 22px;
+            border: none;
+            background: transparent;
+            color: var(--skin-text-soft, #6b7280);
+            cursor: pointer;
+            border-radius: 4px;
+            flex-shrink: 0;
+            font-size: 12px;
+            line-height: 1;
+        }
+
+        .mail-folder-toggle:disabled {
+            opacity: 0.25;
+            cursor: default;
+        }
+
+        .mail-folder-label {
+            border: none;
+            background: transparent;
+            color: var(--skin-text, #111827);
+            font-size: 13px;
+            text-align: left;
+            cursor: pointer;
+            padding: 4px 2px;
+            min-width: 0;
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .mail-folder-label:disabled {
+            color: var(--skin-text-soft, #9ca3af);
+            cursor: default;
+        }
+
+        .email-status-filters {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        .email-status-filter {
+            border: 1px solid #e5e7eb;
+            background: #ffffff;
+            color: #4b5563;
+            border-radius: 999px;
+            padding: 6px 12px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+        }
+
+        .email-status-filter:hover {
+            border-color: #d1d5db;
+            background: #f9fafb;
+        }
+
+        .email-status-filter.active {
+            background: #111827;
+            border-color: #111827;
+            color: #ffffff;
+        }
+
+        .email-flag-btn {
+            border: none;
+            background: transparent;
+            color: #d1d5db;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            padding: 0 2px;
+            flex-shrink: 0;
+        }
+
+        .email-flag-btn.is-flagged,
+        .email-flag-btn:hover {
+            color: #f59e0b;
+        }
+

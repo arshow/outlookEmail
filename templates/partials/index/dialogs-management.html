@@ -36,6 +36,12 @@
                                     </button>
                                 </li>
                                 <li>
+                                    <button type="button" class="settings-sidebar-link" data-target="settingsInboxDiscoverySection" onclick="scrollSettingsSection('settingsInboxDiscoverySection', this)">
+                                        <strong>收件箱自动发现</strong>
+                                        <span>定时抓信、SSE 推送与账号开关</span>
+                                    </button>
+                                </li>
+                                <li>
                                     <button type="button" class="settings-sidebar-link" data-target="settingsWebdavBackupSection" onclick="scrollSettingsSection('settingsWebdavBackupSection', this)">
                                         <strong>WebDAV 备份</strong>
                                         <span>导出全部分组并按 Cron 上传</span>
@@ -286,6 +292,48 @@
                             <div class="form-hint">独立清理本地保留的普通邮箱列表与正文缓存，不会修改上方开关。</div>
                         </div>
                         <div id="normalMailRetentionClearStatus" class="settings-note">清理状态：普通邮箱本地缓存清理空闲</div>
+                    </div>
+                </section>
+
+                <section class="settings-section" id="settingsInboxDiscoverySection">
+                    <div class="settings-section-head">
+                        <span class="settings-section-kicker">Inbox Discovery</span>
+                        <h4>收件箱自动发现</h4>
+                        <p>服务端定时抓取已开启自动发现的账号收件箱，写入本地保留后通过 SSE 推送给停留中的前端。</p>
+                    </div>
+                    <div class="settings-panel settings-panel-stack">
+                        <div class="settings-panel-grid settings-panel-grid--compact">
+                            <div class="form-group settings-form-span-full">
+                                <label class="settings-toggle settings-toggle--card">
+                                    <input type="checkbox" id="inboxPollSchedulerEnabled" checked>
+                                    <span class="form-label">启用收件箱发现总开关</span>
+                                </label>
+                                <div class="form-hint">关闭后不会注册/执行发现任务。实际抓信还需要开启上方「普通邮箱本地保留」，且账号未单独关闭自动发现。</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="inboxPollIntervalSeconds">轮询间隔（秒）</label>
+                                <input type="number" class="form-input" id="inboxPollIntervalSeconds" min="20" max="3600" step="1" value="120">
+                                <div class="form-hint">范围 20-3600 秒，保存后会热更新调度器。</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="inboxPollAccountDelaySeconds">账号间隔（秒）</label>
+                                <input type="number" class="form-input" id="inboxPollAccountDelaySeconds" min="0" max="60" step="1" value="1">
+                                <div class="form-hint">提交下一账号前的错峰间隔；并发&gt;1 时用于减缓瞬时打满 Graph/IMAP。</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="inboxPollConcurrency">并发数</label>
+                                <input type="number" class="form-input" id="inboxPollConcurrency" min="1" max="20" step="1" value="5">
+                                <div class="form-hint">有限并行抓取账号数，范围 1-20；默认 5，适合上百到数百账号。</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="inboxPollTop">每次抓取条数</label>
+                                <input type="number" class="form-input" id="inboxPollTop" min="1" max="50" step="1" value="20">
+                            </div>
+                        </div>
+                        <div class="settings-action-row settings-action-row--toolbar">
+                            <button class="btn btn-secondary" type="button" id="triggerInboxDiscoveryBtn" onclick="triggerInboxDiscovery()">手动触发一次发现</button>
+                            <div class="form-hint">用于验证发现链路；多 worker 部署时 SSE 仅在当前进程内广播。</div>
+                        </div>
                     </div>
                 </section>
 

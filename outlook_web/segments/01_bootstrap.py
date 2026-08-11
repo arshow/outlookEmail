@@ -571,54 +571,90 @@ MAIL_PROVIDERS = {
         "label": "Outlook",
         "imap_host": IMAP_SERVER_NEW,
         "imap_port": 993,
+        "smtp_host": "smtp-mail.outlook.com",
+        "smtp_port": 587,
+        "smtp_use_tls": True,
+        "smtp_use_ssl": False,
         "account_type": "outlook",
     },
     "gmail": {
         "label": "Gmail",
         "imap_host": "imap.gmail.com",
         "imap_port": 993,
+        "smtp_host": "smtp.gmail.com",
+        "smtp_port": 587,
+        "smtp_use_tls": True,
+        "smtp_use_ssl": False,
         "account_type": "imap",
     },
     "qq": {
         "label": "QQ邮箱",
         "imap_host": "imap.qq.com",
         "imap_port": 993,
+        "smtp_host": "smtp.qq.com",
+        "smtp_port": 465,
+        "smtp_use_tls": False,
+        "smtp_use_ssl": True,
         "account_type": "imap",
     },
     "163": {
         "label": "163邮箱",
         "imap_host": "imap.163.com",
         "imap_port": 993,
+        "smtp_host": "smtp.163.com",
+        "smtp_port": 465,
+        "smtp_use_tls": False,
+        "smtp_use_ssl": True,
         "account_type": "imap",
     },
     "126": {
         "label": "126邮箱",
         "imap_host": "imap.126.com",
         "imap_port": 993,
+        "smtp_host": "smtp.126.com",
+        "smtp_port": 465,
+        "smtp_use_tls": False,
+        "smtp_use_ssl": True,
         "account_type": "imap",
     },
     "yahoo": {
         "label": "Yahoo",
         "imap_host": "imap.mail.yahoo.com",
         "imap_port": 993,
+        "smtp_host": "smtp.mail.yahoo.com",
+        "smtp_port": 465,
+        "smtp_use_tls": False,
+        "smtp_use_ssl": True,
         "account_type": "imap",
     },
     "aliyun": {
         "label": "阿里邮箱",
         "imap_host": "imap.aliyun.com",
         "imap_port": 993,
+        "smtp_host": "smtp.aliyun.com",
+        "smtp_port": 465,
+        "smtp_use_tls": False,
+        "smtp_use_ssl": True,
         "account_type": "imap",
     },
     "2925": {
         "label": "2925邮箱",
         "imap_host": "imap.2925.com",
         "imap_port": 993,
+        "smtp_host": "smtp.2925.com",
+        "smtp_port": 465,
+        "smtp_use_tls": False,
+        "smtp_use_ssl": True,
         "account_type": "imap",
     },
     "custom": {
         "label": "自定义 IMAP",
         "imap_host": "",
         "imap_port": 993,
+        "smtp_host": "",
+        "smtp_port": 465,
+        "smtp_use_tls": False,
+        "smtp_use_ssl": True,
         "account_type": "imap",
     },
 }
@@ -735,6 +771,7 @@ INDEX_JS_FILES = (
     'js/index/10-batch-actions.js',
     'js/index/11-email-shares.js',
     'js/index/12-outlook-upload-accounts.js',
+    'js/index/13-compose.js',
 )
 
 # GPTMail API 配置
@@ -765,10 +802,11 @@ export_verify_tokens = {}
 # OAuth 配置
 OAUTH_CLIENT_ID = os.getenv("OAUTH_CLIENT_ID", "9e5f94bc-e8a4-4e73-b8be-63364c29d753")
 OAUTH_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8080")
-# Graph 委托权限（读信 / 标已读等写操作 / 基本用户信息）
+# Graph 委托权限（读信 / 标已读等写操作 / 发信 / 基本用户信息）
 OAUTH_GRAPH_SCOPES = [
     "https://graph.microsoft.com/Mail.Read",
     "https://graph.microsoft.com/Mail.ReadWrite",
+    "https://graph.microsoft.com/Mail.Send",
     "https://graph.microsoft.com/User.Read",
 ]
 # 手动 OAuth 助手默认走 GraphAPI（单资源，避免与 IMAP 混用触发 AADSTS70011）
@@ -776,8 +814,16 @@ OAUTH_SCOPES = [
     "offline_access",
     "https://graph.microsoft.com/Mail.Read",
     "https://graph.microsoft.com/Mail.ReadWrite",
+    "https://graph.microsoft.com/Mail.Send",
     "https://graph.microsoft.com/User.Read",
 ]
+
+EMAIL_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024
+EMAIL_ATTACHMENT_TOTAL_MAX_BYTES = 25 * 1024 * 1024
+EMAIL_ATTACHMENT_BLOCKED_EXTENSIONS = {
+    '.exe', '.bat', '.cmd', '.com', '.msi', '.scr', '.ps1', '.vbs', '.js', '.jse',
+    '.wsf', '.wsh', '.cpl', '.dll', '.sys', '.lnk', '.reg',
+}
 
 
 def infer_provider_from_email(email_addr: str) -> str:
@@ -888,7 +934,50 @@ def build_imap_mailbox_match_profile(mailbox_name: str) -> Dict[str, set[str]]:
     return {'full': full_names, 'terminal': terminal_names}
 
 
-def list_imap_mailboxes(mail) -> List[str]:
+def parse_imap_list_entry(raw_item: Any) -> Dict[str, Any]:
+    """解析 IMAP LIST 单行，返回 name / delimiter / attributes。"""
+    if raw_item is None:
+        return {'name': '', 'delimiter': '/', 'attributes': []}
+    line = raw_item.decode('utf-8', errors='ignore') if isinstance(raw_item, (bytes, bytearray)) else str(raw_item)
+    line = line.strip()
+    if not line:
+        return {'name': '', 'delimiter': '/', 'attributes': []}
+
+    attributes: List[str] = []
+    delimiter = '/'
+    name = ''
+    match = re.match(
+        r'^\((?P<attrs>.*)\)\s+(?P<delim>NIL|"(?:[^"\\]|\\.)*")\s+(?P<name>NIL|"(?:[^"\\]|\\.)*"|[^\s]+)\s*$',
+        line,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        attrs_raw = str(match.group('attrs') or '')
+        attributes = [part for part in re.findall(r'\\[A-Za-z0-9_-]+|[^\s]+', attrs_raw) if part]
+        delim_raw = str(match.group('delim') or '')
+        if delim_raw.upper() == 'NIL':
+            delimiter = ''
+        else:
+            delimiter = delim_raw.strip('"').replace(r'\"', '"').replace(r'\\', '\\') or '/'
+        name_raw = str(match.group('name') or '')
+        if name_raw.upper() == 'NIL':
+            name = ''
+        elif name_raw.startswith('"') and name_raw.endswith('"'):
+            name = name_raw[1:-1].replace(r'\"', '"').replace(r'\\', '\\')
+        else:
+            name = name_raw.strip('"')
+    else:
+        name = extract_imap_list_mailbox_name(raw_item)
+        delimiter = '/'
+
+    return {
+        'name': name,
+        'delimiter': delimiter if delimiter is not None else '/',
+        'attributes': attributes,
+    }
+
+
+def list_imap_mailbox_entries(mail) -> List[Dict[str, Any]]:
     try:
         status, folder_list = mail.list()
     except Exception:
@@ -896,12 +985,24 @@ def list_imap_mailboxes(mail) -> List[str]:
     if status != 'OK' or not folder_list:
         return []
 
-    mailboxes = []
+    entries = []
+    seen = set()
     for raw_item in folder_list:
-        mailbox_name = extract_imap_list_mailbox_name(raw_item)
-        if mailbox_name and mailbox_name not in mailboxes:
-            mailboxes.append(mailbox_name)
-    return mailboxes
+        parsed = parse_imap_list_entry(raw_item)
+        mailbox_name = str(parsed.get('name') or '').strip()
+        if not mailbox_name or mailbox_name in seen:
+            continue
+        seen.add(mailbox_name)
+        entries.append(parsed)
+    return entries
+
+
+def list_imap_mailboxes(mail) -> List[str]:
+    return [
+        str(entry.get('name') or '').strip()
+        for entry in list_imap_mailbox_entries(mail)
+        if str(entry.get('name') or '').strip()
+    ]
 
 
 def rank_imap_listed_mailboxes(folder: str, candidates: List[str], available_folders: List[str]) -> List[str]:
@@ -1332,8 +1433,15 @@ def init_db():
             imap_host TEXT,
             imap_port INTEGER DEFAULT 993,
             imap_password TEXT,
+            smtp_host TEXT DEFAULT '',
+            smtp_port INTEGER DEFAULT 0,
+            smtp_use_tls INTEGER DEFAULT 0,
+            smtp_use_ssl INTEGER DEFAULT 0,
             forward_enabled INTEGER DEFAULT 0,
             forward_last_checked_at TIMESTAMP,
+            inbox_poll_enabled INTEGER NOT NULL DEFAULT 1,
+            inbox_poll_last_checked_at TIMESTAMP,
+            aggregated_inbox_enabled INTEGER NOT NULL DEFAULT 0,
             proxy_url TEXT DEFAULT '',
             fallback_proxy_url_1 TEXT DEFAULT '',
             fallback_proxy_url_2 TEXT DEFAULT '',
@@ -1521,6 +1629,7 @@ def init_db():
             received_at TEXT DEFAULT '',
             received_at_sort REAL DEFAULT 0,
             is_read INTEGER NOT NULL DEFAULT 0,
+            is_flagged INTEGER NOT NULL DEFAULT 0,
             has_attachments INTEGER NOT NULL DEFAULT 0,
             body_preview TEXT DEFAULT '',
             body TEXT,
@@ -1794,10 +1903,24 @@ def init_db():
         cursor.execute('ALTER TABLE accounts ADD COLUMN imap_port INTEGER DEFAULT 993')
     if 'imap_password' not in columns:
         cursor.execute('ALTER TABLE accounts ADD COLUMN imap_password TEXT')
+    if 'smtp_host' not in columns:
+        cursor.execute("ALTER TABLE accounts ADD COLUMN smtp_host TEXT DEFAULT ''")
+    if 'smtp_port' not in columns:
+        cursor.execute('ALTER TABLE accounts ADD COLUMN smtp_port INTEGER DEFAULT 0')
+    if 'smtp_use_tls' not in columns:
+        cursor.execute('ALTER TABLE accounts ADD COLUMN smtp_use_tls INTEGER DEFAULT 0')
+    if 'smtp_use_ssl' not in columns:
+        cursor.execute('ALTER TABLE accounts ADD COLUMN smtp_use_ssl INTEGER DEFAULT 0')
     if 'forward_enabled' not in columns:
         cursor.execute('ALTER TABLE accounts ADD COLUMN forward_enabled INTEGER DEFAULT 0')
     if 'forward_last_checked_at' not in columns:
         cursor.execute('ALTER TABLE accounts ADD COLUMN forward_last_checked_at TIMESTAMP')
+    if 'inbox_poll_enabled' not in columns:
+        cursor.execute('ALTER TABLE accounts ADD COLUMN inbox_poll_enabled INTEGER NOT NULL DEFAULT 1')
+    if 'inbox_poll_last_checked_at' not in columns:
+        cursor.execute('ALTER TABLE accounts ADD COLUMN inbox_poll_last_checked_at TIMESTAMP')
+    if 'aggregated_inbox_enabled' not in columns:
+        cursor.execute('ALTER TABLE accounts ADD COLUMN aggregated_inbox_enabled INTEGER NOT NULL DEFAULT 0')
     if 'proxy_url' not in columns:
         cursor.execute('ALTER TABLE accounts ADD COLUMN proxy_url TEXT')
     if 'fallback_proxy_url_1' not in columns:
@@ -1851,6 +1974,8 @@ def init_db():
     retained_normal_mail_columns = {row[1] for row in cursor.fetchall()}
     if 'received_at_sort' not in retained_normal_mail_columns:
         cursor.execute('ALTER TABLE retained_normal_mail_messages ADD COLUMN received_at_sort REAL DEFAULT 0')
+    if 'is_flagged' not in retained_normal_mail_columns:
+        cursor.execute('ALTER TABLE retained_normal_mail_messages ADD COLUMN is_flagged INTEGER NOT NULL DEFAULT 0')
 
     cursor.execute("PRAGMA table_info(project_accounts)")
     project_account_columns = [col[1] for col in cursor.fetchall()]
@@ -2385,6 +2510,16 @@ def init_db():
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_accounts_forward_enabled
         ON accounts(forward_enabled)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_accounts_inbox_poll_enabled
+        ON accounts(inbox_poll_enabled)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_accounts_aggregated_inbox_enabled
+        ON accounts(aggregated_inbox_enabled)
     ''')
 
     cursor.execute('''

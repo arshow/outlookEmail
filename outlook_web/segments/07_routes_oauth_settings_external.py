@@ -614,6 +614,11 @@ def api_get_settings():
         'normal_mail_local_retention_enabled',
         'false',
     )
+    settings['inbox_poll_scheduler_enabled'] = get_setting('inbox_poll_scheduler_enabled', 'true')
+    settings['inbox_poll_interval_seconds'] = str(normalize_inbox_poll_interval_seconds())
+    settings['inbox_poll_account_delay_seconds'] = str(normalize_inbox_poll_account_delay_seconds())
+    settings['inbox_poll_concurrency'] = str(normalize_inbox_poll_concurrency())
+    settings['inbox_poll_top'] = str(normalize_inbox_poll_top())
     skin_settings = get_skin_settings_payload()
     settings['active_skin_id'] = skin_settings['active_skin_id']
     settings['configured_skin_id'] = skin_settings['configured_skin_id']
@@ -853,6 +858,69 @@ def api_update_settings():
                 errors.append('更新普通邮箱本地保留开关失败')
         else:
             errors.append('普通邮箱本地保留开关必须是 true 或 false')
+
+    inbox_poll_needs_reschedule = False
+
+    if 'inbox_poll_scheduler_enabled' in data:
+        enabled = str(data['inbox_poll_scheduler_enabled']).strip().lower()
+        if enabled in ('true', 'false', '1', '0', 'yes', 'no', 'on', 'off'):
+            normalized = normalize_bool_setting_value(enabled)
+            if set_setting('inbox_poll_scheduler_enabled', normalized):
+                updated.append('收件箱发现总开关')
+                inbox_poll_needs_reschedule = True
+            else:
+                errors.append('更新收件箱发现总开关失败')
+        else:
+            errors.append('收件箱发现总开关必须是 true 或 false')
+
+    if 'inbox_poll_interval_seconds' in data:
+        try:
+            seconds = parse_inbox_poll_interval_seconds_input(data['inbox_poll_interval_seconds'])
+            if set_setting('inbox_poll_interval_seconds', str(seconds)):
+                updated.append('收件箱发现轮询间隔')
+                inbox_poll_needs_reschedule = True
+            else:
+                errors.append('保存收件箱发现轮询间隔失败')
+        except ValueError as exc:
+            errors.append(str(exc))
+
+    if 'inbox_poll_account_delay_seconds' in data:
+        try:
+            delay = parse_inbox_poll_account_delay_seconds_input(data['inbox_poll_account_delay_seconds'])
+            if set_setting('inbox_poll_account_delay_seconds', str(delay)):
+                updated.append('收件箱发现账号间隔')
+            else:
+                errors.append('保存收件箱发现账号间隔失败')
+        except ValueError as exc:
+            errors.append(str(exc))
+
+    if 'inbox_poll_concurrency' in data:
+        try:
+            workers = parse_inbox_poll_concurrency_input(data['inbox_poll_concurrency'])
+            if set_setting('inbox_poll_concurrency', str(workers)):
+                updated.append('收件箱发现并发数')
+            else:
+                errors.append('保存收件箱发现并发数失败')
+        except ValueError as exc:
+            errors.append(str(exc))
+
+    if 'inbox_poll_top' in data:
+        try:
+            top = int(data['inbox_poll_top'])
+            if top < 1 or top > INBOX_POLL_TOP_MAX:
+                errors.append(f'收件箱发现每次抓取条数必须在 1-{INBOX_POLL_TOP_MAX} 之间')
+            elif set_setting('inbox_poll_top', str(top)):
+                updated.append('收件箱发现抓取条数')
+            else:
+                errors.append('保存收件箱发现抓取条数失败')
+        except (TypeError, ValueError):
+            errors.append('收件箱发现抓取条数必须是数字')
+
+    if inbox_poll_needs_reschedule:
+        try:
+            reschedule_inbox_discovery_job()
+        except Exception:
+            pass
 
     if 'active_skin_id' in data:
         success, error, _skin = set_active_skin(data.get('active_skin_id'))

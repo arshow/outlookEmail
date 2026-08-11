@@ -38,6 +38,20 @@ When background sync finds messages that were not already retained locally, the 
 
 Background sync must stage newly discovered rows without immediately merging them into the current visible list. After the user accepts the notice, the client merges the staged rows into the current list, highlights the newly visible messages, updates the list cache, and triggers best-effort body retention for the newly accepted rows.
 
+## Inbox discovery (server-side, SSE)
+
+Independent of mail forwarding and of Token scheduled refresh, the app can run an APScheduler job (`inbox_discovery`) that periodically lists each enabled account's `inbox`, upserts newly seen rows into local retention, and pushes a `new_mail` event over a long-lived SSE connection.
+
+Gates:
+
+- Global local retention must be on (`normal_mail_local_retention_enabled`). If it is off, the discovery job skips and does not write to SQLite.
+- Global discovery switch `inbox_poll_scheduler_enabled` (default on) controls whether the job is registered/run.
+- Per-account `inbox_poll_enabled` (default on, column default `1`) can disable discovery for a single account without touching `forward_enabled`.
+
+Related settings: `inbox_poll_interval_seconds` (default `120`, range `20-3600`), `inbox_poll_account_delay_seconds`, `inbox_poll_top`. Saving interval/enabled through `/api/settings` hot-reschedules the job.
+
+Push path: `GET /api/emails/inbox-discovery/events` (Session auth). The hub is **in-process**; multi-worker deployments will not fan out events across processes. Manual trigger: `POST /api/accounts/trigger-inbox-discovery`. Temporary mailboxes are out of scope; aggregation inbox consumes per-account SSE events on the client.
+
 ## Detail body retention
 
 When retention is enabled, opening a message detail should prefer a retained body when one is already cached for that retained list row. If the retained row has no body yet, the app should fetch the body from the active provider path, then store the normalized display body and related body metadata for future reads.

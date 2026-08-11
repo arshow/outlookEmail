@@ -409,6 +409,7 @@
 
             .back-btn,
             .fullscreen-btn,
+            .compose-action-btn,
             .email-detail-toolbar .batch-btn.danger {
                 min-height: 36px;
                 padding-top: 0;
@@ -428,6 +429,10 @@
                 align-items: center;
                 justify-content: center;
                 flex: 0 0 auto;
+            }
+
+            .compose-action-btn {
+                white-space: nowrap;
             }
 
             .email-detail-action-btn .btn-icon,
@@ -666,6 +671,33 @@
             .batch-action-group .batch-btn {
                 min-height: 40px;
                 flex: 1 1 128px;
+            }
+
+            #emailBatchActionBar {
+                align-items: center;
+                flex-wrap: nowrap;
+                padding: 8px;
+                gap: 6px;
+                overflow-x: auto;
+            }
+
+            #emailBatchActionBar .batch-action-bar__summary {
+                width: auto;
+                justify-content: flex-start;
+                flex-shrink: 0;
+            }
+
+            #emailBatchActionBar .batch-action-bar__controls,
+            #emailBatchActionBar .batch-action-group {
+                width: auto;
+                flex-wrap: nowrap;
+                justify-content: flex-end;
+            }
+
+            #emailBatchActionBar .batch-btn,
+            #emailBatchActionBar .batch-action-group .batch-btn {
+                min-height: 32px;
+                flex: 0 0 auto;
             }
 
             .modal {

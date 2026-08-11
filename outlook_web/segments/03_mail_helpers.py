@@ -369,7 +369,10 @@ def get_graph_token_scope_candidates(include_original_scope_fallback: bool = Fal
     ]
     read_graph_scopes = [
         scope for scope in configured_graph_scopes
-        if scope != 'https://graph.microsoft.com/Mail.ReadWrite'
+        if scope not in {
+            'https://graph.microsoft.com/Mail.ReadWrite',
+            'https://graph.microsoft.com/Mail.Send',
+        }
     ]
     raw_candidates = [
         ('configured', build_graph_refresh_scope(configured_graph_scopes)),
@@ -566,7 +569,8 @@ def get_access_token_graph(client_id: str, refresh_token: str, proxy_url: str = 
 
 def get_emails_graph(client_id: str, refresh_token: str, folder: str = 'inbox', skip: int = 0,
                      top: int = 20, proxy_url: str = None,
-                     fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, Any]:
+                     fallback_proxy_urls: Optional[List[str]] = None,
+                     folder_id: Optional[str] = None) -> Dict[str, Any]:
     """使用 Graph API 获取邮件列表（支持分页和文件夹选择）"""
     token_result = get_access_token_graph_result(client_id, refresh_token, proxy_url, fallback_proxy_urls)
     if not token_result.get("success"):
@@ -577,19 +581,24 @@ def get_emails_graph(client_id: str, refresh_token: str, folder: str = 'inbox', 
     try:
         # 根据文件夹类型选择 API 端点
         # 使用 Well-known folder names，这些是 Microsoft Graph API 的标准文件夹名称
-        folder_map = {
-            'inbox': 'inbox',
-            'junkemail': 'junkemail',  # 垃圾邮件的标准名称
-            'deleteditems': 'deleteditems',  # 已删除邮件的标准名称
-            'trash': 'deleteditems'  # 垃圾箱的别名
-        }
-        folder_name = folder_map.get(folder.lower(), 'inbox')
+        # folder_id 优先：按 Graph 文件夹 id 直达，不再回落到 inbox
+        explicit_folder_id = str(folder_id or '').strip()
+        if explicit_folder_id:
+            folder_segment = quote(explicit_folder_id, safe='')
+        else:
+            folder_map = {
+                'inbox': 'inbox',
+                'junkemail': 'junkemail',  # 垃圾邮件的标准名称
+                'deleteditems': 'deleteditems',  # 已删除邮件的标准名称
+                'trash': 'deleteditems'  # 垃圾箱的别名
+            }
+            folder_segment = folder_map.get(str(folder or '').lower(), 'inbox')
 
-        url = f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder_name}/messages"
+        url = f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder_segment}/messages"
         params = {
             "$top": top,
             "$skip": skip,
-            "$select": "id,subject,from,toRecipients,receivedDateTime,isRead,hasAttachments,bodyPreview",
+            "$select": "id,subject,from,toRecipients,receivedDateTime,isRead,flag,hasAttachments,bodyPreview",
             "$orderby": "receivedDateTime desc"
         }
         headers = {
@@ -671,7 +680,7 @@ def get_email_detail_graph_result(client_id: str, refresh_token: str, message_id
     try:
         url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}"
         params = {
-            "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,isRead,hasAttachments,body,bodyPreview"
+            "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,isRead,flag,hasAttachments,body,bodyPreview"
         }
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -728,8 +737,9 @@ def get_email_detail_graph(client_id: str, refresh_token: str, message_id: str, 
 
 def mark_emails_read_graph_result(client_id: str, refresh_token: str, message_ids: List[str],
                                   proxy_url: str = None,
-                                  fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, Any]:
-    """使用 Graph API 批量标记邮件为已读"""
+                                  fallback_proxy_urls: Optional[List[str]] = None,
+                                  is_read: bool = True) -> Dict[str, Any]:
+    """使用 Graph API 批量标记邮件已读/未读。"""
     normalized_ids = [str(message_id or '').strip() for message_id in (message_ids or []) if str(message_id or '').strip()]
     if not normalized_ids:
         return {
@@ -755,6 +765,8 @@ def mark_emails_read_graph_result(client_id: str, refresh_token: str, message_id
         'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/json',
     }
+    target_is_read = bool(is_read)
+    action_label = '已读' if target_is_read else '未读'
 
     batch_size = 20
     updated_ids: List[str] = []
@@ -772,7 +784,7 @@ def mark_emails_read_graph_result(client_id: str, refresh_token: str, message_id
                     'Content-Type': 'application/json',
                 },
                 'body': {
-                    'isRead': True,
+                    'isRead': target_is_read,
                 },
             })
 
@@ -791,7 +803,7 @@ def mark_emails_read_graph_result(client_id: str, refresh_token: str, message_id
                 'id': message_id,
                 'error': build_error_payload(
                     'EMAIL_MARK_READ_FAILED',
-                    '标记邮件已读失败',
+                    f'标记邮件{action_label}失败',
                     type(exc).__name__,
                     500,
                     str(exc)
@@ -802,7 +814,7 @@ def mark_emails_read_graph_result(client_id: str, refresh_token: str, message_id
         if response.status_code != 200:
             error_payload = build_error_payload(
                 'EMAIL_MARK_READ_FAILED',
-                '标记邮件已读失败',
+                f'标记邮件{action_label}失败',
                 'GraphAPIError',
                 response.status_code,
                 get_response_details(response)
@@ -825,7 +837,7 @@ def mark_emails_read_graph_result(client_id: str, refresh_token: str, message_id
                 'id': message_id,
                 'error': build_error_payload(
                     'EMAIL_MARK_READ_FAILED',
-                    '标记邮件已读失败',
+                    f'标记邮件{action_label}失败',
                     'GraphAPIError',
                     status_code or 500,
                     error_body or '批处理返回空响应'
@@ -839,6 +851,134 @@ def mark_emails_read_graph_result(client_id: str, refresh_token: str, message_id
         'success_count': success_count,
         'failed_count': failed_count,
         'updated_ids': updated_ids,
+        'is_read': target_is_read,
+        'errors': errors,
+    }
+
+
+def coerce_graph_is_flagged(flag_value: Any) -> bool:
+    if isinstance(flag_value, dict):
+        status = str(flag_value.get('flagStatus') or '').strip().lower()
+        return status == 'flagged'
+    return False
+
+
+def mark_emails_flag_graph_result(client_id: str, refresh_token: str, message_ids: List[str],
+                                  flagged: bool = True, proxy_url: str = None,
+                                  fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, Any]:
+    """使用 Graph API 批量标记/取消 Flag。"""
+    normalized_ids = [str(message_id or '').strip() for message_id in (message_ids or []) if str(message_id or '').strip()]
+    if not normalized_ids:
+        return {
+            'success': False,
+            'success_count': 0,
+            'failed_count': 0,
+            'updated_ids': [],
+            'errors': ['message_ids 不能为空'],
+        }
+
+    token_result = get_access_token_graph_result(client_id, refresh_token, proxy_url, fallback_proxy_urls)
+    if not token_result.get('success'):
+        return {
+            'success': False,
+            'success_count': 0,
+            'failed_count': len(normalized_ids),
+            'updated_ids': [],
+            'errors': [token_result.get('error')],
+        }
+
+    access_token = token_result.get('access_token')
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+    }
+    flag_status = 'flagged' if flagged else 'notFlagged'
+    batch_size = 20
+    updated_ids: List[str] = []
+    errors: List[Any] = []
+
+    for index in range(0, len(normalized_ids), batch_size):
+        batch = normalized_ids[index:index + batch_size]
+        batch_requests = []
+        for batch_index, message_id in enumerate(batch):
+            batch_requests.append({
+                'id': str(batch_index),
+                'method': 'PATCH',
+                'url': f'/me/messages/{message_id}',
+                'headers': {
+                    'Content-Type': 'application/json',
+                },
+                'body': {
+                    'flag': {
+                        'flagStatus': flag_status,
+                    },
+                },
+            })
+
+        try:
+            response = request_with_proxy_failover(
+                'post',
+                'https://graph.microsoft.com/v1.0/$batch',
+                headers=headers,
+                json={'requests': batch_requests},
+                timeout=HTTP_REQUEST_TIMEOUT,
+                proxy_url=proxy_url,
+                fallback_proxy_urls=fallback_proxy_urls,
+            )
+        except Exception as exc:
+            errors.extend({
+                'id': message_id,
+                'error': build_error_payload(
+                    'EMAIL_MARK_FLAG_FAILED',
+                    '标记邮件 Flag 失败',
+                    type(exc).__name__,
+                    500,
+                    str(exc)
+                )
+            } for message_id in batch)
+            continue
+
+        if response.status_code != 200:
+            error_payload = build_error_payload(
+                'EMAIL_MARK_FLAG_FAILED',
+                '标记邮件 Flag 失败',
+                'GraphAPIError',
+                response.status_code,
+                get_response_details(response)
+            )
+            errors.extend({'id': message_id, 'error': error_payload} for message_id in batch)
+            continue
+
+        response_items = response.json().get('responses', [])
+        response_map = {str(item.get('id')): item for item in response_items}
+
+        for batch_index, message_id in enumerate(batch):
+            item = response_map.get(str(batch_index))
+            status_code = int(item.get('status', 0) or 0) if item else 0
+            if status_code in {200, 202, 204}:
+                updated_ids.append(message_id)
+                continue
+
+            error_body = item.get('body') if item else ''
+            errors.append({
+                'id': message_id,
+                'error': build_error_payload(
+                    'EMAIL_MARK_FLAG_FAILED',
+                    '标记邮件 Flag 失败',
+                    'GraphAPIError',
+                    status_code or 500,
+                    error_body or '批处理返回空响应'
+                )
+            })
+
+    success_count = len(updated_ids)
+    failed_count = len(normalized_ids) - success_count
+    return {
+        'success': failed_count == 0,
+        'success_count': success_count,
+        'failed_count': failed_count,
+        'updated_ids': updated_ids,
+        'flagged': bool(flagged),
         'errors': errors,
     }
 
@@ -1076,7 +1216,8 @@ def get_emails_imap(account: str, client_id: str, refresh_token: str, folder: st
 def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str, folder: str = 'inbox',
                                 skip: int = 0, top: int = 20, server: str = IMAP_SERVER_NEW,
                                 proxy_url: str = None,
-                                fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, Any]:
+                                fallback_proxy_urls: Optional[List[str]] = None,
+                                mailbox: Optional[str] = None) -> Dict[str, Any]:
     """使用 IMAP 获取邮件列表（支持分页、文件夹选择和服务器选择）"""
     token_result = get_access_token_imap_result(client_id, refresh_token, proxy_url, fallback_proxy_urls)
     if not token_result.get("success"):
@@ -1091,7 +1232,9 @@ def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str
         auth_string = f"user={account}\1auth=Bearer {access_token}\1\1".encode('utf-8')
         connection.authenticate('XOAUTH2', lambda x: auth_string)
 
-        selected_folder, folder_diagnostics = resolve_imap_folder(connection, 'outlook', folder, readonly=True)
+        selected_folder, folder_diagnostics = resolve_imap_folder(
+            connection, 'outlook', folder, readonly=True, mailbox=mailbox
+        )
         if not selected_folder:
             return {
                 "success": False,
@@ -1133,10 +1276,12 @@ def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str
         emails = []
         for msg_id in paged_ids:
             try:
-                status, msg_data = connection.fetch(msg_id, '(INTERNALDATE RFC822)')
+                status, msg_data = connection.fetch(msg_id, '(FLAGS INTERNALDATE RFC822)')
                 if status == 'OK' and msg_data and msg_data[0]:
                     raw_email = msg_data[0][1]
-                    internal_date = extract_imap_internaldate(msg_data[0][0])
+                    fetch_meta = msg_data[0][0]
+                    fetch_response_text = fetch_meta.decode('utf-8', errors='ignore') if isinstance(fetch_meta, (bytes, bytearray)) else str(fetch_meta or '')
+                    internal_date = extract_imap_internaldate(fetch_meta)
                     msg = email.message_from_bytes(raw_email)
                     body_preview = get_email_body(msg)
 
@@ -1147,6 +1292,8 @@ def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str
                         'to': decode_header_value(msg.get("To", "")),
                         'date': internal_date or msg.get("Date", "未知时间"),
                         'id_mode': 'sequence',
+                        'is_read': bool(re.search(r'\\Seen\b', fetch_response_text, flags=re.IGNORECASE)),
+                        'is_flagged': bool(re.search(r'\\Flagged\b', fetch_response_text, flags=re.IGNORECASE)),
                         'body_preview': body_preview[:200] + "..." if len(body_preview) > 200 else body_preview
                     })
             except Exception:
@@ -1745,7 +1892,23 @@ def extract_imap_exists_count(select_response: Any) -> int:
     return 0
 
 
-def resolve_imap_folder(mail, provider: str, folder: str, readonly: bool = True) -> tuple[Optional[str], Dict[str, Any]]:
+def resolve_imap_folder(mail, provider: str, folder: str, readonly: bool = True,
+                        mailbox: Optional[str] = None) -> tuple[Optional[str], Dict[str, Any]]:
+    explicit_mailbox = str(mailbox or '').strip()
+    if explicit_mailbox:
+        selected, attempts = try_select_imap_folder(mail, explicit_mailbox, readonly=readonly)
+        diagnostics = {
+            'tried_folders': [explicit_mailbox],
+            'direct_mailbox': True,
+        }
+        if attempts:
+            diagnostics['select_attempts'] = attempts[-10:]
+            if any(not item.get('readonly', True) for item in attempts):
+                diagnostics['fallback_mode'] = 'select'
+        if selected:
+            return selected, diagnostics
+        return None, diagnostics
+
     candidates = []
     for folder_name in get_imap_folder_candidates(provider, folder):
         if folder_name and folder_name not in candidates:
@@ -2008,11 +2171,14 @@ def store_imap_message_flags(mail, message_id: Any, action: str = '+FLAGS.SILENT
 
 
 def mark_email_items_seen_imap(mail, items: List[Dict[str, Any]], provider: str,
-                               default_mode: str = 'uid') -> Dict[str, Any]:
+                               default_mode: str = 'uid', is_read: bool = True) -> Dict[str, Any]:
     success_count = 0
     updated_ids: List[str] = []
     errors: List[Any] = []
     grouped_items: Dict[str, List[Dict[str, Any]]] = {}
+    target_is_read = bool(is_read)
+    action = '+FLAGS.SILENT' if target_is_read else '-FLAGS.SILENT'
+    action_label = '已读' if target_is_read else '未读'
 
     for item in items or []:
         message_id = str(item.get('id', '') or '').strip()
@@ -2057,6 +2223,8 @@ def mark_email_items_seen_imap(mail, items: List[Dict[str, Any]], provider: str,
             success, used_mode, attempts = store_imap_message_flags(
                 mail,
                 item['id'],
+                action=action,
+                flags=r'(\Seen)',
                 preferred_mode=preferred_mode
             )
             if success:
@@ -2069,7 +2237,7 @@ def mark_email_items_seen_imap(mail, items: List[Dict[str, Any]], provider: str,
                 'id': item['id'],
                 'error': build_error_payload(
                     'EMAIL_MARK_READ_FAILED',
-                    '标记邮件已读失败',
+                    f'标记邮件{action_label}失败',
                     'IMAPStoreError',
                     502,
                     {
@@ -2088,6 +2256,95 @@ def mark_email_items_seen_imap(mail, items: List[Dict[str, Any]], provider: str,
         'success_count': success_count,
         'failed_count': failed_count,
         'updated_ids': updated_ids,
+        'is_read': target_is_read,
+        'errors': errors,
+    }
+
+
+def mark_email_items_flagged_imap(mail, items: List[Dict[str, Any]], provider: str,
+                                  flagged: bool = True, default_mode: str = 'uid') -> Dict[str, Any]:
+    success_count = 0
+    updated_ids: List[str] = []
+    errors: List[Any] = []
+    grouped_items: Dict[str, List[Dict[str, Any]]] = {}
+    action = '+FLAGS.SILENT' if flagged else '-FLAGS.SILENT'
+
+    for item in items or []:
+        message_id = str(item.get('id', '') or '').strip()
+        folder = str(item.get('folder', 'inbox') or 'inbox').strip().lower()
+        if not message_id:
+            errors.append({
+                'id': '',
+                'error': build_error_payload(
+                    'EMAIL_MARK_FLAG_INVALID',
+                    'message_id 不能为空',
+                    'ValidationError',
+                    400,
+                    item
+                )
+            })
+            continue
+        grouped_items.setdefault(folder, []).append({
+            'id': message_id,
+            'folder': folder,
+            'id_mode': str(item.get('id_mode', '') or '').strip().lower(),
+        })
+
+    for folder, folder_items in grouped_items.items():
+        selected_folder, folder_diagnostics = resolve_imap_folder(mail, provider, folder, readonly=False)
+        if not selected_folder:
+            folder_error = build_error_payload(
+                'IMAP_FOLDER_NOT_FOUND',
+                'IMAP 文件夹不存在或无权访问',
+                'IMAPFolderError',
+                400,
+                {
+                    'provider': provider,
+                    'folder': folder,
+                    **folder_diagnostics,
+                }
+            )
+            for folder_item in folder_items:
+                errors.append({'id': folder_item['id'], 'error': folder_error})
+            continue
+
+        for folder_item in folder_items:
+            preferred_mode = folder_item.get('id_mode') or default_mode
+            success, used_mode, attempts = store_imap_message_flags(
+                mail,
+                folder_item['id'],
+                action=action,
+                flags=r'(\Flagged)',
+                preferred_mode=preferred_mode if preferred_mode in {'uid', 'sequence'} else default_mode,
+            )
+            if success:
+                success_count += 1
+                updated_ids.append(folder_item['id'])
+                continue
+            errors.append({
+                'id': folder_item['id'],
+                'error': build_error_payload(
+                    'EMAIL_MARK_FLAG_FAILED',
+                    '标记邮件 Flag 失败',
+                    'IMAPStoreError',
+                    500,
+                    {
+                        'folder': folder,
+                        'selected_folder': selected_folder,
+                        'preferred_mode': preferred_mode,
+                        'used_mode': used_mode,
+                        'attempts': attempts,
+                    }
+                )
+            })
+
+    failed_count = len(errors)
+    return {
+        'success': failed_count == 0 and success_count > 0,
+        'success_count': success_count,
+        'failed_count': failed_count,
+        'updated_ids': updated_ids,
+        'flagged': bool(flagged),
         'errors': errors,
     }
 
@@ -2095,7 +2352,8 @@ def mark_email_items_seen_imap(mail, items: List[Dict[str, Any]], provider: str,
 def mark_emails_read_imap_batch(email_addr: str, client_id: str, refresh_token: str,
                                 items: List[Dict[str, Any]], server: str = IMAP_SERVER_NEW,
                                 proxy_url: str = None,
-                                fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, Any]:
+                                fallback_proxy_urls: Optional[List[str]] = None,
+                                is_read: bool = True) -> Dict[str, Any]:
     access_token = get_access_token_imap(client_id, refresh_token, proxy_url, fallback_proxy_urls)
     if not access_token:
         return {
@@ -2103,6 +2361,7 @@ def mark_emails_read_imap_batch(email_addr: str, client_id: str, refresh_token: 
             'success_count': 0,
             'failed_count': len(items or []),
             'updated_ids': [],
+            'is_read': bool(is_read),
             'errors': [build_error_payload('IMAP_TOKEN_FAILED', '获取访问令牌失败', 'IMAPError', 401, '')],
         }
 
@@ -2112,13 +2371,16 @@ def mark_emails_read_imap_batch(email_addr: str, client_id: str, refresh_token: 
             connection = imaplib.IMAP4_SSL(server, IMAP_PORT, timeout=IMAP_TIMEOUT)
         auth_string = f"user={email_addr}\1auth=Bearer {access_token}\1\1".encode('utf-8')
         connection.authenticate('XOAUTH2', lambda x: auth_string)
-        return mark_email_items_seen_imap(connection, items, 'outlook', default_mode='sequence')
+        return mark_email_items_seen_imap(
+            connection, items, 'outlook', default_mode='sequence', is_read=is_read
+        )
     except Exception as exc:
         return {
             'success': False,
             'success_count': 0,
             'failed_count': len(items or []),
             'updated_ids': [],
+            'is_read': bool(is_read),
             'errors': [build_error_payload('IMAP_CONNECT_FAILED', 'IMAP 连接失败', type(exc).__name__, 502, str(exc))],
         }
     finally:
@@ -2131,7 +2393,8 @@ def mark_emails_read_imap_batch(email_addr: str, client_id: str, refresh_token: 
 
 def mark_emails_read_imap_generic_result(email_addr: str, imap_password: str, imap_host: str,
                                          items: List[Dict[str, Any]], imap_port: int = 993,
-                                         provider: str = 'custom', proxy_url: str = '') -> Dict[str, Any]:
+                                         provider: str = 'custom', proxy_url: str = '',
+                                         is_read: bool = True) -> Dict[str, Any]:
     mail = None
     try:
         mail = create_imap_connection(imap_host, imap_port, proxy_url)
@@ -2143,6 +2406,7 @@ def mark_emails_read_imap_generic_result(email_addr: str, imap_password: str, im
                 'success_count': 0,
                 'failed_count': len(items or []),
                 'updated_ids': [],
+                'is_read': bool(is_read),
                 'errors': [build_error_payload(
                     'IMAP_AUTH_FAILED',
                     normalize_imap_auth_error(provider, imap_host, str(exc)),
@@ -2153,13 +2417,97 @@ def mark_emails_read_imap_generic_result(email_addr: str, imap_password: str, im
             }
 
         send_imap_id(mail, provider, imap_host)
-        return mark_email_items_seen_imap(mail, items, provider, default_mode='uid')
+        return mark_email_items_seen_imap(mail, items, provider, default_mode='uid', is_read=is_read)
     except Exception as exc:
         return {
             'success': False,
             'success_count': 0,
             'failed_count': len(items or []),
             'updated_ids': [],
+            'is_read': bool(is_read),
+            'errors': [build_error_payload('IMAP_CONNECT_FAILED', sanitize_error_details(str(exc)) or 'IMAP 连接失败', 'IMAPConnectError', 502, '')],
+        }
+    finally:
+        if mail:
+            try:
+                mail.logout()
+            except Exception:
+                pass
+
+
+def mark_emails_flag_imap_batch(email_addr: str, client_id: str, refresh_token: str,
+                                items: List[Dict[str, Any]], flagged: bool = True,
+                                server: str = IMAP_SERVER_NEW, proxy_url: str = None,
+                                fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, Any]:
+    access_token = get_access_token_imap(client_id, refresh_token, proxy_url, fallback_proxy_urls)
+    if not access_token:
+        return {
+            'success': False,
+            'success_count': 0,
+            'failed_count': len(items or []),
+            'updated_ids': [],
+            'flagged': bool(flagged),
+            'errors': [build_error_payload('IMAP_TOKEN_FAILED', '获取访问令牌失败', 'IMAPError', 401, '')],
+        }
+
+    connection = None
+    try:
+        with proxy_socket_context(proxy_url):
+            connection = imaplib.IMAP4_SSL(server, IMAP_PORT, timeout=IMAP_TIMEOUT)
+        auth_string = f"user={email_addr}\1auth=Bearer {access_token}\1\1".encode('utf-8')
+        connection.authenticate('XOAUTH2', lambda x: auth_string)
+        return mark_email_items_flagged_imap(connection, items, 'outlook', flagged=flagged, default_mode='sequence')
+    except Exception as exc:
+        return {
+            'success': False,
+            'success_count': 0,
+            'failed_count': len(items or []),
+            'updated_ids': [],
+            'flagged': bool(flagged),
+            'errors': [build_error_payload('IMAP_CONNECT_FAILED', 'IMAP 连接失败', type(exc).__name__, 502, str(exc))],
+        }
+    finally:
+        if connection:
+            try:
+                connection.logout()
+            except Exception:
+                pass
+
+
+def mark_emails_flag_imap_generic_result(email_addr: str, imap_password: str, imap_host: str,
+                                         items: List[Dict[str, Any]], flagged: bool = True,
+                                         imap_port: int = 993, provider: str = 'custom',
+                                         proxy_url: str = '') -> Dict[str, Any]:
+    mail = None
+    try:
+        mail = create_imap_connection(imap_host, imap_port, proxy_url)
+        try:
+            mail.login(email_addr, imap_password)
+        except imaplib.IMAP4.error as exc:
+            return {
+                'success': False,
+                'success_count': 0,
+                'failed_count': len(items or []),
+                'updated_ids': [],
+                'flagged': bool(flagged),
+                'errors': [build_error_payload(
+                    'IMAP_AUTH_FAILED',
+                    normalize_imap_auth_error(provider, imap_host, str(exc)),
+                    'IMAPAuthError',
+                    401,
+                    ''
+                )],
+            }
+
+        send_imap_id(mail, provider, imap_host)
+        return mark_email_items_flagged_imap(mail, items, provider, flagged=flagged, default_mode='uid')
+    except Exception as exc:
+        return {
+            'success': False,
+            'success_count': 0,
+            'failed_count': len(items or []),
+            'updated_ids': [],
+            'flagged': bool(flagged),
             'errors': [build_error_payload('IMAP_CONNECT_FAILED', sanitize_error_details(str(exc)) or 'IMAP 连接失败', 'IMAPConnectError', 502, '')],
         }
     finally:
@@ -2368,7 +2716,8 @@ def delete_emails_imap_generic_result(email_addr: str, imap_password: str, imap_
 def get_emails_imap_generic(email_addr: str, imap_password: str, imap_host: str,
                             imap_port: int = 993, folder: str = 'inbox',
                             provider: str = 'custom', skip: int = 0, top: int = 20,
-                            proxy_url: str = '') -> Dict[str, Any]:
+                            proxy_url: str = '',
+                            mailbox: Optional[str] = None) -> Dict[str, Any]:
     mail = None
     imap_id_info = {}
     try:
@@ -2391,7 +2740,9 @@ def get_emails_imap_generic(email_addr: str, imap_password: str, imap_host: str,
             }
 
         imap_id_info = send_imap_id(mail, provider, imap_host)
-        selected, folder_diagnostics = resolve_imap_folder(mail, provider, folder, readonly=True)
+        selected, folder_diagnostics = resolve_imap_folder(
+            mail, provider, folder, readonly=True, mailbox=mailbox
+        )
         if not selected:
             if imap_id_info:
                 folder_diagnostics = {**folder_diagnostics, 'imap_id': imap_id_info}
@@ -2478,6 +2829,7 @@ def get_emails_imap_generic(email_addr: str, imap_password: str, imap_host: str,
                     'date': internal_date or msg.get('Date', ''),
                     'id_mode': search_mode or 'uid',
                     'is_read': bool(re.search(r'\\Seen\b', fetch_response_text, flags=re.IGNORECASE)),
+                    'is_flagged': bool(re.search(r'\\Flagged\b', fetch_response_text, flags=re.IGNORECASE)),
                     'has_attachments': has_message_attachments(msg),
                     'body_preview': preview,
                 })

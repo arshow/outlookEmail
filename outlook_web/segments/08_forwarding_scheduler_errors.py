@@ -1380,6 +1380,31 @@ def init_scheduler():
 
                 jobs_added = add_webdav_backup_job(scheduler, CronTrigger, app_tzinfo) or jobs_added
 
+                if is_inbox_poll_scheduler_enabled():
+                    inbox_interval_seconds = normalize_inbox_poll_interval_seconds()
+
+                    def _run_inbox_discovery_job():
+                        return process_inbox_discovery_job()
+
+                    scheduler.add_job(
+                        func=_run_inbox_discovery_job,
+                        trigger=build_inbox_discovery_poll_trigger(
+                            IntervalTrigger, inbox_interval_seconds, app_tzinfo
+                        ),
+                        id='inbox_discovery',
+                        name='收件箱发现轮询',
+                        replace_existing=True,
+                        max_instances=1,
+                        coalesce=True,
+                    )
+                    jobs_added = True
+                    safe_console_print(
+                        f"✓ 收件箱发现任务已启动：每 {inbox_interval_seconds} 秒"
+                        f"（需开启普通邮箱本地保留）"
+                    )
+                else:
+                    safe_console_print("✓ 收件箱发现已禁用")
+
                 if not jobs_added:
                     return None
 
@@ -1458,7 +1483,7 @@ def scheduled_refresh_task():
         safe_console_print(f"[定时任务] 执行失败：{str(e)}")
 
 
-ensure_scheduler_started()
+# 调度器启动延后到 inbox discovery 段加载完成后（见 13_inbox_discovery.py）
 
 
 def trigger_refresh_internal():
@@ -1500,6 +1525,14 @@ def api_update_account_v2(account_id):
     remark = sanitize_input(data.get('remark', ''), max_length=200)
     status = data.get('status', 'active')
     forward_enabled = bool(data.get('forward_enabled', False))
+    if 'inbox_poll_enabled' in data:
+        raw_inbox_poll = data.get('inbox_poll_enabled')
+        if isinstance(raw_inbox_poll, str):
+            inbox_poll_enabled = raw_inbox_poll.strip().lower() in {'1', 'true', 'yes', 'on'}
+        else:
+            inbox_poll_enabled = bool(raw_inbox_poll)
+    else:
+        inbox_poll_enabled = bool(current_account['inbox_poll_enabled']) if current_account.get('inbox_poll_enabled') is not None else True
     proxy_url = str(data.get('proxy_url', current_account.get('proxy_url', '')) or '').strip()
     fallback_proxy_url_1 = str(
         data.get('fallback_proxy_url_1', current_account.get('fallback_proxy_url_1', '')) or ''
@@ -1571,7 +1604,8 @@ def api_update_account_v2(account_id):
         forward_enabled,
         proxy_url,
         fallback_proxy_url_1,
-        fallback_proxy_url_2
+        fallback_proxy_url_2,
+        inbox_poll_enabled=inbox_poll_enabled,
     ):
         cleaned_aliases = get_account_aliases(account_id)
         db = get_db()
@@ -1671,23 +1705,41 @@ def handle_local_retention_list_request(account: Dict[str, Any], requested_email
 
 def handle_remote_email_list_request(account: Dict[str, Any], requested_email: str,
                                      folder: str, subject_contains: str,
-                                     from_contains: str, keyword: str):
+                                     from_contains: str, keyword: str,
+                                     folder_id: str = '', mailbox: str = ''):
     skip = parse_non_negative_int(request.args.get('skip', 0), 0)
     top = parse_non_negative_int(request.args.get('top', 20), 20, 50)
-    result = fetch_account_emails(account, folder, skip, top)
+    storage_folder = folder
+    if folder_id:
+        storage_folder = build_graph_folder_storage_key(folder_id)
+    elif mailbox:
+        storage_folder = build_imap_folder_storage_key(mailbox)
+    result = fetch_account_emails(
+        account,
+        folder,
+        skip,
+        top,
+        folder_id=folder_id or None,
+        mailbox=mailbox or None,
+    )
     if result.get('success'):
         if is_normal_mail_local_retention_enabled():
             if skip == 0:
                 new_message_ids = find_new_retained_normal_mail_identifiers(
-                    account, folder, result.get('emails', [])
+                    account, storage_folder, result.get('emails', [])
                 )
                 result['new_count'] = len(new_message_ids)
                 result['new_message_ids'] = new_message_ids
-            upsert_retained_normal_mail_list_items(account, folder, result.get('emails', []))
+            upsert_retained_normal_mail_list_items(account, storage_folder, result.get('emails', []))
         apply_email_list_filters(
             account, result, False, subject_contains, from_contains, keyword
         )
         add_resolved_account_metadata(result, requested_email, account)
+        result['folder'] = storage_folder
+        if folder_id:
+            result['folder_id'] = folder_id
+        if mailbox:
+            result['mailbox'] = mailbox
     return jsonify(result)
 
 
@@ -1704,14 +1756,40 @@ def api_get_emails_v2(email_addr):
         )
         return jsonify({'success': False, 'error': error_payload})
 
-    folder = normalize_folder_name(request.args.get('folder', 'inbox'))
+    folder_request = parse_mail_folder_request_args(request.args)
+    if not folder_request.get('ok'):
+        return jsonify({
+            'success': False,
+            'error': folder_request.get('error') or 'folder 参数无效',
+        }), int(folder_request.get('status') or 400)
+
+    folder = folder_request.get('folder') or 'inbox'
+    folder_id = folder_request.get('folder_id') or ''
+    mailbox = folder_request.get('mailbox') or ''
+    if folder_id or mailbox:
+        validation_error = validate_mail_folder_ref(account, folder_id=folder_id, mailbox=mailbox)
+        if validation_error:
+            return jsonify({'success': False, 'error': validation_error}), 400
+
     subject_contains, from_contains, keyword = get_email_filter_args()
     if is_local_retention_request():
         return handle_local_retention_list_request(
-            account, requested_email, folder, subject_contains, from_contains, keyword
+            account,
+            requested_email,
+            folder_request.get('storage_folder') or folder,
+            subject_contains,
+            from_contains,
+            keyword,
         )
     return handle_remote_email_list_request(
-        account, requested_email, folder, subject_contains, from_contains, keyword
+        account,
+        requested_email,
+        folder,
+        subject_contains,
+        from_contains,
+        keyword,
+        folder_id=folder_id,
+        mailbox=mailbox,
     )
 
 
@@ -1828,6 +1906,7 @@ app.view_functions['api_external_get_emails'] = api_key_required(api_external_ge
 
 assert_endpoint_protection('api_update_account', '_requires_login', 'login_required')
 assert_endpoint_protection('api_get_emails', '_requires_login', 'login_required')
+assert_endpoint_protection('api_get_aggregated_emails', '_requires_login', 'login_required')
 assert_endpoint_protection('api_external_get_emails', '_requires_api_key', 'api_key_required')
 
 

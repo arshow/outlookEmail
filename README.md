@@ -1,6 +1,6 @@
 # 多邮箱邮件管理工具
 
-一个面向多邮箱账号场景的邮件管理工具，支持通过 Outlook/Hotmail OAuth、Microsoft Graph API 和标准 IMAP 统一读取、管理和转发邮件，并提供 Web 界面、Chrome/Edge 浏览器扩展，用于分组管理、账号管理、邮件查看和对外 API 调用。当前支持 Outlook/Hotmail、Gmail、QQ、163、126、Yahoo、阿里邮箱以及自定义 IMAP 邮箱，同时集成 GPTMail、DuckMail、Cloudflare Temp Email 多提供商临时邮箱能力。
+一个面向多邮箱账号场景的邮件管理工具，支持通过 Outlook/Hotmail OAuth、Microsoft Graph API 和标准 IMAP 统一读取、管理、转发与发信（新邮件 / 回复 / 转发），并提供 Web 界面、Chrome/Edge 浏览器扩展，用于分组管理、账号管理、邮件查看和对外 API 调用。当前支持 Outlook/Hotmail、Gmail、QQ、163、126、Yahoo、阿里邮箱以及自定义 IMAP 邮箱，同时集成 GPTMail、DuckMail、Cloudflare Temp Email 多提供商临时邮箱能力。
 
 注意：改密码会导致auth失效，需要重新授权
 ## 📦 快速开始
@@ -231,6 +231,7 @@ Outlook/Hotmail OAuth 的 IMAP 回退链路默认按 UID 读取详情和附件�
 - 🪪 **别名管理** - 支持给单个邮箱配置多个别名邮箱，主邮箱和别名都可用于检索邮件和调用对外 API
 - 🔀 **别名高级用法** - 可将外部邮箱自动转发到本项目管理的邮箱 A，再把外部邮箱配置为 A 的别名，从而通过本项目统一读取邮件
 - 📬 **邮件查看** - Web 界面支持查看收件箱和垃圾邮件；API 支持 `inbox`、`junkemail`、`deleteditems`、`all`
+- ✉️ **回复 / 发信** - Web 登录态支持新邮件、回复、全部回复、转发邮件，并可上传附件；Outlook 走 Graph（需 `Mail.Send`），IMAP 走账号 SMTP
 - 📎 **附件下载** - 邮件详情支持单个附件下载，也支持将全部附件打包为 ZIP 下载
 - 🔍 **全屏查看** - 支持全屏模式查看邮件
 - 📤 **导出功能** - 支持按分组树、选中账号或全部导出邮箱账号信息
@@ -337,7 +338,7 @@ Web 应用采用四栏式布局设计：
 
 手动 OAuth 助手默认走 GraphAPI 单资源权限，避免 Microsoft OAuth v2 在同一次授权中混用 Graph 和 Outlook 资源时报 `AADSTS70011`：
 - `offline_access` - 获取刷新令牌
-- `Mail.Read` / `Mail.ReadWrite` / `User.Read` - Graph 读信、标已读与基本用户信息
+- `Mail.Read` / `Mail.ReadWrite` / `Mail.Send` / `User.Read` - Graph 读信、标已读、发信与基本用户信息（旧账号需重新授权后才能发信）
 
 如需 IMAP 访问，请在「Outlook邮箱授权」面板选择 `IMAP授权`（自动授权默认是 GraphAPI），不要和 Graph 权限放在同一次手动授权链接里。
 
@@ -441,8 +442,9 @@ socks5h://outlook.{mail}@127.0.0.1:2260
 3. 点击「获取邮件」按钮
 4. 在 Web 界面切换「收件箱」「垃圾邮件」查看邮件
 5. 滚动到邮件列表底部自动加载下一页（每页 20 封）
-6. 点击邮件查看详情，支持 HTML 渲染与全屏查看
-7. 需要查看 `deleteditems` 或 `all` 聚合结果时，建议使用对外 API 或内部 API
+6. 点击邮件查看详情，支持 HTML 渲染与全屏查看；可在详情工具栏回复 / 全部回复 / 转发，或在邮件列表点击「写邮件」
+7. IMAP 自定义账号如需发信，请在编辑账号中填写 SMTP 主机与端口；预设邮箱（QQ/163/Gmail 等）默认使用内置 SMTP
+8. 需要查看 `deleteditems` 或 `all` 聚合结果时，建议使用对外 API 或内部 API
 
 ### 4. 批量选择与批量操作
 

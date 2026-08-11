@@ -2221,16 +2221,18 @@ class FrontendEmailListSecurityTests(unittest.TestCase):
         self.assertNotIn('onclick="${clickHandler}', self.emails_js)
         self.assertNotIn("onclick=\"${clickHandler}('${email.id}', ${index})\"", self.emails_js)
         self.assertIn('data-email-id="${escapeHtml(String(email.id || \'\'))}"', self.emails_js)
-        self.assertIn('data-email-index="${index}"', self.emails_js)
+        self.assertIn('data-email-index="${sourceIndex}"', self.emails_js)
         self.assertIn('function handleEmailListClick(event)', self.emails_js)
         self.assertIn("container.addEventListener('click', handleEmailListClick);", self.emails_js)
         self.assertIn('selectEmail(emailId, emailIndex);', self.emails_js)
+        self.assertIn('setEmailSelectionState(selectionKey, true, emailItem);', self.emails_js)
 
     def test_email_checkbox_uses_delegated_click_without_inline_toggle(self):
         self.assertNotIn("toggleEmailSelection('${email.id}')", self.emails_js)
         self.assertIn('event.stopPropagation();', self.emails_js)
-        self.assertIn('toggleEmailSelection(checkboxWrapper.dataset.emailId);', self.emails_js)
-        self.assertIn('class="email-checkbox-wrapper" data-email-id=', self.emails_js)
+        self.assertIn('toggleEmailSelection(selectionKey, checkboxWrapper.closest(\'.email-item\'));', self.emails_js)
+        self.assertIn('class="email-checkbox-wrapper" data-email-selection-key=', self.emails_js)
+        self.assertIn('function setEmailSelectionState(selectionKey, selected, emailItem = null)', self.emails_js)
 
     def test_detail_load_error_message_is_rendered_as_text(self):
         self.assertNotIn("${data.error && data.error.message ? data.error.message : '加载失败'}", self.emails_js)

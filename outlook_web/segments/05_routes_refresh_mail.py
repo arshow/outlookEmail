@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 import secrets
 import threading
 import time
@@ -2116,13 +2116,34 @@ def delete_emails_imap(email_addr: str, client_id: str, refresh_token: str, mess
 VALID_MAIL_FOLDERS = {'inbox', 'junkemail', 'deleteditems', 'all'}
 
 
+def is_custom_mail_folder_storage_key(folder: str) -> bool:
+    value = str(folder or '').strip().lower()
+    return value.startswith('graph:') or value.startswith('imap:')
+
+
 def normalize_folder_name(folder: str) -> str:
-    value = (folder or 'inbox').strip().lower()
+    raw = str(folder or 'inbox').strip()
+    lower = raw.lower()
+    if lower.startswith('graph:'):
+        folder_id = raw[6:].strip()
+        return f'graph:{folder_id}' if folder_id else 'inbox'
+    if lower.startswith('imap:'):
+        mailbox = raw[5:].strip()
+        return f'imap:{mailbox}' if mailbox else 'inbox'
+    value = lower
     if value in {'both', 'combined'}:
         return 'all'
     if value in {'trash'}:
         return 'deleteditems'
     return value or 'inbox'
+
+
+def build_graph_folder_storage_key(folder_id: str) -> str:
+    return f'graph:{str(folder_id or "").strip()}'
+
+
+def build_imap_folder_storage_key(mailbox: str) -> str:
+    return f'imap:{str(mailbox or "").strip()}'
 
 
 def get_query_arg_preserve_plus(name: str, default: str = '') -> str:
@@ -2191,7 +2212,7 @@ def merge_email_action_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 def mark_retained_normal_mail_rows_read(account: Dict[str, Any], items: List[Dict[str, str]],
                                         result: Dict[str, Any], fallback_id_mode: str = '',
-                                        db=None) -> int:
+                                        is_read: bool = True, db=None) -> int:
     account_id = int((account or {}).get('id') or 0)
     updated_ids = {
         str(message_id or '').strip()
@@ -2224,14 +2245,65 @@ def mark_retained_normal_mail_rows_read(account: Dict[str, Any], items: List[Dic
 
     database = db or get_db()
     updated_count = 0
+    read_value = 1 if is_read else 0
     for key in keys:
         cursor = database.execute(
             '''
             UPDATE retained_normal_mail_messages
-            SET is_read = 1, updated_at = CURRENT_TIMESTAMP
+            SET is_read = ?, updated_at = CURRENT_TIMESTAMP
             WHERE account_id = ? AND folder = ? AND provider_message_id = ? AND id_mode = ?
             ''',
-            key
+            (read_value, *key)
+        )
+        updated_count += max(0, cursor.rowcount or 0)
+    database.commit()
+    return updated_count
+
+
+def mark_retained_normal_mail_rows_flagged(account: Dict[str, Any], items: List[Dict[str, str]],
+                                           result: Dict[str, Any], flagged: bool = True,
+                                           fallback_id_mode: str = '', db=None) -> int:
+    account_id = int((account or {}).get('id') or 0)
+    updated_ids = {
+        str(message_id or '').strip()
+        for message_id in (result or {}).get('updated_ids') or []
+        if str(message_id or '').strip()
+    }
+    if not account_id or not updated_ids:
+        return 0
+
+    keys = []
+    seen_keys = set()
+    for item in items or []:
+        message_id = str((item or {}).get('id') or '').strip()
+        if message_id not in updated_ids:
+            continue
+
+        folder = normalize_folder_name((item or {}).get('folder', 'inbox'))
+        id_mode = str((item or {}).get('id_mode') or fallback_id_mode or '').strip().lower()
+        if not id_mode:
+            continue
+
+        key = (account_id, folder, message_id, id_mode)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        keys.append(key)
+
+    if not keys:
+        return 0
+
+    database = db or get_db()
+    updated_count = 0
+    flagged_value = 1 if flagged else 0
+    for key in keys:
+        cursor = database.execute(
+            '''
+            UPDATE retained_normal_mail_messages
+            SET is_flagged = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE account_id = ? AND folder = ? AND provider_message_id = ? AND id_mode = ?
+            ''',
+            (flagged_value, *key)
         )
         updated_count += max(0, cursor.rowcount or 0)
     database.commit()
@@ -2316,7 +2388,7 @@ def split_email_action_items_by_method(items: List[Dict[str, str]], method: str)
 
 
 def mark_imap_account_emails_read(account: Dict[str, Any], items: List[Dict[str, str]],
-                                  proxy_url: str) -> Dict[str, Any]:
+                                  proxy_url: str, is_read: bool = True) -> Dict[str, Any]:
     result = mark_emails_read_imap_generic_result(
         account['email'],
         account.get('imap_password', ''),
@@ -2324,37 +2396,96 @@ def mark_imap_account_emails_read(account: Dict[str, Any], items: List[Dict[str,
         items,
         account.get('imap_port', 993),
         account.get('provider', 'custom'),
-        proxy_url
+        proxy_url,
+        is_read=is_read,
     )
-    mark_retained_normal_mail_rows_read(account, items, result, fallback_id_mode='uid')
+    mark_retained_normal_mail_rows_read(
+        account, items, result, fallback_id_mode='uid', is_read=is_read
+    )
     return result
 
 
 def mark_graph_items_read(account: Dict[str, Any], items: List[Dict[str, str]],
-                          proxy_url: str, fallback_proxy_urls: List[str]) -> Dict[str, Any]:
+                          proxy_url: str, fallback_proxy_urls: List[str],
+                          is_read: bool = True) -> Dict[str, Any]:
     result = mark_emails_read_graph_result(
         account['client_id'],
         account['refresh_token'],
         [item['id'] for item in items],
         proxy_url,
         fallback_proxy_urls,
+        is_read=is_read,
     )
-    mark_retained_normal_mail_rows_read(account, items, result, fallback_id_mode='graph')
+    mark_retained_normal_mail_rows_read(
+        account, items, result, fallback_id_mode='graph', is_read=is_read
+    )
     return result
 
 
 def mark_oauth_imap_items_read(account: Dict[str, Any], items: List[Dict[str, str]],
-                               proxy_url: str, fallback_proxy_urls: List[str]) -> Dict[str, Any]:
+                               proxy_url: str, fallback_proxy_urls: List[str],
+                               is_read: bool = True) -> Dict[str, Any]:
     result = mark_emails_read_imap_batch(
         account['email'], account['client_id'], account['refresh_token'],
-        items, IMAP_SERVER_NEW, proxy_url, fallback_proxy_urls,
+        items, IMAP_SERVER_NEW, proxy_url, fallback_proxy_urls, is_read=is_read,
     )
     if not result.get('success') and result.get('success_count', 0) == 0:
         result = mark_emails_read_imap_batch(
             account['email'], account['client_id'], account['refresh_token'],
-            items, IMAP_SERVER_OLD, proxy_url, fallback_proxy_urls,
+            items, IMAP_SERVER_OLD, proxy_url, fallback_proxy_urls, is_read=is_read,
         )
-    mark_retained_normal_mail_rows_read(account, items, result, fallback_id_mode='uid')
+    mark_retained_normal_mail_rows_read(
+        account, items, result, fallback_id_mode='uid', is_read=is_read
+    )
+    return result
+
+
+def mark_imap_account_emails_flagged(account: Dict[str, Any], items: List[Dict[str, str]],
+                                     flagged: bool, proxy_url: str) -> Dict[str, Any]:
+    result = mark_emails_flag_imap_generic_result(
+        account['email'],
+        account.get('imap_password', ''),
+        account.get('imap_host', ''),
+        items,
+        flagged=flagged,
+        imap_port=account.get('imap_port', 993),
+        provider=account.get('provider', 'custom'),
+        proxy_url=proxy_url,
+    )
+    mark_retained_normal_mail_rows_flagged(account, items, result, flagged=flagged, fallback_id_mode='uid')
+    return result
+
+
+def mark_graph_items_flagged(account: Dict[str, Any], items: List[Dict[str, str]],
+                             flagged: bool, proxy_url: str,
+                             fallback_proxy_urls: List[str]) -> Dict[str, Any]:
+    result = mark_emails_flag_graph_result(
+        account['client_id'],
+        account['refresh_token'],
+        [item['id'] for item in items],
+        flagged=flagged,
+        proxy_url=proxy_url,
+        fallback_proxy_urls=fallback_proxy_urls,
+    )
+    mark_retained_normal_mail_rows_flagged(account, items, result, flagged=flagged, fallback_id_mode='graph')
+    return result
+
+
+def mark_oauth_imap_items_flagged(account: Dict[str, Any], items: List[Dict[str, str]],
+                                  flagged: bool, proxy_url: str,
+                                  fallback_proxy_urls: List[str]) -> Dict[str, Any]:
+    result = mark_emails_flag_imap_batch(
+        account['email'], account['client_id'], account['refresh_token'],
+        items, flagged=flagged, server=IMAP_SERVER_NEW, proxy_url=proxy_url,
+        fallback_proxy_urls=fallback_proxy_urls,
+    )
+    if not result.get('success') and result.get('success_count', 0) == 0:
+        result = mark_emails_flag_imap_batch(
+            account['email'], account['client_id'], account['refresh_token'],
+            items, flagged=flagged, server=IMAP_SERVER_OLD, proxy_url=proxy_url,
+            fallback_proxy_urls=fallback_proxy_urls,
+        )
+    mark_retained_normal_mail_rows_flagged(account, items, result, flagged=flagged, fallback_id_mode='uid')
     return result
 
 
@@ -2435,6 +2566,10 @@ def normalize_email_list_item(item: Dict[str, Any], folder: str) -> Dict[str, An
     row['to'] = str(row.get('to', '') or '')
     row['date'] = row.get('date', '')
     row['is_read'] = bool(row.get('is_read', False))
+    if 'is_flagged' not in row and row.get('flag') is not None:
+        row['is_flagged'] = coerce_graph_is_flagged(row.get('flag'))
+    else:
+        row['is_flagged'] = bool(row.get('is_flagged', False))
     row['has_attachments'] = bool(row.get('has_attachments', False))
     row['body_preview'] = row.get('body_preview', '')
     row['folder'] = row.get('folder') or folder
@@ -2458,8 +2593,10 @@ def coerce_retained_mail_bool(value: Any) -> int:
 
 def retained_mail_storage_folder(item: Dict[str, Any], request_folder: str) -> str:
     folder_name = normalize_folder_name(request_folder)
+    if is_custom_mail_folder_storage_key(folder_name):
+        return folder_name
     if folder_name == 'all':
-        return normalize_folder_name((item or {}).get('folder', 'all'))
+        return normalize_folder_name((item or {}).get('folder', 'inbox'))
     return folder_name
 
 
@@ -2491,6 +2628,7 @@ def build_retained_normal_mail_list_row(account_id: int, item: Dict[str, Any],
         'received_at': coerce_retained_mail_text(normalized.get('date')),
         'received_at_sort': retained_mail_received_at_sort(normalized.get('date')),
         'is_read': coerce_retained_mail_bool(normalized.get('is_read')),
+        'is_flagged': coerce_retained_mail_bool(normalized.get('is_flagged')),
         'has_attachments': coerce_retained_mail_bool(normalized.get('has_attachments')),
         'body_preview': coerce_retained_mail_text(normalized.get('body_preview')),
     }
@@ -2623,13 +2761,13 @@ def upsert_retained_normal_mail_list_items(account: Dict[str, Any], folder: str,
         INSERT INTO retained_normal_mail_messages (
             account_id, folder, provider_message_id, id_mode,
             subject, sender, recipients, received_at, received_at_sort,
-            is_read, has_attachments, body_preview,
+            is_read, is_flagged, has_attachments, body_preview,
             list_cached, list_cached_at, last_synced_at, updated_at
         )
         VALUES (
             :account_id, :folder, :provider_message_id, :id_mode,
             :subject, :sender, :recipients, :received_at, :received_at_sort,
-            :is_read, :has_attachments, :body_preview,
+            :is_read, :is_flagged, :has_attachments, :body_preview,
             1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
         )
         ON CONFLICT(account_id, folder, provider_message_id, id_mode)
@@ -2640,6 +2778,7 @@ def upsert_retained_normal_mail_list_items(account: Dict[str, Any], folder: str,
             received_at = excluded.received_at,
             received_at_sort = excluded.received_at_sort,
             is_read = excluded.is_read,
+            is_flagged = excluded.is_flagged,
             has_attachments = excluded.has_attachments,
             body_preview = excluded.body_preview,
             list_cached = 1,
@@ -3028,6 +3167,7 @@ def retained_mail_row_to_list_item(row) -> Dict[str, Any]:
         'to': row['recipients'] or '',
         'date': row['received_at'] or '',
         'is_read': bool(row['is_read']),
+        'is_flagged': bool(row['is_flagged']) if 'is_flagged' in row.keys() else False,
         'has_attachments': bool(row['has_attachments']),
         'body_preview': row['body_preview'] or '',
         'folder': row['folder'] or 'inbox',
@@ -3317,10 +3457,10 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
                                     from_contains: str = '',
                                     keyword: str = '') -> Dict[str, Any]:
     folder_name = normalize_folder_name(folder)
-    if folder_name not in VALID_MAIL_FOLDERS:
+    if folder_name not in VALID_MAIL_FOLDERS and not is_custom_mail_folder_storage_key(folder_name):
         return {
             'success': False,
-            'error': f'folder 参数无效，支持: {", ".join(sorted(VALID_MAIL_FOLDERS))}'
+            'error': f'folder 参数无效，支持: {", ".join(sorted(VALID_MAIL_FOLDERS))} 或 graph:/imap: 自定义键'
         }
 
     params: List[Any] = [int(account['id'])]
@@ -3407,6 +3547,7 @@ def format_graph_email_item(item: Dict[str, Any], folder: str) -> Dict[str, Any]
         ]),
         'date': item.get('receivedDateTime', ''),
         'is_read': item.get('isRead', False),
+        'is_flagged': coerce_graph_is_flagged(item.get('flag')),
         'has_attachments': item.get('hasAttachments', False),
         'body_preview': item.get('bodyPreview', ''),
         'folder': folder,
@@ -3576,15 +3717,47 @@ def merge_folder_results(results: Dict[str, Dict[str, Any]], skip: int, top: int
 
 
 def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int, top: int,
-                                proxy_url: str = '', fallback_proxy_urls: List[str] = None) -> Dict[str, Any]:
-    folder_name = normalize_folder_name(folder)
-    if folder_name not in VALID_MAIL_FOLDERS or folder_name == 'all':
+                                proxy_url: str = '', fallback_proxy_urls: List[str] = None,
+                                folder_id: str = None, mailbox: str = None) -> Dict[str, Any]:
+    explicit_folder_id = str(folder_id or '').strip()
+    explicit_mailbox = str(mailbox or '').strip()
+    if explicit_folder_id and explicit_mailbox:
         return {
             'success': False,
-            'error': f'folder 参数无效，支持: {", ".join(sorted(VALID_MAIL_FOLDERS - {"all"} | {"all"}))}'
+            'error': 'folder_id 与 mailbox 不能同时使用',
         }
 
+    if explicit_folder_id:
+        storage_folder = build_graph_folder_storage_key(explicit_folder_id)
+        folder_name = 'inbox'
+    elif explicit_mailbox:
+        storage_folder = build_imap_folder_storage_key(explicit_mailbox)
+        folder_name = 'inbox'
+    else:
+        folder_name = normalize_folder_name(folder)
+        if is_custom_mail_folder_storage_key(folder_name):
+            if folder_name.startswith('graph:'):
+                explicit_folder_id = folder_name[6:]
+                storage_folder = folder_name
+                folder_name = 'inbox'
+            else:
+                explicit_mailbox = folder_name[5:]
+                storage_folder = folder_name
+                folder_name = 'inbox'
+        else:
+            if folder_name not in VALID_MAIL_FOLDERS or folder_name == 'all':
+                return {
+                    'success': False,
+                    'error': f'folder 参数无效，支持: {", ".join(sorted(VALID_MAIL_FOLDERS))}'
+                }
+            storage_folder = folder_name
+
     if account.get('account_type') == 'imap':
+        if explicit_folder_id:
+            return {
+                'success': False,
+                'error': 'IMAP 账号不支持 folder_id，请使用 mailbox',
+            }
         result = get_emails_imap_generic(
             account['email'],
             account.get('imap_password', ''),
@@ -3594,15 +3767,23 @@ def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int,
             account.get('provider', 'custom'),
             skip,
             top,
-            proxy_url
+            proxy_url,
+            mailbox=explicit_mailbox or None,
         )
         if result.get('success'):
+            emails = format_email_items(result.get('emails', []), storage_folder)
+            for item in emails:
+                item['folder'] = storage_folder
+                if explicit_mailbox:
+                    item['mailbox'] = explicit_mailbox
             return {
                 'success': True,
-                'emails': format_email_items(result.get('emails', []), folder_name),
+                'emails': emails,
                 'method': result.get('method', 'IMAP (Generic)'),
                 'has_more': bool(result.get('has_more')),
                 'request_method': 'imap',
+                'folder': storage_folder,
+                'mailbox': explicit_mailbox or None,
             }
         return {
             'success': False,
@@ -3611,37 +3792,51 @@ def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int,
         }
 
     all_errors = {}
-    graph_result = get_emails_graph(
-        account['client_id'],
-        account['refresh_token'],
-        folder_name,
-        skip,
-        top,
-        proxy_url,
-        fallback_proxy_urls,
-    )
-    if graph_result.get('success'):
-        return {
-            'success': True,
-            'emails': [format_graph_email_item(item, folder_name) for item in graph_result.get('emails', [])],
-            'method': 'Graph API',
-            'has_more': len(graph_result.get('emails', [])) >= top,
-            'request_method': 'graph',
-        }
-
-    graph_error = graph_result.get('error')
-    all_errors['graph'] = graph_error
-    if is_transport_error_payload(graph_error):
-        connection_error_message = (
-            graph_error.get('message')
-            if isinstance(graph_error, dict) and graph_error.get('message')
-            else '网络连接失败：无法连接 Microsoft 服务，请检查服务器网络、DNS 和代理设置'
+    if not explicit_mailbox:
+        graph_result = get_emails_graph(
+            account['client_id'],
+            account['refresh_token'],
+            folder_name,
+            skip,
+            top,
+            proxy_url,
+            fallback_proxy_urls,
+            folder_id=explicit_folder_id or None,
         )
-        return {
-            'success': False,
-            'error': connection_error_message,
-            'details': all_errors
-        }
+        if graph_result.get('success'):
+            emails = [
+                format_graph_email_item(item, storage_folder)
+                for item in graph_result.get('emails', [])
+            ]
+            for item in emails:
+                item['folder'] = storage_folder
+                if explicit_folder_id:
+                    item['folder_id'] = explicit_folder_id
+            return {
+                'success': True,
+                'emails': emails,
+                'method': 'Graph API',
+                'has_more': len(graph_result.get('emails', [])) >= top,
+                'request_method': 'graph',
+                'folder': storage_folder,
+                'folder_id': explicit_folder_id or None,
+            }
+
+        graph_error = graph_result.get('error')
+        all_errors['graph'] = graph_error
+        if is_transport_error_payload(graph_error):
+            connection_error_message = (
+                graph_error.get('message')
+                if isinstance(graph_error, dict) and graph_error.get('message')
+                else '网络连接失败：无法连接 Microsoft 服务，请检查服务器网络、DNS 和代理设置'
+            )
+            return {
+                'success': False,
+                'error': connection_error_message,
+                'details': all_errors
+            }
+    else:
+        all_errors['graph'] = 'mailbox 参数仅走 IMAP 路径'
 
     imap_new_result = get_emails_imap_with_server(
         account['email'],
@@ -3653,14 +3848,22 @@ def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int,
         IMAP_SERVER_NEW,
         proxy_url,
         fallback_proxy_urls,
+        mailbox=explicit_mailbox or None,
     )
     if imap_new_result.get('success'):
+        emails = format_email_items(imap_new_result.get('emails', []), storage_folder)
+        for item in emails:
+            item['folder'] = storage_folder
+            if explicit_mailbox:
+                item['mailbox'] = explicit_mailbox
         return {
             'success': True,
-            'emails': format_email_items(imap_new_result.get('emails', []), folder_name),
+            'emails': emails,
             'method': 'IMAP (New)',
             'has_more': bool(imap_new_result.get('has_more')),
             'request_method': 'imap',
+            'folder': storage_folder,
+            'mailbox': explicit_mailbox or None,
         }
     all_errors['imap_new'] = imap_new_result.get('error')
 
@@ -3674,14 +3877,22 @@ def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int,
         IMAP_SERVER_OLD,
         proxy_url,
         fallback_proxy_urls,
+        mailbox=explicit_mailbox or None,
     )
     if imap_old_result.get('success'):
+        emails = format_email_items(imap_old_result.get('emails', []), storage_folder)
+        for item in emails:
+            item['folder'] = storage_folder
+            if explicit_mailbox:
+                item['mailbox'] = explicit_mailbox
         return {
             'success': True,
-            'emails': format_email_items(imap_old_result.get('emails', []), folder_name),
+            'emails': emails,
             'method': 'IMAP (Old)',
             'has_more': bool(imap_old_result.get('has_more')),
             'request_method': 'imap',
+            'folder': storage_folder,
+            'mailbox': explicit_mailbox or None,
         }
     all_errors['imap_old'] = imap_old_result.get('error')
 
@@ -3692,9 +3903,24 @@ def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int,
     }
 
 
-def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: int) -> Dict[str, Any]:
+def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: int,
+                         folder_id: str = None, mailbox: str = None) -> Dict[str, Any]:
     proxy_url = get_account_proxy_url(account)
     fallback_proxy_urls = get_account_proxy_failover_urls(account)
+    explicit_folder_id = str(folder_id or '').strip()
+    explicit_mailbox = str(mailbox or '').strip()
+    if explicit_folder_id or explicit_mailbox or is_custom_mail_folder_storage_key(folder):
+        return fetch_account_folder_emails(
+            account,
+            folder,
+            skip,
+            top,
+            proxy_url,
+            fallback_proxy_urls,
+            folder_id=explicit_folder_id or None,
+            mailbox=explicit_mailbox or None,
+        )
+
     folder_name = normalize_folder_name(folder)
     if folder_name not in VALID_MAIL_FOLDERS:
         return {
@@ -3761,6 +3987,337 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
     return fetch_account_folder_emails(account, folder_name, skip, top, proxy_url, fallback_proxy_urls)
 
 
+AGGREGATED_INBOX_MAX_ACCOUNTS = 50
+AGGREGATED_INBOX_MAX_WORKERS = 10
+AGGREGATED_INBOX_FOLDERS = {'all', 'inbox', 'junkemail'}
+
+
+def annotate_aggregated_email_item(email_item: Dict[str, Any], account: Dict[str, Any]) -> Dict[str, Any]:
+    annotated = dict(email_item or {})
+    annotated['account_id'] = account.get('id')
+    annotated['account_email'] = account.get('email')
+    annotated['account_remark'] = str(account.get('remark') or '').strip()
+    return annotated
+
+
+def merge_aggregated_account_results(
+    account_results: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """合并多账号邮件列表。skip/top 由各账号自身拉取决定，此处只做合并排序。"""
+    successful = [item for item in account_results if item.get('success')]
+    if not successful:
+        account_errors = [
+            {
+                'account_id': item.get('account_id'),
+                'account_email': item.get('account_email'),
+                'error': item.get('error'),
+            }
+            for item in account_results
+            if not item.get('success')
+        ]
+        details_by_account = {}
+        for item in account_errors:
+            key = str(item.get('account_email') or item.get('account_id') or 'account')
+            details_by_account[key] = item.get('error') or '获取邮件失败'
+        return {
+            'success': False,
+            'error': build_error_payload(
+                'EMAIL_FETCH_FAILED',
+                '无法获取聚合邮件，所有账号均失败',
+                'AggregatedFetchError',
+                502,
+                'all accounts failed',
+            ),
+            'account_errors': account_errors,
+            'details': details_by_account,
+            'emails': [],
+            'has_more': False,
+        }
+
+    merged = []
+    methods = []
+    has_more = False
+    account_errors = []
+    account_summaries = []
+
+    for item in account_results:
+        summary = {
+            'account_id': item.get('account_id'),
+            'account_email': item.get('account_email'),
+            'success': bool(item.get('success')),
+            'fetched_count': len(item.get('emails', [])) if item.get('success') else 0,
+            'has_more': bool(item.get('has_more')) if item.get('success') else False,
+        }
+        if item.get('method'):
+            summary['method'] = item.get('method')
+        if not item.get('success'):
+            summary['error'] = item.get('error')
+            account_errors.append({
+                'account_id': item.get('account_id'),
+                'account_email': item.get('account_email'),
+                'error': item.get('error'),
+            })
+        account_summaries.append(summary)
+
+        if not item.get('success'):
+            continue
+
+        merged.extend(item.get('emails') or [])
+        if item.get('method'):
+            methods.append(item['method'])
+        has_more = has_more or bool(item.get('has_more'))
+
+    merged.sort(
+        key=lambda email_item: parse_email_datetime(email_item.get('date')) or datetime.min,
+        reverse=True,
+    )
+
+    unique_methods = []
+    for method in methods:
+        if method and method not in unique_methods:
+            unique_methods.append(method)
+
+    response = {
+        'success': True,
+        'emails': merged,
+        'method': ' / '.join(unique_methods) if unique_methods else 'aggregated',
+        'has_more': has_more,
+        'account_summaries': account_summaries,
+    }
+    if account_errors:
+        response['partial'] = True
+        response['account_errors'] = account_errors
+    return response
+
+
+def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: int, top: int,
+                                    source: str = 'remote') -> Dict[str, Any]:
+    account_id = account.get('id')
+    account_email = account.get('email')
+    use_local = str(source or '').strip().lower() in {'local', 'retained', 'cache'}
+    # 线程池 worker 没有请求上下文，代理解析/DB 访问需要显式推入 app context
+    with app.app_context():
+        try:
+            if use_local:
+                result = fetch_retained_normal_mail_list(account, folder, skip, top)
+            else:
+                result = fetch_account_emails(account, folder, skip, top)
+        except Exception as exc:
+            return {
+                'success': False,
+                'account_id': account_id,
+                'account_email': account_email,
+                'error': build_error_payload(
+                    'EMAIL_FETCH_FAILED',
+                    '获取邮件失败，请检查账号配置',
+                    type(exc).__name__,
+                    500,
+                    str(exc),
+                ),
+                'emails': [],
+                'has_more': False,
+            }
+
+        if not result.get('success'):
+            return {
+                'success': False,
+                'account_id': account_id,
+                'account_email': account_email,
+                'error': result.get('error') or '获取邮件失败',
+                'details': result.get('details'),
+                'emails': [],
+                'has_more': False,
+            }
+
+        emails = [
+            annotate_aggregated_email_item(email_item, account)
+            for email_item in (result.get('emails') or [])
+        ]
+        return {
+            'success': True,
+            'account_id': account_id,
+            'account_email': account_email,
+            'emails': emails,
+            'method': result.get('method') or ('Local Retention' if use_local else ''),
+            'has_more': bool(result.get('has_more')),
+            'folder_summaries': result.get('folder_summaries'),
+            'source': 'local' if use_local else 'remote',
+        }
+
+
+@app.route('/api/emails/aggregated', methods=['GET'])
+@login_required
+def api_get_aggregated_emails():
+    """聚合当前分组内普通账号的邮件列表。
+
+    分页语义与单账号 folder=all 类似：skip/top 作用于每个账号各自的拉取；
+    返回前按邮件时间倒序合并。has_more 表示任一账号仍有更多邮件。
+    """
+    group_id = request.args.get('group_id', type=int)
+    if not group_id:
+        return jsonify({
+            'success': False,
+            'error': build_error_payload(
+                'INVALID_GROUP',
+                '缺少 group_id',
+                'ValidationError',
+                400,
+                'group_id is required',
+            ),
+        }), 400
+
+    group = get_group_by_id(group_id)
+    if not group:
+        return jsonify({
+            'success': False,
+            'error': build_error_payload(
+                'GROUP_NOT_FOUND',
+                '分组不存在',
+                'NotFoundError',
+                404,
+                f'group_id={group_id}',
+            ),
+        }), 404
+
+    folder_name = normalize_folder_name(request.args.get('folder', 'all'))
+    if folder_name not in AGGREGATED_INBOX_FOLDERS:
+        return jsonify({
+            'success': False,
+            'error': build_error_payload(
+                'INVALID_FOLDER',
+                f'folder 参数无效，支持: {", ".join(sorted(AGGREGATED_INBOX_FOLDERS))}',
+                'ValidationError',
+                400,
+                f'folder={folder_name}',
+            ),
+        }), 400
+
+    skip = parse_non_negative_int(request.args.get('skip', 0), 0)
+    top = parse_non_negative_int(request.args.get('top', 20), 20, max_value=50)
+    source_raw = str(request.args.get('source') or '').strip().lower()
+    local_only = str(request.args.get('local_only') or '').strip().lower() in {
+        '1', 'true', 'yes', 'on'
+    }
+    use_local = source_raw in {'local', 'retained', 'cache'} or local_only
+    if use_local and not is_normal_mail_local_retention_enabled():
+        return jsonify({
+            'success': False,
+            'error': build_error_payload(
+                'LOCAL_RETENTION_DISABLED',
+                '普通邮箱本地保留未开启，无法聚合读取本地邮件',
+                'ValidationError',
+                400,
+                'normal_mail_local_retention_enabled=false',
+            ),
+            'local_retention_enabled': False,
+        }), 400
+
+    accounts = load_accounts(group_id, include_descendants=True)
+    active_accounts = [
+        account for account in accounts
+        if str(account.get('status') or 'active').strip().lower() != 'inactive'
+        and bool(account.get('aggregated_inbox_enabled'))
+    ]
+    accounts_total = len(active_accounts)
+    accounts_truncated = accounts_total > AGGREGATED_INBOX_MAX_ACCOUNTS
+    selected_accounts = active_accounts[:AGGREGATED_INBOX_MAX_ACCOUNTS]
+
+    if not selected_accounts:
+        return jsonify({
+            'success': True,
+            'emails': [],
+            'method': 'aggregated',
+            'has_more': False,
+            'group_id': group_id,
+            'folder': folder_name,
+            'skip': skip,
+            'top': top,
+            'source': 'local' if use_local else 'remote',
+            'accounts_total': accounts_total,
+            'accounts_used': 0,
+            'accounts_truncated': False,
+            'account_summaries': [],
+        })
+
+    account_results: List[Dict[str, Any]] = []
+    max_workers = min(AGGREGATED_INBOX_MAX_WORKERS, len(selected_accounts))
+    fetch_source = 'local' if use_local else 'remote'
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix='agg-mail-fetch') as executor:
+        future_map = {
+            executor.submit(
+                fetch_aggregated_account_emails,
+                account,
+                folder_name,
+                skip,
+                top,
+                fetch_source,
+            ): account
+            for account in selected_accounts
+        }
+        for future in as_completed(future_map):
+            account = future_map[future]
+            try:
+                account_results.append(future.result())
+            except Exception as exc:
+                account_results.append({
+                    'success': False,
+                    'account_id': account.get('id'),
+                    'account_email': account.get('email'),
+                    'error': build_error_payload(
+                        'EMAIL_FETCH_FAILED',
+                        '获取邮件失败，请检查账号配置',
+                        type(exc).__name__,
+                        500,
+                        str(exc),
+                    ),
+                    'emails': [],
+                    'has_more': False,
+                })
+
+    merged = merge_aggregated_account_results(account_results)
+    # 本地聚合：即使各账号本地都为空，也返回 success（空列表），便于前端提示手动刷新
+    if use_local and not merged.get('success'):
+        has_hard_failure = any(
+            item.get('error') and not item.get('success')
+            for item in account_results
+        )
+        if not has_hard_failure or all(
+            not (item.get('emails') or []) for item in account_results
+        ):
+            # 全部失败但本地无数据时仍给空成功，避免把「无缓存」当成 502
+            if all(not item.get('success') for item in account_results):
+                # 若错误是本地保留关闭等硬错误，保留原失败；其余视为空本地
+                first_error = next(
+                    (item.get('error') for item in account_results if item.get('error')),
+                    None,
+                )
+                error_code = ''
+                if isinstance(first_error, dict):
+                    error_code = str(first_error.get('code') or '')
+                if error_code not in {'LOCAL_RETENTION_DISABLED'}:
+                    merged = {
+                        'success': True,
+                        'emails': [],
+                        'method': 'Local Retention',
+                        'has_more': False,
+                        'account_summaries': merged.get('account_summaries') or [],
+                        'partial': bool(merged.get('account_errors')),
+                        'account_errors': merged.get('account_errors') or [],
+                    }
+    merged['group_id'] = group_id
+    merged['folder'] = folder_name
+    merged['skip'] = skip
+    merged['top'] = top
+    merged['source'] = 'local' if use_local else 'remote'
+    merged['accounts_total'] = accounts_total
+    merged['accounts_used'] = len(selected_accounts)
+    merged['accounts_truncated'] = accounts_truncated
+    if use_local and merged.get('success') and not merged.get('method'):
+        merged['method'] = 'Local Retention'
+    status_code = 200 if merged.get('success') else 502
+    return jsonify(merged), status_code
+
+
 @app.route('/api/emails/<email_addr>')
 @login_required
 def api_get_emails(email_addr):
@@ -3792,10 +4349,15 @@ def api_get_emails(email_addr):
 @app.route('/api/emails/mark-read', methods=['POST'])
 @login_required
 def api_mark_emails_read():
-    """批量标记邮件为已读"""
+    """批量标记邮件为已读/未读。"""
     data = request.json or {}
     email_addr = str(data.get('email') or '').strip()
     method = str(data.get('method') or 'graph').strip().lower()
+    is_read_raw = data.get('is_read', True)
+    if isinstance(is_read_raw, str):
+        is_read = is_read_raw.strip().lower() in {'1', 'true', 'yes', 'on'}
+    else:
+        is_read = bool(is_read_raw)
     fallback_folder = normalize_folder_name(data.get('folder', 'inbox'))
     raw_items = data.get('items') if data.get('items') is not None else data.get('ids', [])
     items = normalize_email_action_items(raw_items, fallback_folder)
@@ -3809,15 +4371,63 @@ def api_mark_emails_read():
     proxy_url = get_account_proxy_url(account)
     fallback_proxy_urls = get_account_proxy_failover_urls(account)
     if account.get('account_type') == 'imap':
-        return jsonify(mark_imap_account_emails_read(account, items, proxy_url))
+        result = mark_imap_account_emails_read(account, items, proxy_url, is_read=is_read)
+        result['is_read'] = is_read
+        return jsonify(result)
 
     graph_items, imap_items = split_email_action_items_by_method(items, method)
     results = []
     if graph_items:
-        results.append(mark_graph_items_read(account, graph_items, proxy_url, fallback_proxy_urls))
+        results.append(mark_graph_items_read(
+            account, graph_items, proxy_url, fallback_proxy_urls, is_read=is_read
+        ))
     if imap_items:
-        results.append(mark_oauth_imap_items_read(account, imap_items, proxy_url, fallback_proxy_urls))
-    return jsonify(merge_email_action_results(results))
+        results.append(mark_oauth_imap_items_read(
+            account, imap_items, proxy_url, fallback_proxy_urls, is_read=is_read
+        ))
+    merged = merge_email_action_results(results)
+    merged['is_read'] = is_read
+    return jsonify(merged)
+
+
+@app.route('/api/emails/mark-flag', methods=['POST'])
+@login_required
+def api_mark_emails_flag():
+    """批量标记/取消邮件 Flag（星标）。"""
+    data = request.json or {}
+    email_addr = str(data.get('email') or '').strip()
+    method = str(data.get('method') or 'graph').strip().lower()
+    flagged_raw = data.get('flagged', True)
+    if isinstance(flagged_raw, str):
+        flagged = flagged_raw.strip().lower() in {'1', 'true', 'yes', 'on'}
+    else:
+        flagged = bool(flagged_raw)
+    fallback_folder = normalize_folder_name(data.get('folder', 'inbox'))
+    raw_items = data.get('items') if data.get('items') is not None else data.get('ids', [])
+    items = normalize_email_action_items(raw_items, fallback_folder)
+    if not email_addr or not items:
+        return jsonify({'success': False, 'error': '参数不完整'})
+
+    account = get_account_by_email(email_addr)
+    if not account:
+        return jsonify({'success': False, 'error': '账号不存在'})
+
+    proxy_url = get_account_proxy_url(account)
+    fallback_proxy_urls = get_account_proxy_failover_urls(account)
+    if account.get('account_type') == 'imap':
+        result = mark_imap_account_emails_flagged(account, items, flagged, proxy_url)
+        result['flagged'] = flagged
+        return jsonify(result)
+
+    graph_items, imap_items = split_email_action_items_by_method(items, method)
+    results = []
+    if graph_items:
+        results.append(mark_graph_items_flagged(account, graph_items, flagged, proxy_url, fallback_proxy_urls))
+    if imap_items:
+        results.append(mark_oauth_imap_items_flagged(account, imap_items, flagged, proxy_url, fallback_proxy_urls))
+    merged = merge_email_action_results(results)
+    merged['flagged'] = flagged
+    return jsonify(merged)
 
 
 @app.route('/api/emails/retain-bodies', methods=['POST'])

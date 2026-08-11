@@ -1174,6 +1174,92 @@ def api_batch_update_account_forwarding():
     })
 
 
+@app.route('/api/accounts/batch-update-inbox-poll', methods=['POST'])
+@login_required
+def api_batch_update_account_inbox_poll():
+    """批量更新账号收件箱自动发现状态"""
+    data = request.json or {}
+    account_ids = data.get('account_ids', [])
+
+    if 'inbox_poll_enabled' not in data:
+        return jsonify({'success': False, 'error': '缺少自动发现状态参数'})
+
+    raw_enabled = data.get('inbox_poll_enabled')
+    if isinstance(raw_enabled, str):
+        inbox_poll_enabled = raw_enabled.strip().lower() in {'1', 'true', 'yes', 'on'}
+    else:
+        inbox_poll_enabled = bool(raw_enabled)
+
+    result = update_accounts_inbox_poll_by_ids(account_ids, inbox_poll_enabled)
+    if not result.get('success'):
+        return jsonify(result)
+
+    action_label = '开启' if inbox_poll_enabled else '关闭'
+    updated_count = result.get('updated_count', 0)
+    unchanged_count = result.get('unchanged_count', 0)
+
+    if updated_count and unchanged_count:
+        message = f'已为 {updated_count} 个账号{action_label}自动发现，{unchanged_count} 个账号已处于该状态'
+    elif updated_count:
+        message = f'已为 {updated_count} 个账号{action_label}自动发现'
+    elif unchanged_count:
+        message = f'所选 {unchanged_count} 个账号已处于{action_label}自动发现状态'
+    else:
+        message = '没有可更新的账号'
+
+    return jsonify({
+        'success': True,
+        'message': message,
+        'updated_count': updated_count,
+        'updated_accounts': result.get('updated_accounts', []),
+        'unchanged_count': unchanged_count,
+        'missing_ids': result.get('missing_ids', []),
+    })
+
+
+@app.route('/api/accounts/batch-update-aggregated-inbox', methods=['POST'])
+@login_required
+def api_batch_update_account_aggregated_inbox():
+    """批量更新账号是否加入聚合收件箱"""
+    data = request.json or {}
+    account_ids = data.get('account_ids', [])
+
+    if 'aggregated_inbox_enabled' not in data:
+        return jsonify({'success': False, 'error': '缺少聚合收件箱状态参数'})
+
+    raw_enabled = data.get('aggregated_inbox_enabled')
+    if isinstance(raw_enabled, str):
+        aggregated_inbox_enabled = raw_enabled.strip().lower() in {'1', 'true', 'yes', 'on'}
+    else:
+        aggregated_inbox_enabled = bool(raw_enabled)
+
+    result = update_accounts_aggregated_inbox_by_ids(account_ids, aggregated_inbox_enabled)
+    if not result.get('success'):
+        return jsonify(result)
+
+    action_label = '加入' if aggregated_inbox_enabled else '移出'
+    updated_count = result.get('updated_count', 0)
+    unchanged_count = result.get('unchanged_count', 0)
+
+    if updated_count and unchanged_count:
+        message = f'已为 {updated_count} 个账号{action_label}聚合收件箱，{unchanged_count} 个账号已处于该状态'
+    elif updated_count:
+        message = f'已为 {updated_count} 个账号{action_label}聚合收件箱'
+    elif unchanged_count:
+        message = f'所选 {unchanged_count} 个账号已处于{action_label}聚合收件箱状态'
+    else:
+        message = '没有可更新的账号'
+
+    return jsonify({
+        'success': True,
+        'message': message,
+        'updated_count': updated_count,
+        'updated_accounts': result.get('updated_accounts', []),
+        'unchanged_count': unchanged_count,
+        'missing_ids': result.get('missing_ids', []),
+    })
+
+
 @app.route('/api/accounts/batch-update-proxy', methods=['POST'])
 @login_required
 def api_batch_update_account_proxy():
@@ -1288,11 +1374,18 @@ def api_get_account(account_id):
             'imap_port': account.get('imap_port', 993),
             'has_imap_password': bool(account.get('imap_password')),
             'imap_password': account.get('imap_password', '') or '',
+            'smtp_host': account.get('smtp_host', '') or '',
+            'smtp_port': int(account.get('smtp_port') or 0),
+            'smtp_use_tls': bool(account.get('smtp_use_tls')),
+            'smtp_use_ssl': bool(account.get('smtp_use_ssl')),
             'aliases': account.get('aliases', []),
             'alias_count': account.get('alias_count', 0),
             'matched_alias': account.get('matched_alias', ''),
             'forward_enabled': bool(account.get('forward_enabled')),
             'forward_last_checked_at': account.get('forward_last_checked_at', ''),
+            'inbox_poll_enabled': bool(account['inbox_poll_enabled']) if account.get('inbox_poll_enabled') is not None else True,
+            'inbox_poll_last_checked_at': account.get('inbox_poll_last_checked_at', '') or '',
+            'aggregated_inbox_enabled': bool(account.get('aggregated_inbox_enabled')),
             'proxy_url': account.get('proxy_url', '') or '',
             'fallback_proxy_url_1': account.get('fallback_proxy_url_1', '') or '',
             'fallback_proxy_url_2': account.get('fallback_proxy_url_2', '') or '',
@@ -1461,11 +1554,31 @@ def api_update_account(account_id):
     imap_host = (data.get('imap_host', '') or '').strip()
     imap_port = data.get('imap_port', 993)
     imap_password = data['imap_password'] if 'imap_password' in data else current_account.get('imap_password', '')
+    smtp_host = (data.get('smtp_host', current_account.get('smtp_host', '')) or '').strip()
+    smtp_port = data.get('smtp_port', current_account.get('smtp_port', 0))
+    smtp_use_tls = data.get('smtp_use_tls', current_account.get('smtp_use_tls', False))
+    smtp_use_ssl = data.get('smtp_use_ssl', current_account.get('smtp_use_ssl', False))
     group_id = data.get('group_id', 1)
     sort_order = parse_account_sort_order_input(data.get('sort_order')) if 'sort_order' in data else None
     remark = sanitize_input(data.get('remark', ''), max_length=200)
     status = data.get('status', 'active')
     forward_enabled = bool(data.get('forward_enabled', False))
+    if 'inbox_poll_enabled' in data:
+        raw_inbox_poll = data.get('inbox_poll_enabled')
+        if isinstance(raw_inbox_poll, str):
+            inbox_poll_enabled = raw_inbox_poll.strip().lower() in {'1', 'true', 'yes', 'on'}
+        else:
+            inbox_poll_enabled = bool(raw_inbox_poll)
+    else:
+        inbox_poll_enabled = bool(current_account['inbox_poll_enabled']) if current_account.get('inbox_poll_enabled') is not None else True
+    if 'aggregated_inbox_enabled' in data:
+        raw_aggregated = data.get('aggregated_inbox_enabled')
+        if isinstance(raw_aggregated, str):
+            aggregated_inbox_enabled = raw_aggregated.strip().lower() in {'1', 'true', 'yes', 'on'}
+        else:
+            aggregated_inbox_enabled = bool(raw_aggregated)
+    else:
+        aggregated_inbox_enabled = bool(current_account.get('aggregated_inbox_enabled'))
     proxy_url = str(data.get('proxy_url', current_account.get('proxy_url', '')) or '').strip()
     fallback_proxy_url_1 = str(
         data.get('fallback_proxy_url_1', current_account.get('fallback_proxy_url_1', '')) or ''
@@ -1488,6 +1601,10 @@ def api_update_account(account_id):
         imap_host = IMAP_SERVER_NEW
         imap_port = IMAP_PORT
         imap_password = ''
+        smtp_host = ''
+        smtp_port = 0
+        smtp_use_tls = False
+        smtp_use_ssl = False
     else:
         if not email_addr or not imap_password:
             return jsonify({'success': False, 'error': '邮箱和 IMAP 密码不能为空'})
@@ -1512,7 +1629,10 @@ def api_update_account(account_id):
     if update_account(
         account_id, email_addr, password, client_id, refresh_token, group_id, sort_order, remark, status,
         account_type, provider, imap_host, imap_port, imap_password, forward_enabled,
-        proxy_url, fallback_proxy_url_1, fallback_proxy_url_2
+        proxy_url, fallback_proxy_url_1, fallback_proxy_url_2,
+        smtp_host, smtp_port, smtp_use_tls, smtp_use_ssl,
+        inbox_poll_enabled=inbox_poll_enabled,
+        aggregated_inbox_enabled=aggregated_inbox_enabled,
     ):
         cleaned_aliases = get_account_aliases(account_id)
         db = get_db()

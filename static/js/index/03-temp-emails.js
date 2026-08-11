@@ -697,6 +697,8 @@
             currentCloudflareGlobalChannelId = null;
             currentCloudflareGlobalChannelName = '';
             isTempEmailGroup = true;
+            isAggregatedInbox = false;
+            aggregatedInboxGroupId = null;
             currentMethod = 'gptmail';
             currentEmailId = null;
             currentEmailDetail = null;
@@ -718,9 +720,16 @@
             });
 
             // 隐藏文件夹切换按钮（临时邮箱不支持文件夹）
-            const folderTabs = document.getElementById('folderTabs');
-            if (folderTabs) {
-                folderTabs.style.display = 'none';
+            if (typeof hideMailFolderTree === 'function') {
+                hideMailFolderTree();
+            } else {
+                const folderTabs = document.getElementById('folderTabs');
+                if (folderTabs) {
+                    folderTabs.style.display = 'none';
+                }
+            }
+            if (typeof syncEmailStatusFilterUI === 'function') {
+                syncEmailStatusFilterUI(false);
             }
 
             document.getElementById('emailList').innerHTML = `
@@ -773,6 +782,8 @@
             currentEmailDetail = null;
             currentEmails = [];
             isTempEmailGroup = true;
+            isAggregatedInbox = false;
+            aggregatedInboxGroupId = null;
             currentSkip = 0;
             hasMoreEmails = true;
 
@@ -786,9 +797,16 @@
             const targetItem = event?.currentTarget;
             if (targetItem) targetItem.classList.add('active');
 
-            const folderTabs = document.getElementById('folderTabs');
-            if (folderTabs) {
-                folderTabs.style.display = 'none';
+            if (typeof hideMailFolderTree === 'function') {
+                hideMailFolderTree();
+            } else {
+                const folderTabs = document.getElementById('folderTabs');
+                if (folderTabs) {
+                    folderTabs.style.display = 'none';
+                }
+            }
+            if (typeof syncEmailStatusFilterUI === 'function') {
+                syncEmailStatusFilterUI(false);
             }
 
             document.getElementById('emailList').innerHTML = `

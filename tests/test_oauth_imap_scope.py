@@ -54,6 +54,7 @@ def test_manual_oauth_scopes_are_graph_api():
         "offline_access",
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
+        "https://graph.microsoft.com/Mail.Send",
         "https://graph.microsoft.com/User.Read",
     ]
 
@@ -71,7 +72,7 @@ def test_oauth_scopes_contains_offline_access():
 def test_oauth_scopes_count():
     """验证 OAUTH_SCOPES 包含预期数量的权限"""
     scopes = extract_oauth_scopes_from_source()
-    expected_count = 4  # offline_access + Mail.Read + Mail.ReadWrite + User.Read
+    expected_count = 5  # offline_access + Mail.Read + Mail.ReadWrite + Mail.Send + User.Read
     assert len(scopes) == expected_count, \
         f"OAUTH_SCOPES 应该包含 {expected_count} 个权限，实际: {len(scopes)}\n当前配置: {scopes}"
 
@@ -109,11 +110,12 @@ def test_manual_oauth_scopes_align_with_graph_oauth_scopes():
 
 
 def test_graph_oauth_scopes_include_read_write_and_user():
-    """Graph 专用 scope 需同时包含读、写与 User.Read。"""
+    """Graph 专用 scope 需同时包含读、写、发信与 User.Read。"""
     graph_scopes = extract_graph_oauth_scopes_from_source()
 
     assert "https://graph.microsoft.com/Mail.Read" in graph_scopes
     assert "https://graph.microsoft.com/Mail.ReadWrite" in graph_scopes
+    assert "https://graph.microsoft.com/Mail.Send" in graph_scopes
     assert "https://graph.microsoft.com/User.Read" in graph_scopes
 
 

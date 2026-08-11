@@ -307,6 +307,10 @@
                         <span class="batch-btn-divider"></span>
                         <button class="batch-btn batch-btn-info" id="batchEnableForwardingBtn" onclick="enableForwardingForSelectedAccounts()">开启转发</button>
                         <button class="batch-btn batch-btn-info" id="batchDisableForwardingBtn" onclick="disableForwardingForSelectedAccounts()">取消转发</button>
+                        <button class="batch-btn batch-btn-info" id="batchEnableInboxPollBtn" onclick="enableInboxPollForSelectedAccounts()">开启自动发现</button>
+                        <button class="batch-btn batch-btn-info" id="batchDisableInboxPollBtn" onclick="disableInboxPollForSelectedAccounts()">关闭自动发现</button>
+                        <button class="batch-btn batch-btn-info" id="batchEnableAggregatedInboxBtn" onclick="enableAggregatedInboxForSelectedAccounts()">加入聚合</button>
+                        <button class="batch-btn batch-btn-info" id="batchDisableAggregatedInboxBtn" onclick="disableAggregatedInboxForSelectedAccounts()">移出聚合</button>
                         <button class="batch-btn batch-btn-info" id="batchProxyBtn" onclick="showBatchProxyModal()">代理</button>
                         
                         <!-- 分类和移动组 -->
@@ -353,11 +357,16 @@
                                 <span class="email-list-hint">按时间顺序查看邮件</span>
                             </div>
                         </div>
-                        <button class="refresh-btn" onclick="refreshEmails()" title="获取邮件">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
-                            </svg>
-                        </button>
+                        <div class="email-list-header-actions">
+                            <button class="compose-btn" type="button" onclick="openComposeModal('new')" title="写邮件">
+                                写邮件
+                            </button>
+                            <button class="refresh-btn" onclick="refreshEmails()" title="获取邮件">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                     <div class="folder-tabs" id="folderTabs" style="display: none;">
                         <button class="folder-tab active" data-folder="all" onclick="switchFolder('all')">
@@ -370,6 +379,19 @@
                             ⚠️ 垃圾邮件
                         </button>
                     </div>
+                    <div class="mail-folder-tree" id="mailFolderTree" style="display: none;" hidden>
+                        <div class="mail-folder-tree-toolbar">
+                            <button type="button" class="mail-folder-tree-all" id="mailFolderTreeAllBtn" onclick="selectMailFolderWellKnown('all')">全部邮件</button>
+                            <button type="button" class="mail-folder-tree-refresh" id="mailFolderTreeRefreshBtn" onclick="refreshMailFolderTree()" title="刷新文件夹">刷新</button>
+                        </div>
+                        <div class="mail-folder-tree-list" id="mailFolderTreeList"></div>
+                    </div>
+                    <div class="email-status-filters" id="emailStatusFilters" style="display: none;">
+                        <button class="email-status-filter active" type="button" data-status-filter="all" onclick="switchEmailStatusFilter('all')">全部</button>
+                        <button class="email-status-filter" type="button" data-status-filter="unread" onclick="switchEmailStatusFilter('unread')">未读</button>
+                        <button class="email-status-filter" type="button" data-status-filter="read" onclick="switchEmailStatusFilter('read')">已读</button>
+                        <button class="email-status-filter" type="button" data-status-filter="flagged" onclick="switchEmailStatusFilter('flagged')">⭐ Flag</button>
+                    </div>
                     <div class="new-mail-notice" id="newMailNotice" role="status" hidden></div>
                     <div class="mail-sync-status" id="mailSyncStatus" role="status" hidden></div>
                 </div>
@@ -381,16 +403,25 @@
                 </div>
                 <!-- Email Batch Action Bar -->
                 <div id="emailBatchActionBar" class="batch-action-bar">
-                    <div class="batch-action-bar__summary">
+                    <button type="button" class="batch-action-bar__summary" id="emailSelectionClearBtn"
+                        onclick="clearEmailSelection()" title="清空选择" aria-label="清空选择">
                         <span id="emailSelectedCount" class="batch-selection-count">已选 0 项</span>
-                    </div>
+                    </button>
                     <div class="batch-action-bar__controls">
                         <div class="batch-action-group">
                             <button class="batch-btn batch-btn-secondary" id="emailSelectAllBtn" onclick="toggleSelectAllEmails()">全选</button>
-                            <button class="batch-btn batch-btn-secondary" onclick="clearEmailSelection()">清空选择</button>
                         </div>
-                        <button class="batch-btn batch-btn-primary" id="batchMarkReadBtn" onclick="markSelectedEmailsAsRead()">
-                            设为已读
+                        <button class="batch-btn batch-btn-primary" id="batchMarkReadBtn" onclick="markSelectedEmailsAsRead()" title="设为已读">
+                            已读
+                        </button>
+                        <button class="batch-btn batch-btn-secondary" id="batchMarkUnreadBtn" onclick="markSelectedEmailsAsUnread()" title="设为未读">
+                            未读
+                        </button>
+                        <button class="batch-btn batch-btn-secondary" id="batchMarkFlagBtn" onclick="markSelectedEmailsFlag(true)" title="标记 Flag">
+                            Flag
+                        </button>
+                        <button class="batch-btn batch-btn-secondary" id="batchUnmarkFlagBtn" onclick="markSelectedEmailsFlag(false)" title="取消 Flag">
+                            取消
                         </button>
                         <button class="batch-btn batch-btn-danger" onclick="confirmBatchDeleteEmails()">
                             删除
@@ -438,6 +469,31 @@
                         </svg>
                         <span style="user-select: none;">信任此邮件</span>
                     </label>
+                    <button class="compose-action-btn email-detail-action-btn email-detail-action-btn--reply" type="button"
+                        title="回复" aria-label="回复" onclick="openComposeModal('reply')">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
+                            <polyline points="9 17 4 12 9 7"></polyline>
+                            <path d="M20 18v-2a4 4 0 0 0-4-4H4"></path>
+                        </svg>
+                        <span class="email-detail-action-btn__text">回复</span>
+                    </button>
+                    <button class="compose-action-btn email-detail-action-btn email-detail-action-btn--reply-all" type="button"
+                        title="全部回复" aria-label="全部回复" onclick="openComposeModal('reply_all')">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
+                            <polyline points="7 17 2 12 7 7"></polyline>
+                            <polyline points="13 17 8 12 13 7"></polyline>
+                            <path d="M22 18v-2a4 4 0 0 0-4-4H2"></path>
+                        </svg>
+                        <span class="email-detail-action-btn__text">全部回复</span>
+                    </button>
+                    <button class="compose-action-btn email-detail-action-btn email-detail-action-btn--forward" type="button"
+                        title="转发邮件" aria-label="转发邮件" onclick="openComposeModal('forward')">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
+                            <polyline points="15 17 20 12 15 7"></polyline>
+                            <path d="M4 18v-2a4 4 0 0 1 4-4h12"></path>
+                        </svg>
+                        <span class="email-detail-action-btn__text">转发</span>
+                    </button>
                     <div class="email-detail-toolbar-spacer"></div>
                     <button class="batch-btn danger email-detail-action-btn email-detail-action-btn--delete" type="button"
                         title="删除邮件" aria-label="删除邮件" onclick="confirmDeleteCurrentEmail()" style="padding: 4px 8px; font-size: 12px;">

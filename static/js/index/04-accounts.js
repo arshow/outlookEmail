@@ -1,11 +1,108 @@
-        /* global accountsCache, applyEmailListCache, closeMobilePanels, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, getEmailListCacheEntry, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, hideModal, isTempEmailGroup, loadAccountsByGroup, loadEmails, loadGroups, renderEmailList, scheduleEmailListLoadCheck, showEmailList, showToast, updateMobileContext */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, applyEmailListCache, closeMobilePanels, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, hideModal, isAggregatedInbox, isAggregatedInboxMode, isTempEmailGroup, loadAccountsByGroup, loadEmails, loadGroups, renderEmailList, scheduleEmailListLoadCheck, showEmailList, showToast, updateMobileContext */
 
         // ==================== 账号相关 ====================
+
+        function selectAggregatedInbox(event, groupId) {
+            if (event) {
+                event.stopPropagation();
+            }
+
+            const normalizedGroupId = Number(groupId || currentGroupId);
+            if (!Number.isFinite(normalizedGroupId) || normalizedGroupId <= 0) {
+                showToast('请先选择一个分组', 'error');
+                return;
+            }
+
+            isAggregatedInbox = true;
+            aggregatedInboxGroupId = normalizedGroupId;
+            isTempEmailGroup = false;
+            currentAccount = AGGREGATED_INBOX_ACCOUNT_KEY;
+            currentMethod = 'aggregated';
+            currentFolder = 'all';
+            currentEmailId = null;
+            currentEmailDetail = null;
+            currentSkip = 0;
+            hasMoreEmails = true;
+
+            document.getElementById('currentAccount').classList.add('show');
+            document.getElementById('currentAccountEmail').textContent = '聚合收件箱';
+            showEmailList({ scheduleLoadCheck: false });
+            closeMobilePanels();
+            updateMobileContext();
+
+            document.querySelectorAll('.account-item').forEach(item => item.classList.remove('active'));
+            const targetItem = event?.currentTarget;
+            if (targetItem) {
+                targetItem.classList.add('active');
+            } else {
+                document.querySelector('.aggregated-inbox-account-item')?.classList.add('active');
+            }
+
+            if (typeof setMailFolderNavMode === 'function') {
+                setMailFolderNavMode({ showTree: false, showTabs: true });
+            } else {
+                const folderTabs = document.getElementById('folderTabs');
+                if (folderTabs) {
+                    folderTabs.style.display = 'flex';
+                }
+            }
+            document.querySelectorAll('.folder-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.folder === 'all');
+            });
+            currentEmailStatusFilter = 'all';
+            if (typeof syncEmailStatusFilterUI === 'function') {
+                syncEmailStatusFilterUI(true);
+            }
+
+            const cacheAccountKey = getAggregatedInboxCacheAccountKey(normalizedGroupId);
+            const cache = getEmailListCacheEntry(cacheAccountKey, 'all');
+            if (cache) {
+                applyEmailListCache(cache, { scheduleLoadCheck: false });
+            } else {
+                const loadingText = (
+                    typeof isNormalMailLocalRetentionEnabled === 'function'
+                    && isNormalMailLocalRetentionEnabled()
+                )
+                    ? '正在加载本地聚合邮件...'
+                    : '聚合收件箱需手动刷新远程...';
+                document.getElementById('emailList').innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📬</div>
+                        <div class="empty-state-text">${loadingText}</div>
+                    </div>
+                `;
+                document.getElementById('emailCount').textContent = '';
+                const methodTag = document.getElementById('methodTag');
+                if (methodTag) {
+                    methodTag.textContent = '聚合';
+                    methodTag.style.display = 'inline';
+                    methodTag.style.backgroundColor = '';
+                    methodTag.style.color = '';
+                }
+                currentEmails = [];
+            }
+
+            document.getElementById('emailDetail').innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">📄</div>
+                    <div class="empty-state-text">选择一封邮件查看详情</div>
+                </div>
+            `;
+            document.getElementById('emailDetailToolbar').style.display = 'none';
+
+            // 无前端缓存时：本地保留则拼本地；否则空着等手动刷新（不自动打远程）
+            if (!cache) {
+                loadEmails(AGGREGATED_INBOX_ACCOUNT_KEY);
+            }
+        }
 
         // 选择账号
         function selectAccount(email) {
             currentAccount = email;
             isTempEmailGroup = false;
+            isAggregatedInbox = false;
+            aggregatedInboxGroupId = null;
+            currentMethod = 'graph';
             currentFolder = 'all'; // 重置为全部邮件
             currentEmailId = null;
             currentEmailDetail = null;
@@ -24,14 +121,24 @@
                 }
             });
 
-            // 显示文件夹切换按钮
-            const folderTabs = document.getElementById('folderTabs');
-            if (folderTabs) {
-                folderTabs.style.display = 'flex';
-                // 重置为全部邮件
-                document.querySelectorAll('.folder-tab').forEach(tab => {
-                    tab.classList.toggle('active', tab.dataset.folder === 'all');
-                });
+            // 单账号：目录树；聚合/临时仍用页签
+            if (typeof loadMailFolderTree === 'function') {
+                loadMailFolderTree(email);
+            } else {
+                const folderTabs = document.getElementById('folderTabs');
+                if (folderTabs) {
+                    folderTabs.style.display = 'flex';
+                }
+            }
+            document.querySelectorAll('.folder-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.folder === 'all');
+            });
+            if (typeof syncMailFolderTreeSelection === 'function') {
+                syncMailFolderTreeSelection();
+            }
+            currentEmailStatusFilter = 'all';
+            if (typeof syncEmailStatusFilterUI === 'function') {
+                syncEmailStatusFilterUI(true);
             }
 
             const cache = getEmailListCacheEntry(email, 'all');
@@ -43,7 +150,12 @@
                 document.getElementById('emailList').innerHTML = `
                     <div class="empty-state">
                         <div class="empty-state-icon">📬</div>
-                        <div class="empty-state-text">正在自动刷新全部邮件...</div>
+                        <div class="empty-state-text">${
+                            typeof isNormalMailLocalRetentionEnabled === 'function'
+                            && isNormalMailLocalRetentionEnabled()
+                                ? '正在加载本地邮件...'
+                                : '正在自动刷新全部邮件...'
+                        }</div>
                     </div>
                 `;
                 document.getElementById('emailCount').textContent = '';
@@ -59,7 +171,7 @@
             `;
             document.getElementById('emailDetailToolbar').style.display = 'none';
 
-            // 首次进入未命中缓存时才自动加载
+            // 首次进入未命中前端列表缓存时才自动加载（本地保留开启时仅读本地）
             if (!cache) {
                 loadEmails(email);
             }

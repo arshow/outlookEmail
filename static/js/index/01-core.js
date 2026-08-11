@@ -1,4 +1,4 @@
-        /* global applyPendingNewMailSync, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchInput, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailListScroll, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, renderEmailList, saveAccountSearchQueryPreference, scheduleEmailListLoadCheck, searchAccounts */
+        /* global applyPendingNewMailSync, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchInput, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailListScroll, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, renderEmailList, saveAccountSearchQueryPreference, scheduleEmailListLoadCheck, searchAccounts, syncInboxDiscoveryEventSource */
 
         // 全局状态
         let csrfToken = null;
@@ -7,6 +7,7 @@
         let currentEmails = [];
         let currentMethod = 'graph';
         let currentFolder = 'all'; // 当前文件夹：all / inbox / junkemail / deleteditems
+        let currentEmailStatusFilter = 'all'; // all / unread / read / flagged
         let isListVisible = true;
         let groups = [];
         let accountsCache = {}; // 缓存各分组的邮箱列表
@@ -29,9 +30,12 @@
         let selectedColor = '#1a1a1a';
         let isTempEmailGroup = false; // 是否是临时邮箱分组
         let tempEmailGroupId = null; // 临时邮箱分组 ID
+        const AGGREGATED_INBOX_ACCOUNT_KEY = '__aggregated_inbox__';
+        let isAggregatedInbox = false; // 是否处于当前分组聚合收件箱模式
+        let aggregatedInboxGroupId = null; // 聚合收件箱对应的分组 ID
         let isLoadingMore = false; // 是否正在加载更多邮件
         let hasMoreEmails = true; // 是否还有更多邮件
-        let currentSkip = 0; // 当前分页偏移量
+        let currentSkip = 0; // 当前分页偏移量（聚合模式下为每账号 skip）
 
         // 缓存与信任模式
         let emailListCache = {}; // 结构: { "account_folder": { emails: [], hasMore: bool, skip: int, method: str, count: int } }
@@ -170,6 +174,9 @@
 
         function setNormalMailLocalRetentionEnabled(enabled) {
             normalMailLocalRetentionEnabled = enabled === true;
+            if (typeof syncInboxDiscoveryEventSource === 'function') {
+                syncInboxDiscoveryEventSource();
+            }
             return normalMailLocalRetentionEnabled;
         }
 
@@ -252,6 +259,11 @@
 
             if (!Number.isFinite(cachedSkip) || cachedSkip < 0) {
                 return cachedEmailCount;
+            }
+
+            // 聚合收件箱的 skip 是“每账号偏移”，不能与合并后的列表长度取 max
+            if (isAggregatedInboxMode() || cache?.method === 'aggregated') {
+                return cachedSkip;
             }
 
             return Math.max(cachedSkip, cachedEmailCount);
@@ -397,7 +409,10 @@
 
             const emailCount = document.getElementById('emailCount');
             if (emailCount) {
-                emailCount.textContent = `(${currentEmails.length})`;
+                const visibleCount = typeof getVisibleEmailsForCurrentFilter === 'function'
+                    ? getVisibleEmailsForCurrentFilter(currentEmails).length
+                    : currentEmails.length;
+                emailCount.textContent = `(${visibleCount})`;
             }
 
             renderEmailList(currentEmails);
@@ -572,13 +587,26 @@
         }
 
         function getFolderDisplayName(folder) {
+            const value = String(folder || '').trim();
+            const lower = value.toLowerCase();
             const names = {
                 all: '全部邮件',
                 inbox: '收件箱',
                 junkemail: '垃圾邮件',
                 deleteditems: '已删除邮件'
             };
-            return names[String(folder || '').trim().toLowerCase()] || '邮件';
+            if (names[lower]) {
+                return names[lower];
+            }
+            if (lower.startsWith('graph:')) {
+                return '自定义文件夹';
+            }
+            if (lower.startsWith('imap:')) {
+                const mailbox = value.slice(5);
+                const parts = mailbox.split(/[./\\]/);
+                return parts[parts.length - 1] || mailbox || '自定义文件夹';
+            }
+            return '邮件';
         }
 
         function normalizeGroupName(groupName, fallbackName = '未命名分组') {
@@ -1140,6 +1168,9 @@
             // 初始化 CSRF Token
             await initCSRFToken();
             await loadAppTimeZoneFromSettings();
+            if (typeof syncInboxDiscoveryEventSource === 'function') {
+                syncInboxDiscoveryEventSource();
+            }
             ensureForwardingSettingsUI();
             bindPersistentButtonHandlers();
             document.addEventListener('click', closeAccountActionMenus);
@@ -1525,18 +1556,55 @@
             emailList.addEventListener('scroll', maybeLoadMoreEmails, { passive: true });
         }
 
+        function isAggregatedInboxMode() {
+            return isAggregatedInbox === true
+                || currentAccount === AGGREGATED_INBOX_ACCOUNT_KEY
+                || currentMethod === 'aggregated';
+        }
+
+        function getAggregatedInboxCacheAccountKey(groupId = aggregatedInboxGroupId || currentGroupId) {
+            const normalizedGroupId = Number(groupId);
+            if (!Number.isFinite(normalizedGroupId) || normalizedGroupId <= 0) {
+                return '';
+            }
+            return `${AGGREGATED_INBOX_ACCOUNT_KEY}:${normalizedGroupId}`;
+        }
+
         // 加载更多邮件
         function buildLoadMoreEmailsUrl(nextSkip) {
-            const query = new URLSearchParams({
+            if (isAggregatedInboxMode()) {
+                const cacheAccountKey = getAggregatedInboxCacheAccountKey();
+                const cache = getEmailListCacheEntry(cacheAccountKey, currentFolder);
+                const query = new URLSearchParams({
+                    group_id: String(aggregatedInboxGroupId || currentGroupId || ''),
+                    folder: currentFolder,
+                    skip: String(nextSkip),
+                    top: '20'
+                });
+                if (
+                    currentMethod === 'local'
+                    || cache?.local_retention === true
+                    || cache?.source === 'local'
+                    || String(cache?.method || '').toLowerCase().includes('local')
+                ) {
+                    query.set('source', 'local');
+                }
+                return `/api/emails/aggregated?${query.toString()}`;
+            }
+
+            const cache = getEmailListCacheEntry(currentAccount, currentFolder);
+            const baseParams = {
                 method: currentMethod,
                 folder: currentFolder,
                 skip: String(nextSkip),
                 top: '20'
-            });
-            const cache = getEmailListCacheEntry(currentAccount, currentFolder);
+            };
             if (currentMethod === 'local' || cache?.local_retention === true) {
-                query.set('source', 'local');
+                baseParams.source = 'local';
             }
+            const query = typeof buildMailFolderListParams === 'function'
+                ? buildMailFolderListParams(baseParams)
+                : new URLSearchParams(baseParams);
             return `/api/emails/${encodeURIComponent(currentAccount)}?${query.toString()}`;
         }
 
@@ -1549,14 +1617,17 @@
                 return;
             }
 
-            if (typeof hasPendingNewMailSync === 'function'
+            if (!isAggregatedInboxMode()
+                && typeof hasPendingNewMailSync === 'function'
                 && typeof applyPendingNewMailSync === 'function'
                 && hasPendingNewMailSync(currentAccount, currentFolder)) {
                 applyPendingNewMailSync();
             }
 
             isLoadingMore = true;
-            const nextSkip = Math.max(Number(currentSkip) || 0, Array.isArray(currentEmails) ? currentEmails.length : 0);
+            const nextSkip = isAggregatedInboxMode()
+                ? Math.max(0, Number(currentSkip) || 0)
+                : Math.max(Number(currentSkip) || 0, Array.isArray(currentEmails) ? currentEmails.length : 0);
             currentSkip = nextSkip;
 
             // 在列表底部显示加载状态
@@ -1589,7 +1660,9 @@
                     // 追加新邮件到列表
                     currentEmails = currentEmails.concat(data.emails);
                     hasMoreEmails = data.has_more;
-                    currentSkip = currentEmails.length;
+                    currentSkip = isAggregatedInboxMode()
+                        ? nextSkip + 20
+                        : currentEmails.length;
 
                     // 移除加载状态
                     const loadingEl = document.getElementById('loadingMore');
@@ -1602,8 +1675,11 @@
                     document.getElementById('emailCount').textContent = `(${currentEmails.length})`;
 
                     // 更新缓存
-                    if (currentAccount && !isTempEmailGroup) {
-                        const cacheKey = `${currentAccount}_${currentFolder}`;
+                    const cacheAccountKey = isAggregatedInboxMode()
+                        ? getAggregatedInboxCacheAccountKey()
+                        : currentAccount;
+                    if (cacheAccountKey && !isTempEmailGroup) {
+                        const cacheKey = `${cacheAccountKey}_${currentFolder}`;
                         if (emailListCache[cacheKey]) {
                             emailListCache[cacheKey].emails = currentEmails;
                             emailListCache[cacheKey].has_more = hasMoreEmails;
@@ -1644,7 +1720,9 @@
                     scheduleEmailListLoadCheck(80);
                 } else {
                     hasMoreEmails = false;
-                    currentSkip = Array.isArray(currentEmails) ? currentEmails.length : nextSkip;
+                    currentSkip = isAggregatedInboxMode()
+                        ? nextSkip
+                        : (Array.isArray(currentEmails) ? currentEmails.length : nextSkip);
                     // 显示"没有更多邮件"
                     const loadingEl = document.getElementById('loadingMore');
                     if (loadingEl) {
@@ -1677,8 +1755,14 @@
             document.querySelectorAll('.folder-tab').forEach(tab => {
                 tab.classList.toggle('active', tab.dataset.folder === folder);
             });
+            if (typeof syncMailFolderTreeSelection === 'function') {
+                syncMailFolderTreeSelection();
+            }
 
-            const cache = getEmailListCacheEntry(currentAccount, folder);
+            const cacheAccountKey = isAggregatedInboxMode()
+                ? getAggregatedInboxCacheAccountKey()
+                : currentAccount;
+            const cache = getEmailListCacheEntry(cacheAccountKey, folder);
 
             // 检查是否有缓存
             if (cache) {
@@ -1712,6 +1796,36 @@
             if (currentAccount && !isTempEmailGroup && !cache) {
                 loadEmails(currentAccount);
             }
+        }
+
+        function switchEmailStatusFilter(filter) {
+            const normalized = String(filter || 'all').trim().toLowerCase();
+            const allowed = ['all', 'unread', 'read', 'flagged'];
+            currentEmailStatusFilter = allowed.includes(normalized) ? normalized : 'all';
+            document.querySelectorAll('.email-status-filter').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.statusFilter === currentEmailStatusFilter);
+            });
+            if (typeof renderEmailList === 'function') {
+                renderEmailList(currentEmails);
+            }
+            const emailCount = document.getElementById('emailCount');
+            if (emailCount && Array.isArray(currentEmails)) {
+                const visibleCount = typeof getVisibleEmailsForCurrentFilter === 'function'
+                    ? getVisibleEmailsForCurrentFilter(currentEmails).length
+                    : currentEmails.length;
+                emailCount.textContent = `(${visibleCount})`;
+            }
+        }
+
+        function syncEmailStatusFilterUI(visible = true) {
+            const filters = document.getElementById('emailStatusFilters');
+            if (!filters) {
+                return;
+            }
+            filters.style.display = visible ? 'flex' : 'none';
+            document.querySelectorAll('.email-status-filter').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.statusFilter === currentEmailStatusFilter);
+            });
         }
 
         // 选择自定义颜色（颜色选择器）
@@ -1880,6 +1994,39 @@
                 }
             } catch (error) {
                 showToast('触发转发检查失败', 'error');
+            } finally {
+                triggerBtn.disabled = false;
+                triggerBtn.textContent = originalText;
+            }
+        }
+
+        async function triggerInboxDiscovery() {
+            const triggerBtn = document.getElementById('triggerInboxDiscoveryBtn');
+            if (!triggerBtn || triggerBtn.disabled) return;
+
+            const originalText = triggerBtn.textContent;
+            triggerBtn.disabled = true;
+            triggerBtn.textContent = '触发中...';
+
+            try {
+                if (!csrfToken) {
+                    await initCSRFToken();
+                }
+
+                const response = await fetch('/api/accounts/trigger-inbox-discovery', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    showToast(data.message || '已完成一次收件箱发现', 'success');
+                } else {
+                    showToast(data.error || data.message || '触发收件箱发现失败', 'error');
+                }
+            } catch (error) {
+                showToast('触发收件箱发现失败', 'error');
             } finally {
                 triggerBtn.disabled = false;
                 triggerBtn.textContent = originalText;
@@ -2232,6 +2379,9 @@
                 }
                 if (code === 'GRAPH_TOKEN_FAILED' || code === 'IMAP_TOKEN_FAILED') {
                     if (details.includes('invalid_grant')) {
+                        if (details.includes('different tenant') || details.includes('AADSTS7000012')) {
+                            return 'Token 与当前应用租户不匹配：请用当前 Client ID 重新授权，或检查账号的 client_id / refresh_token 是否成对';
+                        }
                         return 'Token 已失效或权限不足：请重新授权登录或更换 refresh_token';
                     }
                     if (details.includes('invalid_client')) {

@@ -24,7 +24,7 @@ GRAPH_EXTRACT_SCOPE = os.getenv(
     "GRAPH_EXTRACT_SCOPE",
     "offline_access https://outlook.office.com/IMAP.AccessAsUser.All",
 )
-# GraphAPI：与 OAUTH_GRAPH_SCOPES 对齐，含读信 / 标已读写权限 / User.Read
+# GraphAPI：与 OAUTH_GRAPH_SCOPES 对齐，含读信 / 标已读写权限 / 发信 / User.Read
 GRAPH_EXTRACT_GRAPH_SCOPE = os.getenv(
     "GRAPH_EXTRACT_GRAPH_SCOPE",
     " ".join(["offline_access", *OAUTH_GRAPH_SCOPES]),

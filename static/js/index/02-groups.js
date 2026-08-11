@@ -760,6 +760,11 @@
             // 检查是否是临时邮箱分组
             const group = groups.find(g => g.id === groupId);
             isTempEmailGroup = group && group.name === '临时邮箱';
+            isAggregatedInbox = false;
+            aggregatedInboxGroupId = null;
+            if (currentAccount === AGGREGATED_INBOX_ACCOUNT_KEY) {
+                currentAccount = null;
+            }
 
             const expandedAncestors = expandAncestors(groupId);
 
@@ -1308,6 +1313,12 @@
                 : '';
         }
 
+        function showAggregatedInboxStatusLabel(enabled) {
+            return enabled
+                ? '<span class="account-status-pill info" title="已加入聚合收件箱">聚</span>'
+                : '';
+        }
+
         function renderAccountTagSummary(tags, accountId) {
             const safeTags = Array.isArray(tags) ? tags : [];
             const visibleTags = safeTags.slice(0, 2);
@@ -1439,8 +1450,28 @@
                 Array.from(container.querySelectorAll('.account-select-checkbox:checked'))
                     .map(checkbox => String(checkbox.value))
             );
-            container.innerHTML = accounts.map(acc => `
-                <div class="account-item ${currentAccount === acc.email ? 'active' : ''} ${acc.status === 'inactive' ? 'inactive' : ''}"
+            const canShowAggregatedInbox = Number.isFinite(normalizedGroupId)
+                && normalizedGroupId > 0
+                && !isTempEmailGroup
+                && !(isSearchMode && getAccountSearchScope() === 'all');
+            const aggregatedEntry = canShowAggregatedInbox ? `
+                <div class="account-item aggregated-inbox-account-item cloudflare-global-account-item ${isAggregatedInboxMode() && Number(aggregatedInboxGroupId) === normalizedGroupId ? 'active' : ''}"
+                     onclick="selectAggregatedInbox(event, ${normalizedGroupId})">
+                    <div class="account-body">
+                        <div class="account-title-row">
+                            <div class="account-email-wrap">
+                                <div class="account-email cloudflare-global-account-title" title="聚合收件箱">聚合收件箱</div>
+                            </div>
+                        </div>
+                        <div class="account-meta-row">
+                            <span class="account-status-pill provider" style="--pill-accent: #2563eb">当前分组</span>
+                            <span class="account-status-pill muted">合并邮件</span>
+                        </div>
+                    </div>
+                </div>
+            ` : '';
+            container.innerHTML = aggregatedEntry + accounts.map(acc => `
+                <div class="account-item ${!isAggregatedInboxMode() && currentAccount === acc.email ? 'active' : ''} ${acc.status === 'inactive' ? 'inactive' : ''}"
                      data-account-id="${acc.id}"
                      onclick="handleAccountItemClick(event, '${escapeJs(acc.email)}')">
                     <input type="checkbox" class="account-select-checkbox" value="${acc.id}" 
@@ -1448,6 +1479,7 @@
                            data-account-type="${escapeHtml(acc.account_type || 'outlook')}"
                            data-refreshable="${acc.account_type !== 'imap' ? 'true' : 'false'}"
                            data-forward-enabled="${acc.forward_enabled ? 'true' : 'false'}"
+                           data-aggregated-inbox-enabled="${acc.aggregated_inbox_enabled ? 'true' : 'false'}"
                            onclick="handleAccountSelectionCheckboxClick(event)">
                     <div class="account-body">
                         <div class="account-title-row">
@@ -1463,6 +1495,7 @@
                                 ${escapeHtml(getProviderLabel(acc.provider || (acc.account_type === 'imap' ? 'custom' : 'outlook')))}
                             </span>
                             ${showForwardStatusLabel(!!acc.forward_enabled)}
+                            ${showAggregatedInboxStatusLabel(!!acc.aggregated_inbox_enabled)}
                             ${acc.status === 'inactive' ? '<span class="account-status-pill muted">已停用</span>' : ''}
                             ${acc.last_refresh_status === 'failed' ? '<span class="account-status-pill danger">刷新失败</span>' : ''}
                         </div>
@@ -1712,7 +1745,14 @@
             document.getElementById('currentAccountEmail').textContent = '';
             document.getElementById('emailCount').textContent = '';
             document.getElementById('methodTag').style.display = 'none';
-            document.getElementById('folderTabs').style.display = 'none';
+            if (typeof hideMailFolderTree === 'function') {
+                hideMailFolderTree();
+            } else {
+                document.getElementById('folderTabs').style.display = 'none';
+            }
+            if (typeof syncEmailStatusFilterUI === 'function') {
+                syncEmailStatusFilterUI(false);
+            }
             document.getElementById('emailDetailToolbar').style.display = 'none';
             document.getElementById('emailList').innerHTML = `
                 <div class="empty-state">

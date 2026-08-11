@@ -74,6 +74,8 @@
 | PUT | `/api/accounts/<account_id>/aliases` | Session + CSRF | JSON | 整体替换账号别名 |
 | POST | `/api/accounts/batch-update-group` | Session + CSRF | JSON | 批量改分组 |
 | POST | `/api/accounts/batch-update-forwarding` | Session + CSRF | JSON | 批量改转发开关 |
+| POST | `/api/accounts/batch-update-inbox-poll` | Session + CSRF | JSON | 批量改收件箱自动发现开关 |
+| POST | `/api/accounts/batch-update-aggregated-inbox` | Session + CSRF | JSON | 批量加入/移出聚合收件箱 |
 | POST | `/api/accounts/batch-update-proxy` | Session + CSRF | JSON | 批量改账号级代理 |
 | GET | `/api/tags` | Session | JSON | 获取标签列表 |
 | POST | `/api/tags` | Session + CSRF | JSON | 创建标签 |
@@ -115,9 +117,17 @@
 | GET | `/api/accounts/<account_id>/forwarding-logs` | Session | JSON | 单账号转发日志 |
 | POST | `/api/accounts/trigger-forwarding-check` | Session + CSRF | JSON | 立即触发一次转发检查 |
 | POST | `/api/accounts/<account_id>/forwarding/reset-cursor` | Session + CSRF | JSON | 重置单账号转发游标 |
-| GET | `/api/emails/<email_addr>` | Session | JSON | 获取内部邮件列表 |
-| POST | `/api/emails/mark-read` | Session + CSRF | JSON | 批量标记邮件为已读 |
+| POST | `/api/accounts/trigger-inbox-discovery` | Session + CSRF | JSON | 立即触发一次收件箱发现 |
+| GET | `/api/emails/inbox-discovery/events` | Session | `text/event-stream` | 订阅收件箱发现新邮件事件（进程内 SSE） |
+| GET | `/api/emails/<email_addr>` | Session | JSON | 获取内部邮件列表（支持 `folder` / `folder_id` / `mailbox`） |
+| GET | `/api/emails/<email_addr>/folders` | Session | JSON | 获取单账号邮箱目录树（Graph/IMAP） |
+| GET | `/api/emails/aggregated` | Session | JSON | 聚合当前分组内普通账号邮件列表 |
+| POST | `/api/emails/mark-read` | Session + CSRF | JSON | 批量标记邮件为已读/未读 |
+| POST | `/api/emails/mark-flag` | Session + CSRF | JSON | 批量标记/取消邮件 Flag（星标） |
 | POST | `/api/emails/delete` | Session + CSRF | JSON | 批量删除邮件 |
+| POST | `/api/emails/send` | Session + CSRF | JSON / multipart | 以账号身份发送新邮件（支持附件） |
+| POST | `/api/emails/reply` | Session + CSRF | JSON / multipart | 回复 / 全部回复（支持附件） |
+| POST | `/api/emails/forward` | Session + CSRF | JSON / multipart | 转发邮件（支持附件；非通知转发） |
 | GET | `/api/email/<email_addr>/<message_id>` | Session | JSON | 获取邮件详情 |
 | GET | `/api/email/<email_addr>/<message_id>/attachments/<attachment_id>` | Session | 文件流 | 下载附件 |
 | GET | `/api/email/<email_addr>/<message_id>/attachments/download-all` | Session | ZIP 文件流 | 打包下载全部附件 |
@@ -781,6 +791,9 @@ curl -X POST -H "X-API-Key: your-api-key" -H "Content-Type: application/json" \
 | `aliases` | 账号别名列表 |
 | `alias_count` | 别名数量 |
 | `forward_enabled` | 是否开启转发 |
+| `inbox_poll_enabled` | 是否开启收件箱自动发现（默认开启，与转发解耦） |
+| `aggregated_inbox_enabled` | 是否加入聚合收件箱（默认关闭，需显式开启） |
+| `inbox_poll_last_checked_at` | 最近一次成功收件箱发现时间 |
 | `last_refresh_at` | 最近刷新时间 |
 | `last_refresh_status` | 最近刷新结果 |
 | `last_refresh_error` | 最近刷新错误 |
@@ -940,6 +953,8 @@ Content-Type: application/json
 | `remark` | string | 否 | 备注 |
 | `status` | string | 否 | `active` 等状态值 |
 | `forward_enabled` | bool | 否 | 是否开启转发 |
+| `inbox_poll_enabled` | bool | 否 | 是否开启收件箱自动发现；默认 `true`，与转发解耦 |
+| `aggregated_inbox_enabled` | bool | 否 | 是否加入聚合收件箱；默认 `false` |
 | `proxy_url` | string | 否 | 账号级主代理；留空且回退代理也为空时继承分组代理 |
 | `fallback_proxy_url_1` | string | 否 | 账号级回退代理 1，支持 `direct` / `直连` |
 | `fallback_proxy_url_2` | string | 否 | 账号级回退代理 2，支持 `direct` / `直连` |
@@ -1119,6 +1134,64 @@ Content-Type: application/json
 {
   "account_ids": [1, 2, 3],
   "forward_enabled": true
+}
+```
+
+#### 响应重点字段
+
+| 字段 | 说明 |
+| --- | --- |
+| `updated_count` | 实际状态发生变化的账号数量 |
+| `updated_accounts` | 被更新的账号列表 |
+| `unchanged_count` | 原本就处于目标状态的账号数量 |
+| `missing_ids` | 未命中的账号 ID |
+
+### POST `/api/accounts/batch-update-inbox-poll`
+
+批量开启或关闭账号「收件箱自动发现」。与 `forward_enabled` 完全解耦；新建账号默认开启。
+
+#### 请求体
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `account_ids` | array<int> | 是 | 账号 ID 列表 |
+| `inbox_poll_enabled` | bool | 是 | `true` 表示开启自动发现，`false` 表示关闭 |
+
+#### 请求示例
+
+```json
+{
+  "account_ids": [1, 2, 3],
+  "inbox_poll_enabled": true
+}
+```
+
+#### 响应重点字段
+
+| 字段 | 说明 |
+| --- | --- |
+| `updated_count` | 实际状态发生变化的账号数量 |
+| `updated_accounts` | 被更新的账号列表 |
+| `unchanged_count` | 原本就处于目标状态的账号数量 |
+| `missing_ids` | 未命中的账号 ID |
+
+### POST `/api/accounts/batch-update-aggregated-inbox`
+
+批量加入或移出聚合收件箱。新建账号默认不加入；只有 `aggregated_inbox_enabled=true` 的账号会出现在分组「聚合收件箱」中。
+
+#### 请求体
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `account_ids` | array<int> | 是 | 账号 ID 列表 |
+| `aggregated_inbox_enabled` | bool | 是 | `true` 表示加入聚合，`false` 表示移出 |
+
+#### 请求示例
+
+```json
+{
+  "account_ids": [1, 2, 3],
+  "aggregated_inbox_enabled": true
 }
 ```
 
@@ -1719,6 +1792,8 @@ Content-Type: application/json
 | GET | `/api/accounts/<account_id>/forwarding-logs` | Query: `limit`、`offset`、`failed_only` | 获取单个账号转发记录 |
 | POST | `/api/accounts/trigger-forwarding-check` | 无 | 立即触发一次转发检查 |
 | POST | `/api/accounts/<account_id>/forwarding/reset-cursor` | JSON: `mode?`、`lookback_minutes?`、`trigger_check?` | 回退或清空单个账号的转发游标，并可选立即触发一次重扫 |
+| POST | `/api/accounts/trigger-inbox-discovery` | 无 | 立即触发一次收件箱发现（需已开启本地保留与发现总开关） |
+| GET | `/api/emails/inbox-discovery/events` | 无 | 长连接 SSE：订阅收件箱发现事件（进程内广播，需单 worker） |
 
 `POST /api/accounts/<account_id>/forwarding/reset-cursor` 请求示例：
 
@@ -1737,7 +1812,90 @@ Content-Type: application/json
 - `lookback_minutes`：回看分钟数，未传时按系统窗口逻辑处理
 - `trigger_check`：是否在重置后立即触发一次转发检查，默认 `true`
 
+### POST `/api/accounts/trigger-inbox-discovery`
+
+立即触发一次收件箱发现任务（与转发检查解耦）。
+
+前置条件：
+
+- `normal_mail_local_retention_enabled=true`，否则返回 `400`（`reason=local_retention_disabled`）
+- `inbox_poll_scheduler_enabled=true`，否则返回 `400`（`reason=scheduler_disabled`）
+- 任务未在执行中，否则返回 `409`（`reason=already_running`）
+
+成功时会对 `status=active` 且 `inbox_poll_enabled=1` 的普通账号串行抓取 `inbox` 列表，upsert 到本地保留，并在发现新邮件时通过进程内 SSE hub 广播 `new_mail` 事件。
+
+### GET `/api/emails/inbox-discovery/events`
+
+长连接 SSE，订阅收件箱发现事件。鉴权为登录 Session。
+
+事件类型：
+
+| event / `type` | 说明 |
+| --- | --- |
+| `connected` | 连接建立 |
+| `heartbeat` | 约 15–30 秒心跳，保持连接 |
+| `new_mail` | 某账号发现新邮件；载荷含 `account_id`、`account_email`、`folder`、`new_count`、`new_message_ids`、`emails` |
+| `error` | 流式错误（若有） |
+
+部署约束：SSE hub 为**进程内**广播，多 worker / 多进程部署时只有命中同一 worker 的连接能收到事件。生产环境若依赖本能力，请使用单 worker，或自行引入跨进程消息总线（本阶段未实现）。
+
+前端主界面用 `EventSource` 订阅；收到 `new_mail` 后喂入现有「有 N 封新邮件」挂起合并流程，不再二次打远程列表。
+
 ## 邮件接口
+
+### GET `/api/emails/<email_addr>/folders`
+
+获取**单个普通账号**的邮箱目录树（方案 B）。聚合收件箱与临时邮箱不提供完整树。
+
+#### 查询参数
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `refresh` | bool | 否 | `1` / `true` 时绕过约 10 分钟进程内缓存，强制重新拉取 |
+
+#### 成功响应要点
+
+| 字段 | 说明 |
+| --- | --- |
+| `provider` | `graph` 或 `imap` |
+| `cached` | 是否命中进程内缓存 |
+| `folders` | 扁平节点列表，前端按 `parent_id` 组装树 |
+
+每个 `folders[]` 节点包含：`id`、`name`、`display_name`、`parent_id`、`has_children`、`selectable`、`well_known`（若可识别）、`provider`，以及 Graph 的 `folder_id` 或 IMAP 的 `mailbox`。
+
+Outlook 账号优先 Graph `mailFolders` + `childFolders`；失败时回退 IMAP LIST。IMAP 账号直接 LIST 并按 delimiter 拼层级。
+
+### GET `/api/emails/aggregated`
+
+聚合当前分组内已加入聚合收件箱的普通邮箱账号邮件列表。与 `GET /api/accounts?group_id=` 同源（含子孙分组账号），仅包含 `aggregated_inbox_enabled=true` 且非 `inactive` 的账号；单次最多聚合 50 个账号。账号默认不加入聚合，需在编辑账号或批量「加入聚合」后才会出现。
+
+#### 查询参数
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `group_id` | int | 是 | 分组 ID |
+| `folder` | string | 否 | `all`（默认）、`inbox`、`junkemail` |
+| `source` | string | 否 | 传 `local` 时只拼各账号本地保留列表（需开启普通邮箱本地保留）；前端点入聚合默认走本地，远程需手动刷新 |
+| `skip` | int | 否 | **每个账号**各自的分页偏移，默认 `0` |
+| `top` | int | 否 | **每个账号**各自返回数量，默认 `20`，最大 `50` |
+
+#### 分页语义
+
+- `skip` / `top` 作用于每个账号的独立拉取，与单账号 `folder=all` 的“每侧分页”思路一致
+- 后端合并各账号成功结果后，按邮件 `date` 倒序排序返回
+- `has_more` 为任一账号仍有更多邮件时为 `true`
+
+#### 成功响应要点
+
+| 字段 | 说明 |
+| --- | --- |
+| `emails` | 合并后的邮件列表；每项在单账号列表字段基础上额外包含 `account_id`、`account_email` |
+| `partial` | 部分账号失败时为 `true` |
+| `account_errors` | 失败账号列表（含 `account_id` / `account_email` / `error`） |
+| `account_summaries` | 各账号拉取摘要 |
+| `accounts_total` / `accounts_used` / `accounts_truncated` | 可用账号总数、实际参与数、是否因上限截断 |
+
+全部账号失败时返回 `success: false`（HTTP 502）。详情、已读、删除仍走单账号接口，前端按 `account_email` 拆批调用。
 
 ### GET `/api/emails/<email_addr>`
 
@@ -1747,7 +1905,9 @@ Content-Type: application/json
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `folder` | string | 否 | `inbox`、`junkemail`、`deleteditems`、`all` |
+| `folder` | string | 否 | 井号文件夹：`inbox`、`junkemail`、`deleteditems`、`all`；本地保留也可传规范化键 `graph:<id>` / `imap:<mailbox>` |
+| `folder_id` | string | 否 | Graph 文件夹 id；与 `mailbox` 互斥；须属于该账号 `/folders` 列表 |
+| `mailbox` | string | 否 | IMAP mailbox 全名；与 `folder_id` 互斥；须属于该账号 `/folders` 列表 |
 | `skip` | int | 否 | 分页偏移，默认 `0`；非数字使用默认值，负数按 `0` 处理 |
 | `top` | int | 否 | 返回数量，默认 `20`；非数字使用默认值，负数按 `0` 处理。远程读取最大 `50`，本地保留读取不额外截断 |
 | `source` | string | 否 | 传 `local` 时只读取普通邮箱本地保留列表；需要 `normal_mail_local_retention_enabled=true` |
@@ -1757,6 +1917,8 @@ Content-Type: application/json
 | `keyword` | string | 否 | 在主题、预览、正文中做进一步关键字过滤，读取时保留 `+` 字符 |
 
 当 `folder=all` 时，行为与对外 API 一致：同时抓取 `inbox` 与 `junkemail`，按时间合并排序。
+
+使用 `folder_id` / `mailbox` 时，本地保留写入规范化 key（`graph:<id>` / `imap:<mailbox>`）；非法或不属于当前账号的引用返回 `400`。聚合接口仍只接受井号文件夹。
 
 成功响应会额外包含 `requested_email`、`resolved_email`；当请求邮箱命中别名时，还会包含 `matched_alias`。如果使用 Gmail/Googlemail 或 plus-address 回退候选命中，还会包含 `resolved_query_email`、`fallback_used`、`fallback_email` 等字段。
 
@@ -1847,7 +2009,7 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 
 ### POST `/api/emails/mark-read`
 
-批量标记邮件为已读。
+批量标记邮件为已读或未读。
 
 #### 请求体
 
@@ -1855,6 +2017,7 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | --- | --- | --- | --- |
 | `email` | string | 是 | 主邮箱或别名邮箱 |
 | `method` | string | 否 | 默认 `graph`，可传 `imap` |
+| `is_read` | boolean | 否 | `true` 设为已读，`false` 设为未读；默认 `true` |
 | `folder` | string | 否 | 默认文件夹，默认 `inbox` |
 | `ids` | array<string> | 条件必填 | 简写模式，直接传邮件 ID 数组 |
 | `items` | array<object> | 条件必填 | 完整模式，可为每封邮件单独指定文件夹和 ID 模式 |
@@ -1908,6 +2071,53 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | `success_count` | 成功标记为已读的邮件数量 |
 | `failed_count` | 失败数量 |
 | `updated_ids` | 已成功更新的邮件 ID 列表 |
+| `is_read` | 本次请求的目标已读状态 |
+| `errors` | 失败详情列表 |
+| `error` | 第一条失败信息，兼容旧前端逻辑 |
+
+### POST `/api/emails/mark-flag`
+
+批量标记或取消邮件 Flag（星标）。列表接口中的邮件项包含 `is_flagged` 布尔字段。
+
+#### 请求体
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `email` | string | 是 | 主邮箱或别名邮箱 |
+| `flagged` | boolean | 否 | `true` 标记 Flag，`false` 取消；默认 `true` |
+| `method` | string | 否 | 默认 `graph`，可传 `imap` |
+| `folder` | string | 否 | 默认文件夹，默认 `inbox` |
+| `ids` | array<string> | 条件必填 | 简写模式，直接传邮件 ID 数组 |
+| `items` | array<object> | 条件必填 | 完整模式，可为每封邮件单独指定文件夹和 ID 模式 |
+
+`items` 字段约定与 `/api/emails/mark-read` 相同。
+
+#### 请求示例
+
+```json
+{
+  "email": "user@outlook.com",
+  "method": "graph",
+  "flagged": true,
+  "items": [
+    {
+      "id": "AAMk...",
+      "folder": "inbox",
+      "id_mode": "graph"
+    }
+  ]
+}
+```
+
+#### 响应重点字段
+
+| 字段 | 说明 |
+| --- | --- |
+| `success` | 只有全部成功才为 `true` |
+| `success_count` | 成功更新的邮件数量 |
+| `failed_count` | 失败数量 |
+| `updated_ids` | 已成功更新的邮件 ID 列表 |
+| `flagged` | 本次请求的目标 Flag 状态 |
 | `errors` | 失败详情列表 |
 | `error` | 第一条失败信息，兼容旧前端逻辑 |
 
@@ -1972,6 +2182,68 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 - Outlook 账号按 `id_mode`/`method` 分流：`graph` 走 Graph API，`uid`/`sequence` 走 OAuth IMAP
 - 标准 IMAP 账号通过 IMAP `STORE \\Deleted` + `EXPUNGE` 永久删除
 - 仍接受仅传 `ids` 的旧客户端；此时默认按 Graph 处理
+
+### POST `/api/emails/send`
+
+以指定账号身份发送新邮件。仅 Web Session + CSRF；不开放对外 API Key。
+
+#### JSON 请求体
+
+```json
+{
+  "email": "user@outlook.com",
+  "to": ["a@example.com"],
+  "cc": ["b@example.com"],
+  "bcc": [],
+  "subject": "主题",
+  "body_html": "<p>正文</p>",
+  "body_text": "正文"
+}
+```
+
+#### multipart/form-data（含附件）
+
+字段同上（`to`/`cc`/`bcc` 可用 JSON 数组字符串），文件字段名为 `attachments`（可多文件）。
+
+说明：
+
+- Outlook 账号走 Microsoft Graph `sendMail`，需 OAuth 含 `Mail.Send`；旧账号请重新授权
+- 标准 IMAP 账号走账号 SMTP（用户名=邮箱，密码=`imap_password`）；custom 需配置 `smtp_host`
+- 单个附件与附件总计上限均为 25MB；危险扩展名（如 `.exe`）会被拒绝
+- 临时邮箱不支持发信
+
+### POST `/api/emails/reply`
+
+回复或全部回复。
+
+```json
+{
+  "email": "user@outlook.com",
+  "message_id": "AAMk...",
+  "reply_all": false,
+  "body_html": "<p>回复内容</p>",
+  "to": [],
+  "cc": []
+}
+```
+
+说明：Outlook 优先 `createReply` / `createReplyAll`；IMAP 需提供 `to`，主题默认加 `Re:`。支持 multipart 附件，字段约定同 `/api/emails/send`。
+
+### POST `/api/emails/forward`
+
+将邮件作为邮件转发（不是系统通知转发）。
+
+```json
+{
+  "email": "user@outlook.com",
+  "message_id": "AAMk...",
+  "to": ["a@example.com"],
+  "subject": "Fw: 原主题",
+  "body_html": "<p>附加说明</p>"
+}
+```
+
+说明：Outlook 优先 `createForward`；支持 multipart 附件。
 
 ## 临时邮箱
 
@@ -2272,6 +2544,11 @@ POST /api/cloudflare/channels
 | `telegram_chat_id` | Telegram Chat ID |
 | `telegram_topic_id` | Telegram Topic ID（可选，话题群组的 message_thread_id） |
 | `normal_mail_local_retention_enabled` | 是否启用普通邮箱本地保留 |
+| `inbox_poll_scheduler_enabled` | 是否启用收件箱自动发现定时任务（默认开启） |
+| `inbox_poll_interval_seconds` | 收件箱发现轮询间隔秒数（默认 `120`，范围 `20-3600`） |
+| `inbox_poll_account_delay_seconds` | 提交下一账号前的错峰间隔秒数（默认 `1`） |
+| `inbox_poll_concurrency` | 有限并行并发数（默认 `5`，范围 `1-20`） |
+| `inbox_poll_top` | 每次每账号抓取收件箱条数（默认 `20`） |
 
 ### PUT `/api/settings`
 
@@ -2295,8 +2572,13 @@ POST /api/cloudflare/channels
 | `active_skin_id` | string | 当前系统级外观皮肤 ID；所有登录设备共用同一设置 |
 | `external_api_key` | string | 对外 API Key，可传空字符串清空 |
 | `normal_mail_local_retention_enabled` | bool/string | 是否启用普通邮箱本地保留；通过 `/api/settings` 更新会同步刷新后端进程内读取缓存 |
+| `inbox_poll_scheduler_enabled` | bool/string | 是否启用收件箱自动发现定时任务；与 Token 定时刷新、邮件转发调度解耦；保存后会热更新 APScheduler job |
+| `inbox_poll_interval_seconds` | int | 收件箱发现轮询间隔秒数，范围 `20-3600`；保存后会 reschedule |
+| `inbox_poll_account_delay_seconds` | int | 提交下一账号任务前的错峰间隔秒数；并发&gt;1 时用于减缓瞬时打满 |
+| `inbox_poll_concurrency` | int | 有限并行并发数，范围 `1-20`，默认 `5`；`1` 为纯串行 |
+| `inbox_poll_top` | int | 每次每账号抓取 `inbox` 列表条数 |
 
-说明：修改 `login_password` 时必须提供正确的 `current_login_password`；改密成功后服务端会轮换登录会话版本，其他已登录的 Web Session 需要重新登录，当前改密会话保持有效。
+说明：修改 `login_password` 时必须提供正确的 `current_login_password`；改密成功后服务端会轮换登录会话版本，其他已登录的 Web Session 需要重新登录，当前改密会话保持有效。收件箱自动发现仅在 `normal_mail_local_retention_enabled=true` 时实际抓信并写入本地保留；关闭本地保留时调度任务会空跑跳过。
 
 #### 临时邮箱服务相关字段
 
