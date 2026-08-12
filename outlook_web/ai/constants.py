@@ -16,8 +16,9 @@ DEFAULT_DEEPSEEK_MODEL = 'deepseek-chat'
 DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com'
 DEFAULT_DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 
-# Hard limits for contact_local history (not user-configurable).
-HISTORY_MAX_MESSAGES = 30
+# Hard limits for contact_local history (local-only; not user-configurable).
+# Cap is a safety ceiling for prompt size; AI never fetches remote IMAP/Graph.
+HISTORY_MAX_MESSAGES = 500
 HISTORY_BODY_MAX_CHARS = 3000
 
 RISK_LEVELS = ('green', 'yellow', 'red')

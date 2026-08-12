@@ -31,6 +31,11 @@ class AiReplyTestCase(unittest.TestCase):
             db.execute('DELETE FROM ai_analysis_runs')
             db.execute('DELETE FROM ai_knowledge_entries')
             db.execute('DELETE FROM ai_rule_versions')
+            db.execute('DELETE FROM retained_normal_mail_messages')
+            db.execute(
+                "DELETE FROM accounts WHERE email IN (?, ?)",
+                ('user@example.com', 'user2@example.com'),
+            )
             db.execute('UPDATE ai_knowledge_meta SET revision = 1 WHERE id = 1')
             for key in (
                 'ai_reply_enabled',
@@ -210,33 +215,107 @@ class AiReplyTestCase(unittest.TestCase):
             'requiresHumanConfirmation': False,
         }
 
-        def fake_fetch(account, message_id, method='graph', folder='inbox', id_mode='', prefer_local=False):
-            return {
-                'success': True,
-                'email': {
-                    'id': message_id,
+        with patch.object(
+            web_outlook_app,
+            'fetch_email_detail_for_account',
+            side_effect=AssertionError('AI analyze must not remote-fetch email detail'),
+        ), patch('outlook_web.ai.service.call_structured_model', return_value=json.dumps(analysis)):
+            response = self.client.post('/api/ai/analyze', json={
+                'email': 'user@example.com',
+                'message_id': 'msg-1',
+                'context_scope': 'current',
+                'email_detail': {
+                    'id': 'msg-1',
                     'subject': 'Hello',
                     'from': 'customer@example.com',
                     'body': 'Any update?',
                     'body_type': 'text',
                 },
-            }
-
-        with patch.object(web_outlook_app, 'fetch_email_detail_for_account', side_effect=fake_fetch), \
-             patch('outlook_web.ai.service.call_structured_model', return_value=json.dumps(analysis)):
-            response = self.client.post('/api/ai/analyze', json={
-                'email': 'user@example.com',
-                'message_id': 'msg-1',
-                'context_scope': 'current',
             })
 
         payload = response.get_json()
         self.assertTrue(payload['success'], payload)
+        self.assertEqual(payload.get('detail_source'), 'client')
         self.assertEqual(payload['analysis']['replyText'], analysis['replyText'])
         self.assertEqual(payload['meta']['context_scope'], 'current')
 
         status = self.client.get('/api/ai/status').get_json()
         self.assertTrue(status['ready'])
+
+    def test_analyze_uses_local_retention_and_never_remote_fetch(self):
+        self.client.put('/api/ai/settings', json={
+            'enabled': True,
+            'provider': 'deepseek',
+            'model': 'deepseek-chat',
+            'deepseek_api_key': 'ds-secret',
+        })
+
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                '''
+                INSERT INTO accounts (email, client_id, refresh_token, account_type, status)
+                VALUES (?, ?, ?, 'outlook', 'active')
+                ''',
+                ('user2@example.com', 'cid', 'token'),
+            )
+            account_id = db.execute(
+                "SELECT id FROM accounts WHERE email = ?",
+                ('user2@example.com',),
+            ).fetchone()['id']
+            db.execute(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode, subject, sender,
+                    recipients, received_at, received_at_sort, body, body_type, body_preview,
+                    body_cached, list_cached
+                ) VALUES (?, 'inbox', ?, '', ?, ?, ?, ?, 1, ?, 'text', ?, 1, 1)
+                ''',
+                (
+                    account_id,
+                    'msg-local-1',
+                    'Need update',
+                    'customer@example.com',
+                    'user2@example.com',
+                    '2026-01-01 10:00:00',
+                    'Any update on my order?',
+                    'Any update on my order?',
+                ),
+            )
+            db.commit()
+
+        analysis = {
+            'sourceLanguage': 'en',
+            'summaryZh': '客户询问更新',
+            'intent': 'general_question',
+            'riskLevel': 'green',
+            'riskReasons': [],
+            'matchedRuleIds': [],
+            'matchedKnowledgeIds': [],
+            'missingFacts': [],
+            'internalAdviceZh': '',
+            'replyLanguage': 'en',
+            'replyText': 'Thanks for the update request.',
+            'replyTextZh': '感谢您的更新询问。',
+            'confidence': 0.7,
+            'requiresHumanConfirmation': False,
+        }
+
+        with patch.object(
+            web_outlook_app,
+            'fetch_email_detail_for_account',
+            side_effect=AssertionError('AI analyze must not remote-fetch email detail'),
+        ), patch('outlook_web.ai.service.call_structured_model', return_value=json.dumps(analysis)):
+            response = self.client.post('/api/ai/analyze', json={
+                'email': 'user2@example.com',
+                'message_id': 'msg-local-1',
+                'context_scope': 'current',
+            })
+
+        payload = response.get_json()
+        self.assertTrue(payload['success'], payload)
+        self.assertEqual(payload.get('detail_source'), 'local')
+        self.assertEqual(payload['analysis']['replyText'], analysis['replyText'])
 
 
 if __name__ == '__main__':

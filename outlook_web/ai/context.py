@@ -120,7 +120,7 @@ def load_contact_local_history(
         ORDER BY received_at_sort DESC, id DESC
         LIMIT ?
         ''',
-        (account_id, like, like, max(1, min(int(limit), HISTORY_MAX_MESSAGES))),
+        (account_id, like, like, max(1, min(int(limit or HISTORY_MAX_MESSAGES), HISTORY_MAX_MESSAGES))),
     ).fetchall()
 
     account = str(account_email or '').strip().lower()

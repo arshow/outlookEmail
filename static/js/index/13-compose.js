@@ -668,6 +668,21 @@
             const btn = document.getElementById('composeAiAnalyzeBtn');
             if (btn) btn.disabled = true;
             try {
+                // Prefer the already-opened detail so AI does not depend on a second IMAP/Graph fetch.
+                const openedDetail = currentEmailDetail || composeQuotedDetail || null;
+                const emailDetail = openedDetail ? {
+                    id: openedDetail.id || messageId,
+                    subject: openedDetail.subject || '',
+                    from: openedDetail.from || openedDetail.sender || '',
+                    to: openedDetail.to || openedDetail.toRecipients || openedDetail.recipients || '',
+                    cc: openedDetail.cc || openedDetail.ccRecipients || '',
+                    date: openedDetail.date || openedDetail.receivedDateTime || openedDetail.received_at || '',
+                    body: openedDetail.body || openedDetail.body_preview || openedDetail.bodyPreview || '',
+                    body_preview: openedDetail.body_preview || openedDetail.bodyPreview || '',
+                    body_type: openedDetail.body_type || openedDetail.bodyType || 'text',
+                    folder: openedDetail.folder || document.getElementById('composeFolder')?.value || 'inbox',
+                    id_mode: openedDetail.id_mode || '',
+                } : null;
                 const response = await fetchWithTimeout('/api/ai/analyze', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -679,6 +694,7 @@
                         id_mode: currentEmailDetail?.id_mode || '',
                         context_scope: getComposeAiContextScope(),
                         force_refresh: !!forceRefresh,
+                        email_detail: emailDetail,
                     }),
                 });
                 const data = await response.json().catch(() => ({}));
@@ -687,7 +703,11 @@
                     return;
                 }
                 renderComposeAiResult(data);
-                showToast(data.cached ? '已加载缓存建议' : 'AI 建议已生成', 'success');
+                if (data.warning) {
+                    showToast(data.warning, 'info');
+                } else {
+                    showToast(data.cached ? '已加载缓存建议' : 'AI 建议已生成', 'success');
+                }
             } catch (error) {
                 showToast(error?.message || 'AI 生成失败', 'error');
             } finally {

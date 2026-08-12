@@ -2953,7 +2953,8 @@ Telegram 测试：
 - 产品模式：生成建议草稿 + 人工确认后填入 Compose，再走现有 `/api/emails/reply` 发送；**不会自动发信**
 - `context_scope` 仅在每次 `POST /api/ai/analyze` 时由回复窗口选择，不作为全局配置：
   - `current`：仅当前邮件
-  - `contact_local`：本账号本地保留库中与对方往来（最多 30 封，正文截断；无命中则降级为 `current`）
+  - `contact_local`：本账号本地保留库中与对方全部往来（仅本地，正文截断；无命中则降级为 `current`）
+- `POST /api/ai/analyze` **不会**二次远程拉取 IMAP/Graph；当前邮件优先本地保留，其次使用请求体中的 `email_detail`（前端已打开内容）
 
 ### POST `/api/ai/analyze`
 

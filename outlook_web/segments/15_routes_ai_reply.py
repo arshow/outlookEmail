@@ -400,6 +400,127 @@ def api_ai_rules_test():
     })
 
 
+def _ai_detail_has_usable_body(detail: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(detail, dict):
+        return False
+    body = detail.get('body')
+    if isinstance(body, dict):
+        body = body.get('content')
+    text = str(body or detail.get('body_preview') or detail.get('bodyPreview') or '').strip()
+    return bool(text)
+
+
+def _normalize_client_email_detail(raw: Any, message_id: str) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return None
+    detail = dict(raw)
+    if not detail.get('id'):
+        detail['id'] = message_id
+    if not detail.get('body') and (detail.get('body_preview') or detail.get('bodyPreview')):
+        detail['body'] = detail.get('body_preview') or detail.get('bodyPreview')
+        detail.setdefault('body_type', 'text')
+    if not _ai_detail_has_usable_body(detail) and not str(detail.get('subject') or '').strip():
+        return None
+    return detail
+
+
+def _fetch_local_ai_email_detail(account: Dict[str, Any], folder: str,
+                                 message_id: str, id_mode: str = '') -> Optional[Dict[str, Any]]:
+    """Prefer full local body; fall back to list-row preview for AI context."""
+    retained = fetch_retained_normal_mail_detail(account, folder, message_id, id_mode)
+    if retained and isinstance(retained.get('email'), dict) and _ai_detail_has_usable_body(retained['email']):
+        return retained['email']
+
+    account_id = int((account or {}).get('id') or 0)
+    provider_message_id = str(message_id or '').strip()
+    if not account_id or not provider_message_id:
+        return None
+
+    folder_name = normalize_folder_name(folder)
+    requested_id_mode = str(id_mode or '').strip().lower()
+    params: List[Any] = [account_id, provider_message_id]
+    folder_filter = ''
+    id_mode_filter = ''
+    if folder_name != 'all':
+        folder_filter = 'AND folder = ?'
+        params.append(folder_name)
+    if requested_id_mode:
+        id_mode_filter = 'AND id_mode = ?'
+        params.append(requested_id_mode)
+
+    row = get_db().execute(
+        f'''
+        SELECT provider_message_id, id_mode, folder, subject, sender,
+               recipients, cc, received_at, body, body_type, body_preview,
+               attachments_json, has_attachments, body_cached
+        FROM retained_normal_mail_messages
+        WHERE account_id = ?
+          AND provider_message_id = ?
+          {folder_filter}
+          {id_mode_filter}
+        ORDER BY body_cached DESC, COALESCE(body_cached_at, updated_at, created_at) DESC, id DESC
+        LIMIT 1
+        ''',
+        params,
+    ).fetchone()
+    if not row:
+        return None
+    item = dict(row)
+    body = item.get('body') if item.get('body_cached') else ''
+    if not str(body or '').strip():
+        body = item.get('body_preview') or ''
+    if not str(body or '').strip() and not str(item.get('subject') or '').strip():
+        return None
+    return {
+        'id': item.get('provider_message_id') or message_id,
+        'subject': item.get('subject') or '无主题',
+        'from': item.get('sender') or '未知',
+        'to': item.get('recipients') or '',
+        'cc': item.get('cc') or '',
+        'date': item.get('received_at') or '',
+        'received_at': item.get('received_at') or '',
+        'body': body or '',
+        'body_preview': item.get('body_preview') or '',
+        'body_type': item.get('body_type') or 'text',
+        'folder': item.get('folder') or folder_name,
+        'id_mode': item.get('id_mode') or '',
+    }
+
+
+def resolve_ai_analyze_email_detail(
+    account: Dict[str, Any],
+    *,
+    message_id: str,
+    folder: str,
+    method: str,
+    id_mode: str,
+    client_detail: Any = None,
+) -> Dict[str, Any]:
+    """
+    Resolve email content for AI using local sources only.
+    Never calls remote IMAP/Graph. Priority: local retention -> opened client detail.
+    """
+    del method  # AI analyze intentionally ignores remote fetch method.
+    local_detail = _fetch_local_ai_email_detail(account, folder, message_id, id_mode)
+    if local_detail and _ai_detail_has_usable_body(local_detail):
+        return {'success': True, 'email': local_detail, 'source': 'local'}
+
+    normalized_client = _normalize_client_email_detail(client_detail, message_id)
+    if normalized_client and _ai_detail_has_usable_body(normalized_client):
+        return {'success': True, 'email': normalized_client, 'source': 'client'}
+
+    if local_detail:
+        return {'success': True, 'email': local_detail, 'source': 'local_preview'}
+    if normalized_client:
+        return {'success': True, 'email': normalized_client, 'source': 'client'}
+
+    return {
+        'success': False,
+        'error': '本地无可用邮件内容。请先打开并加载该邮件，或启用普通邮件本地保留后再试。',
+        'code': 'AI_LOCAL_EMAIL_DETAIL_MISSING',
+    }
+
+
 @app.route('/api/ai/analyze', methods=['POST'])
 @login_required
 def api_ai_analyze():
@@ -421,13 +542,13 @@ def api_ai_analyze():
     folder = normalize_folder_name(data.get('folder') or 'inbox')
     method = str(data.get('method') or 'graph').strip() or 'graph'
     id_mode = str(data.get('id_mode') or '').strip().lower()
-    detail_result = fetch_email_detail_for_account(
+    detail_result = resolve_ai_analyze_email_detail(
         account,
-        message_id,
-        method,
-        folder,
-        id_mode,
-        prefer_local=True,
+        message_id=message_id,
+        folder=folder,
+        method=method,
+        id_mode=id_mode,
+        client_detail=data.get('email_detail') or data.get('emailDetail'),
     )
     if not detail_result.get('success'):
         return jsonify({
@@ -449,6 +570,9 @@ def api_ai_analyze():
             context_scope=context_scope,
             force_refresh=force_refresh,
         )
+        if detail_result.get('warning'):
+            result['warning'] = detail_result['warning']
+        result['detail_source'] = detail_result.get('source')
         return jsonify(result)
     except ValueError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
