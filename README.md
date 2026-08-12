@@ -168,7 +168,7 @@ git remote add deploy ssh://<DEPLOY_USER>@<SERVER_HOST>:<SSH_PORT>/opt/git/outlo
 git push deploy main
 ```
 
-服务默认监听 `0.0.0.0:5001`，并以单 worker、4 线程运行 Gunicorn，确保内存内的任务状态与 SSE 订阅保持一致。后续更新只需：
+服务默认监听 `0.0.0.0:5001`，并以单 worker、16 线程运行 Gunicorn，确保内存内的任务状态与 SSE 订阅保持一致。该配置为 5–10 名同时在线用户预留了长连接与普通页面请求的并发余量；后续更新只需：
 
 ```bash
 git push deploy main

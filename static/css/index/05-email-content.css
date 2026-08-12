@@ -106,9 +106,10 @@
             filter: brightness(0.96);
         }
 
-        .compose-email-modal-content {
-            width: min(1180px, 96vw);
-            max-width: min(1180px, 96vw);
+        /* 需高于后面 .modal-content 的同权覆盖（06-modals-toast.css） */
+        .modal-content.compose-email-modal-content {
+            width: min(1480px, calc(100vw - 48px));
+            max-width: min(1480px, calc(100vw - 48px));
             max-height: 90vh;
         }
 

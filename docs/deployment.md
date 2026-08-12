@@ -74,10 +74,10 @@ python web_outlook_app.py
 官方 Docker 镜像已固定为 Gunicorn 单 worker，并通过线程处理慢请求：
 
 ```bash
-gunicorn -k gthread -w 1 --threads ${GUNICORN_THREADS:-4} ...
+gunicorn -k gthread -w 1 --threads ${GUNICORN_THREADS:-16} ...
 ```
 
-如需调整并发，请优先调整 `GUNICORN_THREADS`，不要增加 worker 数。
+如需调整并发，请优先调整 `GUNICORN_THREADS`，不要增加 worker 数。默认 16 线程适合约 5–10 名同时使用、且每人可能保持一个 SSE 连接的场景；大量慢邮件请求或更多活跃用户时再按监控结果上调。
 
 ## 使用 Docker Compose
 

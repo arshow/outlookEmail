@@ -10,7 +10,10 @@ ENV_FILE="${ENV_FILE:-/etc/outlook-email/outlook-email.env}"
 STATE_DIR="${STATE_DIR:-/var/lib/outlook-email}"
 PORT="${PORT:-5001}"
 HOST="${HOST:-0.0.0.0}"
-GUNICORN_THREADS="${GUNICORN_THREADS:-4}"
+# One worker is required because SSE and short-lived task state are in-process.
+# Reserve enough threads for one long-lived SSE connection per active user plus
+# ordinary UI and remote-mail requests.
+GUNICORN_THREADS="${GUNICORN_THREADS:-16}"
 VENV_DIR="${APP_DIR}/.venv"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 DEPENDENCY_STAMP="${STATE_DIR}/.requirements.sha256"
