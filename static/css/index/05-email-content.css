@@ -1025,6 +1025,23 @@
             color: #94a3b8;
         }
 
+        .email-translate-panel__toggle {
+            background: none;
+            border: 1px solid #e5e5e5;
+            color: #666;
+            cursor: pointer;
+            font-size: 13px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            transition: all 0.15s;
+            white-space: nowrap;
+            flex: 0 0 auto;
+        }
+
+        .email-translate-panel__toggle:hover {
+            background-color: #f0f0f0;
+        }
+
         .email-attachments {
             margin-bottom: 20px;
             padding: 16px;
@@ -1270,7 +1287,8 @@
             background-color: #f0f0f0;
         }
 
-        .raw-email-btn {
+        .raw-email-btn,
+        .translate-email-btn {
             background: none;
             border: 1px solid #e5e5e5;
             color: #666;
@@ -1281,8 +1299,14 @@
             transition: all 0.15s;
         }
 
-        .raw-email-btn:hover {
+        .raw-email-btn:hover,
+        .translate-email-btn:hover {
             background-color: #f0f0f0;
+        }
+
+        .translate-email-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
         }
 
         .raw-email-header {

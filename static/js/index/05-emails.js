@@ -2731,7 +2731,7 @@
             panel.innerHTML = `
                 <div class="email-translate-panel__head">
                     <div class="email-translate-panel__title">中文译文</div>
-                    <button type="button" class="btn btn-sm btn-secondary" id="emailTranslateToggleBtn">显示原文</button>
+                    <button type="button" class="email-translate-panel__toggle" id="emailTranslateToggleBtn">显示原文</button>
                 </div>
                 <div class="email-translate-panel__subject" id="emailTranslateSubject"></div>
                 <div class="email-translate-panel__body" id="emailTranslateBody"></div>
