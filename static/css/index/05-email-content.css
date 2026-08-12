@@ -107,8 +107,8 @@
         }
 
         .compose-email-modal-content {
-            width: min(920px, 96vw);
-            max-width: min(920px, 96vw);
+            width: min(1180px, 96vw);
+            max-width: min(1180px, 96vw);
             max-height: 90vh;
         }
 
