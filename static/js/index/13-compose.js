@@ -530,6 +530,15 @@
             }
         }
 
+        function setComposeAiSidebarVisible(visible) {
+            const panel = document.getElementById('composeAiPanel');
+            const modalContent = document.getElementById('composeEmailModalContent');
+            if (panel) panel.style.display = visible ? 'flex' : 'none';
+            if (modalContent) {
+                modalContent.classList.toggle('compose-with-ai-sidebar', !!visible);
+            }
+        }
+
         function resetComposeAiPanel() {
             composeAiState = {
                 ready: false,
@@ -539,8 +548,7 @@
                 replyText: '',
                 replyTextZh: '',
             };
-            const panel = document.getElementById('composeAiPanel');
-            if (panel) panel.style.display = 'none';
+            setComposeAiSidebarVisible(false);
             const result = document.getElementById('composeAiResult');
             if (result) result.style.display = 'none';
             const reviewLabel = document.getElementById('composeAiReviewLabel');
@@ -568,10 +576,10 @@
             const panel = document.getElementById('composeAiPanel');
             if (!panel) return;
             if (mode !== 'reply' && mode !== 'reply_all') {
-                panel.style.display = 'none';
+                setComposeAiSidebarVisible(false);
                 return;
             }
-            panel.style.display = '';
+            setComposeAiSidebarVisible(true);
             const statusHint = document.getElementById('composeAiStatusHint');
             try {
                 const response = await fetchWithTimeout('/api/ai/status');

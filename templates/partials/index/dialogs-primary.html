@@ -749,57 +749,77 @@
 
     <!-- 写邮件 / 回复 / 转发 -->
     <div class="modal" id="composeEmailModal" onmousedown="if(event.target === this) hideComposeModal()">
-        <div class="modal-content compose-email-modal-content">
+        <div class="modal-content compose-email-modal-content" id="composeEmailModalContent">
             <div class="modal-header">
                 <h3 id="composeEmailModalTitle">写邮件</h3>
                 <button class="modal-close" onclick="hideComposeModal()">&times;</button>
             </div>
-            <div class="modal-body">
+            <div class="modal-body compose-modal-body">
                 <input type="hidden" id="composeMode" value="new">
                 <input type="hidden" id="composeMessageId" value="">
                 <input type="hidden" id="composeFolder" value="inbox">
                 <input type="hidden" id="composeMethod" value="">
-                <div class="compose-header-fields">
-                    <div class="form-group compose-field-row">
-                        <label class="form-label" for="composeFromEmail">发件账号</label>
-                        <div class="compose-field-control">
-                            <select class="form-select" id="composeFromEmail"></select>
-                            <div class="form-hint" id="composeFromEmailHint">聚合收件箱下请选择真实发件账号。</div>
+                <div class="compose-main-column">
+                    <div class="compose-header-fields">
+                        <div class="form-group compose-field-row">
+                            <label class="form-label" for="composeFromEmail">发件账号</label>
+                            <div class="compose-field-control">
+                                <select class="form-select" id="composeFromEmail"></select>
+                                <div class="form-hint" id="composeFromEmailHint">聚合收件箱下请选择真实发件账号。</div>
+                            </div>
+                        </div>
+                        <div class="form-group compose-field-row">
+                            <label class="form-label" for="composeTo">收件人</label>
+                            <input type="text" class="form-input" id="composeTo" placeholder="user@example.com，多个用逗号分隔">
+                        </div>
+                        <div class="form-group compose-field-row">
+                            <label class="form-label" for="composeCc">抄送</label>
+                            <input type="text" class="form-input" id="composeCc" placeholder="可选">
+                        </div>
+                        <div class="form-group compose-field-row">
+                            <label class="form-label" for="composeBcc">密送</label>
+                            <input type="text" class="form-input" id="composeBcc" placeholder="可选">
+                        </div>
+                        <div class="form-group compose-field-row">
+                            <label class="form-label" for="composeSubject">主题</label>
+                            <input type="text" class="form-input" id="composeSubject" placeholder="邮件主题">
                         </div>
                     </div>
-                    <div class="form-group compose-field-row">
-                        <label class="form-label" for="composeTo">收件人</label>
-                        <input type="text" class="form-input" id="composeTo" placeholder="user@example.com，多个用逗号分隔">
+                    <div class="form-group" id="composeQuoteLanguageGroup" style="display: none;">
+                        <label class="form-label">引用语言</label>
+                        <div class="provider-tabs" id="composeQuoteLanguageTabs" style="margin-bottom: 8px;">
+                            <label class="provider-tab-item">
+                                <input type="radio" name="composeQuoteLanguage" value="zh" onchange="onComposeQuoteLanguageChange()">
+                                <span class="provider-tab-label" style="padding: 10px 8px;">中文</span>
+                            </label>
+                            <label class="provider-tab-item">
+                                <input type="radio" name="composeQuoteLanguage" value="en" checked onchange="onComposeQuoteLanguageChange()">
+                                <span class="provider-tab-label" style="padding: 10px 8px;">English</span>
+                            </label>
+                        </div>
+                        <div class="form-hint">中文保持现有引用格式；English 使用英文引用头，时间按太平洋时区显示</div>
                     </div>
-                    <div class="form-group compose-field-row">
-                        <label class="form-label" for="composeCc">抄送</label>
-                        <input type="text" class="form-input" id="composeCc" placeholder="可选">
+                    <div class="form-group">
+                        <label class="form-label">正文</label>
+                        <div class="compose-editor-toolbar">
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="formatComposeSelection('bold')">粗体</button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="formatComposeSelection('italic')">斜体</button>
+                            <button type="button" class="btn btn-sm btn-secondary" onclick="formatComposeSelection('insertUnorderedList')">列表</button>
+                        </div>
+                        <div class="compose-editor" id="composeBodyEditor" contenteditable="true" role="textbox" aria-multiline="true"></div>
                     </div>
-                    <div class="form-group compose-field-row">
-                        <label class="form-label" for="composeBcc">密送</label>
-                        <input type="text" class="form-input" id="composeBcc" placeholder="可选">
-                    </div>
-                    <div class="form-group compose-field-row">
-                        <label class="form-label" for="composeSubject">主题</label>
-                        <input type="text" class="form-input" id="composeSubject" placeholder="邮件主题">
+                    <div class="form-group">
+                        <label class="form-label">附件</label>
+                        <input type="file" id="composeAttachments" multiple>
+                        <div class="form-hint">单个/总计不超过 25MB；可执行类扩展名会被拒绝。</div>
+                        <div id="composeAttachmentList" class="compose-attachment-list"></div>
                     </div>
                 </div>
-                <div class="form-group" id="composeQuoteLanguageGroup" style="display: none;">
-                    <label class="form-label">引用语言</label>
-                    <div class="provider-tabs" id="composeQuoteLanguageTabs" style="margin-bottom: 8px;">
-                        <label class="provider-tab-item">
-                            <input type="radio" name="composeQuoteLanguage" value="zh" onchange="onComposeQuoteLanguageChange()">
-                            <span class="provider-tab-label" style="padding: 10px 8px;">中文</span>
-                        </label>
-                        <label class="provider-tab-item">
-                            <input type="radio" name="composeQuoteLanguage" value="en" checked onchange="onComposeQuoteLanguageChange()">
-                            <span class="provider-tab-label" style="padding: 10px 8px;">English</span>
-                        </label>
+                <aside class="compose-ai-sidebar" id="composeAiPanel" style="display: none;" aria-label="AI 智能回复">
+                    <div class="compose-ai-sidebar-head">
+                        <h4 class="compose-ai-sidebar-title">AI 智能回复</h4>
+                        <a class="btn btn-sm btn-secondary" href="/ai" target="_blank" rel="noopener">管理</a>
                     </div>
-                    <div class="form-hint">中文保持现有引用格式；English 使用英文引用头，时间按太平洋时区显示</div>
-                </div>
-                <div class="form-group" id="composeAiPanel" style="display: none;">
-                    <label class="form-label">AI 智能回复</label>
                     <div class="compose-ai-panel">
                         <div class="compose-ai-scope">
                             <label class="provider-tab-item">
@@ -811,14 +831,13 @@
                                 <span class="provider-tab-label" style="padding: 8px 10px;">该联系人本地历史</span>
                             </label>
                         </div>
-                        <div class="form-hint" id="composeAiScopeHint">仅使用本地内容，不二次远程拉信。默认仅本封；选择「该联系人本地历史」时附带本地已保留的全部往来（正文会截断）。</div>
+                        <div class="form-hint" id="composeAiScopeHint">仅使用本地内容，不二次远程拉信。选择「该联系人本地历史」时附带本地已保留的全部往来（正文会截断）。</div>
                         <div class="compose-ai-actions">
                             <button type="button" class="btn btn-sm btn-primary" id="composeAiAnalyzeBtn" onclick="analyzeComposeAiReply()">生成建议</button>
                             <button type="button" class="btn btn-sm btn-secondary" id="composeAiShorterBtn" onclick="refineComposeAiReply('shorter')" disabled>更短</button>
                             <button type="button" class="btn btn-sm btn-secondary" id="composeAiPoliterBtn" onclick="refineComposeAiReply('politer')" disabled>更礼貌</button>
                             <button type="button" class="btn btn-sm btn-secondary" id="composeAiRegenBtn" onclick="refineComposeAiReply('regenerate')" disabled>重写</button>
                             <button type="button" class="btn btn-sm btn-secondary" id="composeAiInsertBtn" onclick="insertComposeAiReply()" disabled>填入正文</button>
-                            <a class="btn btn-sm btn-secondary" href="/ai" target="_blank" rel="noopener">AI 管理</a>
                         </div>
                         <div class="compose-ai-custom-row">
                             <input type="text" class="form-input" id="composeAiCustomInstruction" placeholder="自定义改写指令（可选）">
@@ -836,22 +855,7 @@
                         </div>
                         <div class="form-hint" id="composeAiStatusHint"></div>
                     </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">正文</label>
-                    <div class="compose-editor-toolbar">
-                        <button type="button" class="btn btn-sm btn-secondary" onclick="formatComposeSelection('bold')">粗体</button>
-                        <button type="button" class="btn btn-sm btn-secondary" onclick="formatComposeSelection('italic')">斜体</button>
-                        <button type="button" class="btn btn-sm btn-secondary" onclick="formatComposeSelection('insertUnorderedList')">列表</button>
-                    </div>
-                    <div class="compose-editor" id="composeBodyEditor" contenteditable="true" role="textbox" aria-multiline="true"></div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">附件</label>
-                    <input type="file" id="composeAttachments" multiple>
-                    <div class="form-hint">单个/总计不超过 25MB；可执行类扩展名会被拒绝。</div>
-                    <div id="composeAttachmentList" class="compose-attachment-list"></div>
-                </div>
+                </aside>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" type="button" onclick="hideComposeModal()">取消</button>
