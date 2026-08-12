@@ -1393,13 +1393,7 @@
 
             const emailId = emailItem.dataset.emailId || '';
             const emailIndex = Number(emailItem.dataset.emailIndex || 0);
-            const selectionKey = emailItem.dataset.emailSelectionKey || emailId;
-            // 已勾选再点：取消勾选；未勾选再点：勾选并打开详情
-            const wasSelected = selectedEmailIds.has(String(selectionKey || ''));
-            toggleEmailSelection(selectionKey, emailItem);
-            if (wasSelected) {
-                return;
-            }
+            // 行点击只打开详情；勾选仅由复选框区域负责
             if (currentMethod === 'cloudflare-admin') {
                 getCloudflareGlobalMessageDetail(emailId, emailIndex);
             } else if (isTempEmailGroup) {
@@ -1926,9 +1920,13 @@
                 panel?.classList.add('batch-toolbar-active');
                 document.getElementById('emailSelectedCount').textContent = `已选 ${selectedEmailIds.size} 项`;
                 if (selectAllBtn) {
-                    selectAllBtn.textContent = currentEmails.length > 0 && selectedEmailIds.size === currentEmails.length
-                        ? '取消全选'
-                        : '全选';
+                    const visibleEmails = getVisibleEmailsForCurrentFilter(currentEmails);
+                    const visibleKeys = visibleEmails
+                        .map(email => getEmailSelectionKey(email))
+                        .filter(Boolean);
+                    const allVisibleSelected = visibleKeys.length > 0
+                        && visibleKeys.every(key => selectedEmailIds.has(key));
+                    selectAllBtn.textContent = allVisibleSelected ? '取消全选' : '全选';
                 }
                 if (markReadBtn) {
                     const isMarking = markReadBtn.dataset.loading === 'true';
@@ -2315,9 +2313,16 @@
                 showToast('无法确定邮件所属账号', 'error');
                 return;
             }
-            // 更新 UI
-            document.querySelectorAll('.email-item').forEach((item, i) => {
-                item.classList.toggle('active', i === index);
+            // 更新 UI（按 selection key 高亮，避免状态筛选后 DOM 下标错位）
+            document.querySelectorAll('.email-item').forEach((item) => {
+                const itemKey = String(item.dataset.emailSelectionKey || '');
+                const itemId = String(item.dataset.emailId || '');
+                item.classList.toggle(
+                    'active',
+                    itemKey === String(currentEmailId || '')
+                    || itemId === String(currentEmailId || '')
+                    || itemId === String(messageId || '')
+                );
             });
 
             // 这里不重置 currentEmailDetail，等到 fetch 成功后再设置

@@ -107,8 +107,45 @@
         }
 
         .compose-email-modal-content {
-            width: min(720px, 96vw);
+            width: min(920px, 96vw);
+            max-width: min(920px, 96vw);
             max-height: 90vh;
+        }
+
+        .compose-header-fields {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .compose-header-fields .form-group {
+            margin-bottom: 0;
+        }
+
+        .compose-field-row {
+            display: grid;
+            grid-template-columns: 72px minmax(0, 1fr);
+            align-items: start;
+            column-gap: 12px;
+        }
+
+        .compose-field-row .form-label {
+            margin-bottom: 0;
+            padding-top: 11px;
+            line-height: 1.2;
+            white-space: nowrap;
+        }
+
+        .compose-field-control {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .compose-field-control .form-hint {
+            margin-top: 0;
         }
 
         .compose-editor-toolbar {
