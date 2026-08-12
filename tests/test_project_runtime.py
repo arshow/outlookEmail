@@ -2315,7 +2315,28 @@ class FrontendEmailListSecurityTests(unittest.TestCase):
         self.assertIn('function handleEmailListClick(event)', self.emails_js)
         self.assertIn("container.addEventListener('click', handleEmailListClick);", self.emails_js)
         self.assertIn('selectEmail(emailId, emailIndex);', self.emails_js)
-        self.assertIn('setEmailSelectionState(selectionKey, true, emailItem);', self.emails_js)
+
+        click_start = self.emails_js.index('function handleEmailListClick(event)')
+        click_end = self.emails_js.index('function bindEmailListDelegatedEvents()', click_start)
+        click_source = self.emails_js[click_start:click_end]
+        row_branch_start = click_source.index("const emailItem = event.target.closest('.email-item[data-email-id]')")
+        row_branch = click_source[row_branch_start:]
+        self.assertNotIn('toggleEmailSelection(', row_branch)
+        self.assertIn('行点击只打开详情', row_branch)
+
+    def test_email_active_highlight_uses_selection_key(self):
+        select_start = self.emails_js.index('async function selectEmail(messageId, index)')
+        select_end = self.emails_js.index('// 加载邮件详情', select_start)
+        select_source = self.emails_js[select_start:select_end]
+        self.assertIn("item.dataset.emailSelectionKey", select_source)
+        self.assertNotIn('i === index', select_source)
+
+    def test_select_all_emails_uses_visible_filter_list(self):
+        toggle_start = self.emails_js.index('function toggleSelectAllEmails()')
+        toggle_end = self.emails_js.index('function clearEmailSelection()', toggle_start)
+        toggle_source = self.emails_js[toggle_start:toggle_end]
+        self.assertIn('getVisibleEmailsForCurrentFilter(currentEmails)', toggle_source)
+        self.assertIn('visibleKeys.every(key => selectedEmailIds.has(key))', toggle_source)
 
     def test_email_checkbox_uses_delegated_click_without_inline_toggle(self):
         self.assertNotIn("toggleEmailSelection('${email.id}')", self.emails_js)

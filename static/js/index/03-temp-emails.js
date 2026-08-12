@@ -992,8 +992,15 @@
 
         function getCloudflareGlobalMessageDetail(messageId, index) {
             currentEmailId = messageId;
-            document.querySelectorAll('.email-item').forEach((item, i) => {
-                item.classList.toggle('active', i === index);
+            document.querySelectorAll('.email-item').forEach((item) => {
+                const itemKey = String(item.dataset.emailSelectionKey || '');
+                const itemId = String(item.dataset.emailId || '');
+                item.classList.toggle(
+                    'active',
+                    itemKey === String(currentEmailId || '')
+                    || itemId === String(currentEmailId || '')
+                    || itemId === String(messageId || '')
+                );
             });
 
             document.getElementById('emailDetailToolbar').style.display = 'flex';
@@ -1158,8 +1165,15 @@
             }
 
             currentEmailId = messageId;
-            document.querySelectorAll('.email-item').forEach((item, i) => {
-                item.classList.toggle('active', i === index);
+            document.querySelectorAll('.email-item').forEach((item) => {
+                const itemKey = String(item.dataset.emailSelectionKey || '');
+                const itemId = String(item.dataset.emailId || '');
+                item.classList.toggle(
+                    'active',
+                    itemKey === String(currentEmailId || '')
+                    || itemId === String(currentEmailId || '')
+                    || itemId === String(messageId || '')
+                );
             });
 
             document.getElementById('emailDetailToolbar').style.display = 'flex';

@@ -1976,18 +1976,19 @@
         }
 
         function toggleSelectAllEmails() {
-            if (!currentEmails.length) return;
+            const visibleEmails = getVisibleEmailsForCurrentFilter(currentEmails);
+            if (!visibleEmails.length) return;
 
-            const shouldClear = selectedEmailIds.size === currentEmails.length;
-            if (shouldClear) {
-                selectedEmailIds.clear();
+            const visibleKeys = visibleEmails
+                .map(email => getEmailSelectionKey(email))
+                .filter(Boolean);
+            if (!visibleKeys.length) return;
+
+            const allVisibleSelected = visibleKeys.every(key => selectedEmailIds.has(key));
+            if (allVisibleSelected) {
+                visibleKeys.forEach(key => selectedEmailIds.delete(key));
             } else {
-                currentEmails.forEach(email => {
-                    const selectionKey = getEmailSelectionKey(email);
-                    if (selectionKey) {
-                        selectedEmailIds.add(selectionKey);
-                    }
-                });
+                visibleKeys.forEach(key => selectedEmailIds.add(key));
             }
             renderEmailList(currentEmails);
         }
