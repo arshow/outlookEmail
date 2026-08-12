@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 回复管理</title>
+    <link rel="icon" href="{{ url_for('favicon') }}" type="image/svg+xml">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/ai_admin.css') }}">
+</head>
+<body>
+    <div class="ai-shell">
+        <div class="ai-header">
+            <div>
+                <h1>AI 回复管理</h1>
+                <p>配置 Gemini / DeepSeek、知识库与回复规则。日常生成请在邮件回复窗口完成。</p>
+            </div>
+            <div class="ai-header-actions">
+                <a class="btn" href="/">返回邮箱</a>
+            </div>
+        </div>
+
+        <div class="ai-tabs">
+            <button class="ai-tab active" type="button" data-tab="settings">模型设置</button>
+            <button class="ai-tab" type="button" data-tab="knowledge">知识库</button>
+            <button class="ai-tab" type="button" data-tab="rules">回复规则</button>
+            <button class="ai-tab" type="button" data-tab="runs">分析记录</button>
+        </div>
+
+        <section class="ai-panel active" id="panel-settings">
+            <div class="ai-grid">
+                <label class="inline-check full">
+                    <input type="checkbox" id="aiEnabled">
+                    <span>启用 AI 智能回复</span>
+                </label>
+                <label>
+                    提供商
+                    <select id="aiProvider">
+                        <option value="gemini">Gemini</option>
+                        <option value="deepseek">DeepSeek</option>
+                    </select>
+                </label>
+                <label>
+                    模型 ID
+                    <input type="text" id="aiModel" list="aiModelPresets" placeholder="gemini-2.5-flash / deepseek-chat">
+                    <datalist id="aiModelPresets">
+                        <option value="gemini-2.5-flash"></option>
+                        <option value="gemini-2.0-flash"></option>
+                        <option value="deepseek-chat"></option>
+                        <option value="deepseek-reasoner"></option>
+                    </datalist>
+                </label>
+                <label id="geminiKeyGroup">
+                    Gemini API Key
+                    <input type="password" id="geminiApiKey" placeholder="留空表示保留已有 Key" autocomplete="off">
+                    <span class="hint" id="geminiKeyHint"></span>
+                </label>
+                <label id="deepseekKeyGroup">
+                    DeepSeek API Key
+                    <input type="password" id="deepseekApiKey" placeholder="留空表示保留已有 Key" autocomplete="off">
+                    <span class="hint" id="deepseekKeyHint"></span>
+                </label>
+                <label>
+                    Gemini Base URL
+                    <input type="text" id="geminiBaseUrl" placeholder="https://generativelanguage.googleapis.com">
+                </label>
+                <label>
+                    DeepSeek Base URL
+                    <input type="text" id="deepseekBaseUrl" placeholder="https://api.deepseek.com">
+                </label>
+                <label class="full">
+                    系统人设（可选）
+                    <textarea id="systemPersona" placeholder="例如：你是品牌客服，语气专业简洁。"></textarea>
+                </label>
+                <label class="inline-check full">
+                    <input type="checkbox" id="geminiSocksEnabled">
+                    <span>启用 Gemini SOCKS5 代理</span>
+                </label>
+                <label>
+                    SOCKS5 主机
+                    <input type="text" id="geminiSocksHost">
+                </label>
+                <label>
+                    SOCKS5 端口
+                    <input type="number" id="geminiSocksPort" min="1" max="65535">
+                </label>
+                <label>
+                    SOCKS5 用户名
+                    <input type="text" id="geminiSocksUser">
+                </label>
+                <label>
+                    SOCKS5 密码
+                    <input type="password" id="geminiSocksPass" placeholder="留空表示保留已有密码" autocomplete="off">
+                    <span class="hint" id="geminiSocksPassHint"></span>
+                </label>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-primary" type="button" id="saveSettingsBtn">保存设置</button>
+                <button class="btn" type="button" id="testSettingsBtn">测试当前提供商</button>
+                <button class="btn btn-danger" type="button" id="clearGeminiKeyBtn">清空 Gemini Key</button>
+                <button class="btn btn-danger" type="button" id="clearDeepseekKeyBtn">清空 DeepSeek Key</button>
+            </div>
+            <p class="hint" style="margin-top:12px;">上下文「仅本封 / 联系人本地历史」在回复窗口按次选择，不在此页配置。</p>
+        </section>
+
+        <section class="ai-panel" id="panel-knowledge">
+            <div class="ai-grid">
+                <label>
+                    标题
+                    <input type="text" id="knowledgeTitle">
+                </label>
+                <label>
+                    分类
+                    <input type="text" id="knowledgeCategory" value="general">
+                </label>
+                <label>
+                    关键词（逗号分隔）
+                    <input type="text" id="knowledgeKeywords" placeholder="退款, shipping, 物流">
+                </label>
+                <label>
+                    优先级
+                    <input type="number" id="knowledgePriority" value="0">
+                </label>
+                <label class="full">
+                    内容
+                    <textarea id="knowledgeContent"></textarea>
+                </label>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-primary" type="button" id="addKnowledgeBtn">新增知识</button>
+                <button class="btn" type="button" id="reloadKnowledgeBtn">刷新列表</button>
+            </div>
+            <div class="card-list" id="knowledgeList" style="margin-top:16px;"></div>
+        </section>
+
+        <section class="ai-panel" id="panel-rules">
+            <div class="ai-grid">
+                <label>
+                    标签
+                    <input type="text" id="ruleLabel" placeholder="例如：退款谨慎回复">
+                </label>
+                <label>
+                    风险等级
+                    <select id="ruleRisk">
+                        <option value="green">green</option>
+                        <option value="yellow" selected>yellow</option>
+                        <option value="red">red</option>
+                    </select>
+                </label>
+                <label>
+                    关键词（逗号分隔）
+                    <input type="text" id="ruleKeywords">
+                </label>
+                <label>
+                    意图（逗号分隔，可空）
+                    <input type="text" id="ruleIntents" placeholder="refund, complaint">
+                </label>
+                <label>
+                    禁止短语（逗号分隔）
+                    <input type="text" id="ruleForbidden">
+                </label>
+                <label>
+                    优先级
+                    <input type="number" id="rulePriority" value="0">
+                </label>
+                <label class="full">
+                    Instruction
+                    <textarea id="ruleInstruction" placeholder="命中时如何回复、需要确认哪些事实。"></textarea>
+                </label>
+                <label class="full">
+                    规则沙箱测试文本
+                    <textarea id="ruleTestText" placeholder="粘贴一段客户邮件内容，测试会匹配哪些已发布规则。"></textarea>
+                </label>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-primary" type="button" id="addRuleDraftBtn">新增草稿规则</button>
+                <button class="btn" type="button" id="addRulePublishedBtn">新增并发布</button>
+                <button class="btn" type="button" id="testRulesBtn">测试匹配</button>
+                <button class="btn" type="button" id="reloadRulesBtn">刷新列表</button>
+            </div>
+            <pre class="hint" id="ruleTestResult" style="white-space:pre-wrap;margin-top:12px;"></pre>
+            <div class="card-list" id="rulesList" style="margin-top:16px;"></div>
+        </section>
+
+        <section class="ai-panel" id="panel-runs">
+            <div class="btn-row" style="margin-top:0;">
+                <button class="btn" type="button" id="reloadRunsBtn">刷新记录</button>
+            </div>
+            <div style="overflow:auto;margin-top:12px;">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>账号</th>
+                            <th>Scope</th>
+                            <th>Provider</th>
+                            <th>状态</th>
+                            <th>风险</th>
+                            <th>耗时</th>
+                            <th>摘要</th>
+                        </tr>
+                    </thead>
+                    <tbody id="runsTableBody"></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <script src="{{ url_for('static', filename='js/ai_admin.js') }}"></script>
+</body>
+</html>

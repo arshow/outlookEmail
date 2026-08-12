@@ -306,6 +306,9 @@
             transition: all 0.15s;
             position: relative;
             z-index: 102;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
         }
 
         .mobile-nav-menu-btn {
@@ -466,6 +469,7 @@
             cursor: pointer;
             transition: background-color 0.15s, color 0.15s;
             white-space: nowrap;
+            text-decoration: none;
         }
 
         .dropdown-item:hover {

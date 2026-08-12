@@ -2152,6 +2152,43 @@ def init_db():
         VALUES ('cloudflare_ai_username_prompt', ?)
     ''', (CLOUDFLARE_AI_USERNAME_DEFAULT_PROMPT,))
 
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_enabled', 'false')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_provider', 'gemini')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_model', 'gemini-2.5-flash')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_gemini_api_key', '')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_deepseek_api_key', '')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_gemini_base_url', 'https://generativelanguage.googleapis.com')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_deepseek_base_url', 'https://api.deepseek.com')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_gemini_socks5', '')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_system_persona', '')
+    ''')
+
     cursor.execute('SELECT COUNT(*) FROM cloudflare_channels')
     cloudflare_channel_count = cursor.fetchone()[0]
     if cloudflare_channel_count == 0:
@@ -2590,6 +2627,12 @@ def init_db():
 
     # 回填历史保留邮件的规范化排序时间，保持旧数据库升级后分页顺序稳定。
     backfill_retained_normal_mail_received_at_sort(conn)
+
+    try:
+        from outlook_web.ai.db import ensure_ai_schema
+        ensure_ai_schema(conn)
+    except Exception:
+        pass
 
     # 迁移现有明文数据为加密数据
     migrate_sensitive_data(conn)

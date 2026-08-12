@@ -798,6 +798,45 @@
                     </div>
                     <div class="form-hint">中文保持现有引用格式；English 使用英文引用头，时间按太平洋时区显示</div>
                 </div>
+                <div class="form-group" id="composeAiPanel" style="display: none;">
+                    <label class="form-label">AI 智能回复</label>
+                    <div class="compose-ai-panel">
+                        <div class="compose-ai-scope">
+                            <label class="provider-tab-item">
+                                <input type="radio" name="composeAiContextScope" value="current" checked>
+                                <span class="provider-tab-label" style="padding: 8px 10px;">仅本封邮件</span>
+                            </label>
+                            <label class="provider-tab-item">
+                                <input type="radio" name="composeAiContextScope" value="contact_local">
+                                <span class="provider-tab-label" style="padding: 8px 10px;">该联系人本地历史</span>
+                            </label>
+                        </div>
+                        <div class="form-hint" id="composeAiScopeHint">默认仅使用当前邮件；选择本地历史时最多附带最近 30 封本地往来。</div>
+                        <div class="compose-ai-actions">
+                            <button type="button" class="btn btn-sm btn-primary" id="composeAiAnalyzeBtn" onclick="analyzeComposeAiReply()">生成建议</button>
+                            <button type="button" class="btn btn-sm btn-secondary" id="composeAiShorterBtn" onclick="refineComposeAiReply('shorter')" disabled>更短</button>
+                            <button type="button" class="btn btn-sm btn-secondary" id="composeAiPoliterBtn" onclick="refineComposeAiReply('politer')" disabled>更礼貌</button>
+                            <button type="button" class="btn btn-sm btn-secondary" id="composeAiRegenBtn" onclick="refineComposeAiReply('regenerate')" disabled>重写</button>
+                            <button type="button" class="btn btn-sm btn-secondary" id="composeAiInsertBtn" onclick="insertComposeAiReply()" disabled>填入正文</button>
+                            <a class="btn btn-sm btn-secondary" href="/ai" target="_blank" rel="noopener">AI 管理</a>
+                        </div>
+                        <div class="compose-ai-custom-row">
+                            <input type="text" class="form-input" id="composeAiCustomInstruction" placeholder="自定义改写指令（可选）">
+                            <button type="button" class="btn btn-sm btn-secondary" id="composeAiCustomBtn" onclick="refineComposeAiReply('custom')" disabled>按指令改写</button>
+                        </div>
+                        <label class="compose-ai-review" id="composeAiReviewLabel" style="display: none;">
+                            <input type="checkbox" id="composeAiReviewed">
+                            <span>我已人工审核该草稿（风险非绿或存在缺事实时需勾选后才能填入）</span>
+                        </label>
+                        <div class="compose-ai-result" id="composeAiResult" style="display: none;">
+                            <div class="compose-ai-meta" id="composeAiMeta"></div>
+                            <div class="compose-ai-summary" id="composeAiSummary"></div>
+                            <div class="compose-ai-zh" id="composeAiReplyZh"></div>
+                            <pre class="compose-ai-text" id="composeAiReplyText"></pre>
+                        </div>
+                        <div class="form-hint" id="composeAiStatusHint"></div>
+                    </div>
+                </div>
                 <div class="form-group">
                     <label class="form-label">正文</label>
                     <div class="compose-editor-toolbar">

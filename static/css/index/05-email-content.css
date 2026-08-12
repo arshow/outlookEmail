@@ -155,6 +155,89 @@
             margin-bottom: 8px;
         }
 
+        .compose-ai-panel {
+            border: 1px solid var(--skin-border-strong);
+            border-radius: 10px;
+            padding: 12px;
+            background: var(--skin-surface-soft);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .compose-ai-scope {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .compose-ai-actions,
+        .compose-ai-custom-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .compose-ai-custom-row .form-input {
+            flex: 1 1 220px;
+            min-width: 180px;
+        }
+
+        .compose-ai-review {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--skin-text-muted);
+        }
+
+        .compose-ai-result {
+            border-top: 1px dashed var(--skin-border);
+            padding-top: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .compose-ai-meta {
+            font-size: 12px;
+            color: var(--skin-text-soft);
+        }
+
+        .compose-ai-summary,
+        .compose-ai-zh {
+            font-size: 13px;
+            color: var(--skin-text-muted);
+            white-space: pre-wrap;
+        }
+
+        .compose-ai-text {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: inherit;
+            font-size: 13px;
+            background: var(--skin-surface);
+            border: 1px solid var(--skin-border);
+            border-radius: 8px;
+            padding: 10px;
+            max-height: 180px;
+            overflow: auto;
+        }
+
+        .compose-ai-risk {
+            display: inline-block;
+            padding: 1px 8px;
+            border-radius: 999px;
+            font-size: 12px;
+            margin-right: 6px;
+        }
+
+        .compose-ai-risk.green { background: #d1fae5; color: #047857; }
+        .compose-ai-risk.yellow { background: #fef3c7; color: #b45309; }
+        .compose-ai-risk.red { background: #fee2e2; color: #b91c1c; }
+
         .compose-editor {
             min-height: 180px;
             max-height: 360px;

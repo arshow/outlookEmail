@@ -128,6 +128,20 @@
 | POST | `/api/emails/send` | Session + CSRF | JSON / multipart | 以账号身份发送新邮件（支持附件） |
 | POST | `/api/emails/reply` | Session + CSRF | JSON / multipart | 回复 / 全部回复（支持附件） |
 | POST | `/api/emails/forward` | Session + CSRF | JSON / multipart | 转发邮件（支持附件；非通知转发） |
+| GET | `/ai` | Session | HTML | AI 回复管理页（模型 / 知识库 / 规则 / 分析记录） |
+| GET | `/api/ai/status` | Session | JSON | Compose 工具条轻量状态（是否启用/就绪） |
+| GET/PUT | `/api/ai/settings` | Session (+CSRF for PUT) | JSON | AI 模型设置（仅 Gemini / DeepSeek） |
+| POST | `/api/ai/settings/test` | Session + CSRF | JSON | 测试当前或指定提供商连通性 |
+| GET/POST | `/api/ai/knowledge` | Session (+CSRF for POST) | JSON | 知识库列表 / 创建 |
+| PUT/DELETE | `/api/ai/knowledge/<id>` | Session + CSRF | JSON | 更新 / 删除知识条目 |
+| GET/POST | `/api/ai/rules` | Session (+CSRF for POST) | JSON | 规则列表 / 创建 |
+| PUT/DELETE | `/api/ai/rules/<id>` | Session + CSRF | JSON | 更新 / 删除规则 |
+| POST | `/api/ai/rules/<id>/publish` | Session + CSRF | JSON | 发布规则 |
+| POST | `/api/ai/rules/test` | Session + CSRF | JSON | 规则匹配沙箱 |
+| POST | `/api/ai/analyze` | Session + CSRF | JSON | 生成建议回复草稿（不发送） |
+| POST | `/api/ai/refine` | Session + CSRF | JSON | 改写建议草稿 |
+| GET | `/api/ai/latest` | Session | JSON | 同邮件最近一次成功分析 |
+| GET | `/api/ai/analysis-runs` | Session | JSON | 分析运行日志 |
 | GET | `/api/email/<email_addr>/<message_id>` | Session | JSON | 获取邮件详情 |
 | GET | `/api/email/<email_addr>/<message_id>/attachments/<attachment_id>` | Session | 文件流 | 下载附件 |
 | GET | `/api/email/<email_addr>/<message_id>/attachments/download-all` | Session | ZIP 文件流 | 打包下载全部附件 |
@@ -2932,3 +2946,37 @@ Telegram 测试：
 - `GET /api/groups/<group_id>/export`: `text/plain` 文件下载
 - `GET /api/accounts/export`: `text/plain` 文件下载
 - `POST /api/accounts/export-selected`: `text/plain` 文件下载
+
+## AI 智能回复
+
+- 仅支持提供商：`gemini` / `deepseek`
+- 产品模式：生成建议草稿 + 人工确认后填入 Compose，再走现有 `/api/emails/reply` 发送；**不会自动发信**
+- `context_scope` 仅在每次 `POST /api/ai/analyze` 时由回复窗口选择，不作为全局配置：
+  - `current`：仅当前邮件
+  - `contact_local`：本账号本地保留库中与对方往来（最多 30 封，正文截断；无命中则降级为 `current`）
+
+### POST `/api/ai/analyze`
+
+请求 JSON：
+
+```json
+{
+  "email": "me@example.com",
+  "message_id": "<provider-message-id>",
+  "folder": "inbox",
+  "method": "graph",
+  "id_mode": "",
+  "context_scope": "current",
+  "force_refresh": false
+}
+```
+
+成功时返回 `analysis`（含 `replyText` / `replyTextZh` / `riskLevel` / `requiresHumanConfirmation` 等）与 `meta`（实际 scope、history_count、是否降级）。
+
+### POST `/api/ai/refine`
+
+`mode` 支持：`shorter` / `politer` / `regenerate` / `custom` / `translate_zh` / `translate`。
+
+### PUT `/api/ai/settings`
+
+可写字段：`enabled`、`provider`、`model`、`gemini_api_key`、`deepseek_api_key`、`clear_gemini_api_key`、`clear_deepseek_api_key`、`gemini_base_url`、`deepseek_base_url`、`gemini_socks5`、`system_persona`。API Key 加密存储，读取仅返回掩码与 `*_configured`。

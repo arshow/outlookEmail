@@ -27,6 +27,7 @@ SEGMENT_FILES = (
     "12_routes_email_compose.py",
     "13_inbox_discovery.py",
     "14_mail_folders.py",
+    "15_routes_ai_reply.py",
 )
 
 SEGMENTS_DIR = Path(__file__).resolve().parent / "outlook_web" / "segments"

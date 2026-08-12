@@ -9,6 +9,14 @@
 
         let composeSelectedFiles = [];
         let composeQuotedDetail = null;
+        let composeAiState = {
+            ready: false,
+            runId: null,
+            analysis: null,
+            meta: null,
+            replyText: '',
+            replyTextZh: '',
+        };
         const COMPOSE_QUOTE_LANGUAGE_STORAGE_KEY = 'compose_quote_language';
         const COMPOSE_PACIFIC_TIME_ZONE = 'America/Los_Angeles';
 
@@ -334,6 +342,7 @@
             const fileInput = document.getElementById('composeAttachments');
             if (fileInput) fileInput.value = '';
             renderComposeAttachmentList();
+            resetComposeAiPanel();
         }
 
         function openComposeModal(mode = 'new') {
@@ -428,6 +437,7 @@
 
             closeAllModals?.();
             setModalVisible('composeEmailModal', true);
+            prepareComposeAiPanel(mode);
             document.getElementById(mode === 'forward' || mode === 'new' ? 'composeTo' : 'composeBodyEditor')?.focus();
         }
 
@@ -518,4 +528,248 @@
             } finally {
                 if (sendBtn) sendBtn.disabled = false;
             }
+        }
+
+        function resetComposeAiPanel() {
+            composeAiState = {
+                ready: false,
+                runId: null,
+                analysis: null,
+                meta: null,
+                replyText: '',
+                replyTextZh: '',
+            };
+            const panel = document.getElementById('composeAiPanel');
+            if (panel) panel.style.display = 'none';
+            const result = document.getElementById('composeAiResult');
+            if (result) result.style.display = 'none';
+            const reviewLabel = document.getElementById('composeAiReviewLabel');
+            if (reviewLabel) reviewLabel.style.display = 'none';
+            const reviewed = document.getElementById('composeAiReviewed');
+            if (reviewed) reviewed.checked = false;
+            const custom = document.getElementById('composeAiCustomInstruction');
+            if (custom) custom.value = '';
+            const currentScope = document.querySelector('input[name="composeAiContextScope"][value="current"]');
+            if (currentScope) currentScope.checked = true;
+            setComposeAiActionEnabled(false);
+            const statusHint = document.getElementById('composeAiStatusHint');
+            if (statusHint) statusHint.textContent = '';
+        }
+
+        function setComposeAiActionEnabled(enabled) {
+            ['composeAiShorterBtn', 'composeAiPoliterBtn', 'composeAiRegenBtn', 'composeAiCustomBtn', 'composeAiInsertBtn']
+                .forEach((id) => {
+                    const btn = document.getElementById(id);
+                    if (btn) btn.disabled = !enabled;
+                });
+        }
+
+        async function prepareComposeAiPanel(mode) {
+            const panel = document.getElementById('composeAiPanel');
+            if (!panel) return;
+            if (mode !== 'reply' && mode !== 'reply_all') {
+                panel.style.display = 'none';
+                return;
+            }
+            panel.style.display = '';
+            const statusHint = document.getElementById('composeAiStatusHint');
+            try {
+                const response = await fetchWithTimeout('/api/ai/status');
+                const data = await response.json().catch(() => ({}));
+                composeAiState.ready = !!(data.success && data.ready);
+                if (!data.enabled) {
+                    if (statusHint) {
+                        statusHint.innerHTML = 'AI 未启用。可前往 <a href="/ai" target="_blank" rel="noopener">/ai</a> 配置 Gemini / DeepSeek。';
+                    }
+                } else if (!data.ready) {
+                    if (statusHint) {
+                        statusHint.innerHTML = 'AI 已启用但当前提供商 Key 未配置，请前往 <a href="/ai" target="_blank" rel="noopener">/ai</a>。';
+                    }
+                } else if (statusHint) {
+                    statusHint.textContent = `已就绪：${data.provider || ''} / ${data.model || ''}`;
+                }
+            } catch (error) {
+                composeAiState.ready = false;
+                if (statusHint) statusHint.textContent = '无法读取 AI 状态';
+            }
+        }
+
+        function getComposeAiContextScope() {
+            const checked = document.querySelector('input[name="composeAiContextScope"]:checked');
+            return checked?.value === 'contact_local' ? 'contact_local' : 'current';
+        }
+
+        function composeAiNeedsReview(analysis) {
+            if (!analysis) return true;
+            const risk = String(analysis.riskLevel || 'yellow');
+            return risk !== 'green'
+                || !!analysis.requiresHumanConfirmation
+                || (Array.isArray(analysis.missingFacts) && analysis.missingFacts.length > 0);
+        }
+
+        function renderComposeAiResult(payload) {
+            const analysis = payload.analysis || {};
+            const meta = payload.meta || {};
+            composeAiState.runId = payload.run_id || null;
+            composeAiState.analysis = analysis;
+            composeAiState.meta = meta;
+            composeAiState.replyText = analysis.replyText || '';
+            composeAiState.replyTextZh = analysis.replyTextZh || '';
+
+            const result = document.getElementById('composeAiResult');
+            const metaEl = document.getElementById('composeAiMeta');
+            const summaryEl = document.getElementById('composeAiSummary');
+            const zhEl = document.getElementById('composeAiReplyZh');
+            const textEl = document.getElementById('composeAiReplyText');
+            const reviewLabel = document.getElementById('composeAiReviewLabel');
+            const reviewed = document.getElementById('composeAiReviewed');
+
+            if (result) result.style.display = '';
+            const risk = String(analysis.riskLevel || 'yellow');
+            const historyNote = meta.context_scope === 'contact_local'
+                ? ` · 已纳入本地历史 ${meta.history_count || 0} 封`
+                : '';
+            const degradeNote = meta.degraded && meta.degrade_reason
+                ? ` · ${meta.degrade_reason}`
+                : '';
+            if (metaEl) {
+                metaEl.innerHTML = (
+                    `<span class="compose-ai-risk ${escapeHtml(risk)}">${escapeHtml(risk)}</span>` +
+                    `${escapeHtml(payload.provider || '')}/${escapeHtml(payload.model || '')}` +
+                    `${escapeHtml(historyNote)}${escapeHtml(degradeNote)}` +
+                    (payload.cached ? ' · 缓存' : '')
+                );
+            }
+            if (summaryEl) {
+                const missing = Array.isArray(analysis.missingFacts) && analysis.missingFacts.length
+                    ? `；缺事实：${analysis.missingFacts.join(', ')}`
+                    : '';
+                summaryEl.textContent = `摘要：${analysis.summaryZh || '-'}${missing}`;
+            }
+            if (zhEl) zhEl.textContent = `中文对照：${analysis.replyTextZh || '-'}`;
+            if (textEl) textEl.textContent = analysis.replyText || '';
+            const needsReview = composeAiNeedsReview(analysis);
+            if (reviewLabel) reviewLabel.style.display = needsReview ? '' : 'none';
+            if (reviewed) reviewed.checked = false;
+            setComposeAiActionEnabled(!!analysis.replyText);
+        }
+
+        async function analyzeComposeAiReply(forceRefresh = false) {
+            if (!composeAiState.ready) {
+                showToast('请先在 /ai 启用并配置 AI', 'error');
+                return;
+            }
+            const email = document.getElementById('composeFromEmail')?.value?.trim() || '';
+            const messageId = document.getElementById('composeMessageId')?.value || '';
+            if (!email || !messageId) {
+                showToast('缺少发件账号或原邮件 ID', 'error');
+                return;
+            }
+            const btn = document.getElementById('composeAiAnalyzeBtn');
+            if (btn) btn.disabled = true;
+            try {
+                const response = await fetchWithTimeout('/api/ai/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email,
+                        message_id: messageId,
+                        folder: document.getElementById('composeFolder')?.value || 'inbox',
+                        method: document.getElementById('composeMethod')?.value || '',
+                        id_mode: currentEmailDetail?.id_mode || '',
+                        context_scope: getComposeAiContextScope(),
+                        force_refresh: !!forceRefresh,
+                    }),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || !data.success) {
+                    handleApiError(data, data.error || 'AI 生成失败');
+                    return;
+                }
+                renderComposeAiResult(data);
+                showToast(data.cached ? '已加载缓存建议' : 'AI 建议已生成', 'success');
+            } catch (error) {
+                showToast(error?.message || 'AI 生成失败', 'error');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        async function refineComposeAiReply(mode) {
+            if (!composeAiState.replyText) {
+                showToast('请先生成建议', 'error');
+                return;
+            }
+            const instruction = document.getElementById('composeAiCustomInstruction')?.value || '';
+            if (mode === 'custom' && !instruction.trim()) {
+                showToast('请填写自定义改写指令', 'error');
+                return;
+            }
+            try {
+                const response = await fetchWithTimeout('/api/ai/refine', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        reply_text: composeAiState.replyText,
+                        mode,
+                        instruction,
+                        analysis: composeAiState.analysis || {},
+                        run_id: composeAiState.runId,
+                        target_language: composeAiState.analysis?.replyLanguage || '',
+                    }),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || !data.success) {
+                    handleApiError(data, data.error || '改写失败');
+                    return;
+                }
+                const reply = data.reply || {};
+                composeAiState.replyText = reply.replyText || '';
+                composeAiState.replyTextZh = reply.replyTextZh || '';
+                if (composeAiState.analysis) {
+                    composeAiState.analysis = {
+                        ...composeAiState.analysis,
+                        replyText: composeAiState.replyText,
+                        replyTextZh: composeAiState.replyTextZh,
+                        replyLanguage: reply.replyLanguage || composeAiState.analysis.replyLanguage,
+                    };
+                }
+                renderComposeAiResult({
+                    run_id: composeAiState.runId,
+                    analysis: composeAiState.analysis,
+                    meta: composeAiState.meta,
+                    provider: data.provider,
+                    model: data.model,
+                });
+                showToast('改写完成', 'success');
+            } catch (error) {
+                showToast(error?.message || '改写失败', 'error');
+            }
+        }
+
+        function insertComposeAiReply() {
+            const text = String(composeAiState.replyText || '').trim();
+            if (!text) {
+                showToast('没有可填入的草稿', 'error');
+                return;
+            }
+            if (composeAiNeedsReview(composeAiState.analysis)) {
+                const reviewed = document.getElementById('composeAiReviewed');
+                if (!reviewed?.checked) {
+                    showToast('请先勾选「已人工审核」', 'error');
+                    return;
+                }
+            }
+            const editor = document.getElementById('composeBodyEditor');
+            if (!editor) return;
+            const escaped = escapeHtml(text).replace(/\n/g, '<br>');
+            const existing = editor.innerHTML || '';
+            // Keep quoted original below the AI draft when present.
+            if (existing.includes('-----Original Message-----') || existing.includes('---------- Forwarded message ---------')) {
+                editor.innerHTML = `${escaped}<br><br>${existing}`;
+            } else {
+                editor.innerHTML = `${escaped}${existing ? `<br><br>${existing}` : ''}`;
+            }
+            editor.focus();
+            showToast('已填入正文，请确认后发送', 'success');
         }
