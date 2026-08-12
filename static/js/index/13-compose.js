@@ -11,12 +11,21 @@
         let composeQuotedDetail = null;
         let composeAiState = {
             ready: false,
+            busy: false,
             runId: null,
             analysis: null,
             meta: null,
             replyText: '',
             replyTextZh: '',
         };
+        const COMPOSE_AI_ACTION_BUTTON_IDS = [
+            'composeAiAnalyzeBtn',
+            'composeAiShorterBtn',
+            'composeAiPoliterBtn',
+            'composeAiRegenBtn',
+            'composeAiCustomBtn',
+            'composeAiInsertBtn',
+        ];
         const COMPOSE_QUOTE_LANGUAGE_STORAGE_KEY = 'compose_quote_language';
         const COMPOSE_PACIFIC_TIME_ZONE = 'America/Los_Angeles';
 
@@ -540,8 +549,10 @@
         }
 
         function resetComposeAiPanel() {
+            endComposeAiBusy();
             composeAiState = {
                 ready: false,
+                busy: false,
                 runId: null,
                 analysis: null,
                 meta: null,
@@ -551,6 +562,8 @@
             setComposeAiSidebarVisible(false);
             const result = document.getElementById('composeAiResult');
             if (result) result.style.display = 'none';
+            const insertBlock = document.getElementById('composeAiInsertBlock');
+            if (insertBlock) insertBlock.style.display = 'none';
             const reviewLabel = document.getElementById('composeAiReviewLabel');
             if (reviewLabel) reviewLabel.style.display = 'none';
             const reviewed = document.getElementById('composeAiReviewed');
@@ -568,8 +581,70 @@
             ['composeAiShorterBtn', 'composeAiPoliterBtn', 'composeAiRegenBtn', 'composeAiCustomBtn', 'composeAiInsertBtn']
                 .forEach((id) => {
                     const btn = document.getElementById(id);
-                    if (btn) btn.disabled = !enabled;
+                    if (!btn || btn.classList.contains('is-loading')) return;
+                    btn.disabled = !enabled || composeAiState.busy;
                 });
+            const insertBlock = document.getElementById('composeAiInsertBlock');
+            if (insertBlock && enabled) insertBlock.style.display = '';
+        }
+
+        function restoreComposeAiButtonLabel(btn) {
+            if (!btn) return;
+            const label = btn.dataset.defaultLabel || btn.textContent;
+            btn.textContent = label;
+            btn.classList.remove('is-loading');
+        }
+
+        function beginComposeAiBusy(activeBtnId, loadingText) {
+            if (composeAiState.busy) return false;
+            composeAiState.busy = true;
+            const panel = document.querySelector('#composeAiPanel .compose-ai-panel');
+            if (panel) panel.classList.add('is-busy');
+            const busyHint = document.getElementById('composeAiBusyHint');
+            if (busyHint) {
+                busyHint.style.display = '';
+                busyHint.textContent = loadingText || '处理中…';
+            }
+            COMPOSE_AI_ACTION_BUTTON_IDS.forEach((id) => {
+                const btn = document.getElementById(id);
+                if (!btn) return;
+                if (!btn.dataset.defaultLabel) {
+                    btn.dataset.defaultLabel = btn.textContent.trim();
+                }
+                btn.disabled = true;
+                if (id === activeBtnId) {
+                    btn.classList.add('is-loading');
+                    btn.textContent = loadingText || '处理中…';
+                }
+            });
+            const customInput = document.getElementById('composeAiCustomInstruction');
+            if (customInput) customInput.disabled = true;
+            document.querySelectorAll('input[name="composeAiContextScope"]').forEach((input) => {
+                input.disabled = true;
+            });
+            return true;
+        }
+
+        function endComposeAiBusy() {
+            composeAiState.busy = false;
+            const panel = document.querySelector('#composeAiPanel .compose-ai-panel');
+            if (panel) panel.classList.remove('is-busy');
+            const busyHint = document.getElementById('composeAiBusyHint');
+            if (busyHint) {
+                busyHint.style.display = 'none';
+                busyHint.textContent = '处理中…';
+            }
+            COMPOSE_AI_ACTION_BUTTON_IDS.forEach((id) => {
+                restoreComposeAiButtonLabel(document.getElementById(id));
+            });
+            const analyzeBtn = document.getElementById('composeAiAnalyzeBtn');
+            if (analyzeBtn) analyzeBtn.disabled = false;
+            const customInput = document.getElementById('composeAiCustomInstruction');
+            if (customInput) customInput.disabled = false;
+            document.querySelectorAll('input[name="composeAiContextScope"]').forEach((input) => {
+                input.disabled = false;
+            });
+            setComposeAiActionEnabled(!!composeAiState.replyText);
         }
 
         async function prepareComposeAiPanel(mode) {
@@ -650,19 +725,22 @@
             }
             if (summaryEl) {
                 const missing = Array.isArray(analysis.missingFacts) && analysis.missingFacts.length
-                    ? `；缺事实：${analysis.missingFacts.join(', ')}`
+                    ? `\n缺事实：${analysis.missingFacts.join(', ')}`
                     : '';
-                summaryEl.textContent = `摘要：${analysis.summaryZh || '-'}${missing}`;
+                summaryEl.textContent = `${analysis.summaryZh || '-'}${missing}`;
             }
-            if (zhEl) zhEl.textContent = `中文对照：${analysis.replyTextZh || '-'}`;
+            if (zhEl) zhEl.textContent = analysis.replyTextZh || '-';
             if (textEl) textEl.textContent = analysis.replyText || '';
             const needsReview = composeAiNeedsReview(analysis);
+            const insertBlock = document.getElementById('composeAiInsertBlock');
+            if (insertBlock) insertBlock.style.display = analysis.replyText ? '' : 'none';
             if (reviewLabel) reviewLabel.style.display = needsReview ? '' : 'none';
             if (reviewed) reviewed.checked = false;
             setComposeAiActionEnabled(!!analysis.replyText);
         }
 
         async function analyzeComposeAiReply(forceRefresh = false) {
+            if (composeAiState.busy) return;
             if (!composeAiState.ready) {
                 showToast('请先在 /ai 启用并配置 AI', 'error');
                 return;
@@ -673,8 +751,7 @@
                 showToast('缺少发件账号或原邮件 ID', 'error');
                 return;
             }
-            const btn = document.getElementById('composeAiAnalyzeBtn');
-            if (btn) btn.disabled = true;
+            if (!beginComposeAiBusy('composeAiAnalyzeBtn', '生成中…')) return;
             try {
                 // Prefer the already-opened detail so AI does not depend on a second IMAP/Graph fetch.
                 const openedDetail = currentEmailDetail || composeQuotedDetail || null;
@@ -719,11 +796,12 @@
             } catch (error) {
                 showToast(error?.message || 'AI 生成失败', 'error');
             } finally {
-                if (btn) btn.disabled = false;
+                endComposeAiBusy();
             }
         }
 
         async function refineComposeAiReply(mode) {
+            if (composeAiState.busy) return;
             if (!composeAiState.replyText) {
                 showToast('请先生成建议', 'error');
                 return;
@@ -733,6 +811,19 @@
                 showToast('请填写自定义改写指令', 'error');
                 return;
             }
+            const modeBtnMap = {
+                shorter: 'composeAiShorterBtn',
+                politer: 'composeAiPoliterBtn',
+                regenerate: 'composeAiRegenBtn',
+                custom: 'composeAiCustomBtn',
+            };
+            const loadingTextMap = {
+                shorter: '改写中…',
+                politer: '改写中…',
+                regenerate: '重写中…',
+                custom: '改写中…',
+            };
+            if (!beginComposeAiBusy(modeBtnMap[mode] || 'composeAiCustomBtn', loadingTextMap[mode] || '改写中…')) return;
             try {
                 const response = await fetchWithTimeout('/api/ai/refine', {
                     method: 'POST',
@@ -772,10 +863,13 @@
                 showToast('改写完成', 'success');
             } catch (error) {
                 showToast(error?.message || '改写失败', 'error');
+            } finally {
+                endComposeAiBusy();
             }
         }
 
         function insertComposeAiReply() {
+            if (composeAiState.busy) return;
             const text = String(composeAiState.replyText || '').trim();
             if (!text) {
                 showToast('没有可填入的草稿', 'error');
@@ -799,5 +893,13 @@
                 editor.innerHTML = `${escaped}${existing ? `<br><br>${existing}` : ''}`;
             }
             editor.focus();
+            const insertBtn = document.getElementById('composeAiInsertBtn');
+            if (insertBtn) {
+                if (!insertBtn.dataset.defaultLabel) {
+                    insertBtn.dataset.defaultLabel = '填入正文';
+                }
+                insertBtn.textContent = '已填入';
+                setTimeout(() => restoreComposeAiButtonLabel(insertBtn), 1200);
+            }
             showToast('已填入正文，请确认后发送', 'success');
         }
