@@ -9,6 +9,7 @@
 
         let composeSelectedFiles = [];
         let composeQuotedDetail = null;
+        let composeSending = false;
         let composeAiState = {
             ready: false,
             busy: false,
@@ -26,8 +27,33 @@
             'composeAiCustomBtn',
             'composeAiInsertBtn',
         ];
+        const COMPOSE_SEND_TIMEOUT_MS = 120000;
         const COMPOSE_QUOTE_LANGUAGE_STORAGE_KEY = 'compose_quote_language';
         const COMPOSE_PACIFIC_TIME_ZONE = 'America/Los_Angeles';
+
+        function setComposeSendStatus(message = '', { busy = false } = {}) {
+            const statusEl = document.getElementById('composeSendStatus');
+            const sendBtn = document.getElementById('composeSendBtn');
+            const cancelBtn = document.getElementById('composeCancelBtn');
+            if (statusEl) {
+                const text = String(message || '').trim();
+                statusEl.textContent = text;
+                statusEl.style.display = text ? '' : 'none';
+            }
+            if (sendBtn) {
+                if (!sendBtn.dataset.defaultLabel) {
+                    sendBtn.dataset.defaultLabel = sendBtn.textContent || '发送';
+                }
+                sendBtn.disabled = !!busy;
+                sendBtn.setAttribute('aria-busy', busy ? 'true' : 'false');
+                sendBtn.textContent = busy
+                    ? '发送中…'
+                    : (sendBtn.dataset.defaultLabel || '发送');
+            }
+            if (cancelBtn) {
+                cancelBtn.disabled = !!busy;
+            }
+        }
 
         function extractComposeAddress(value) {
             if (!value) return '';
@@ -329,6 +355,11 @@
         }
 
         function hideComposeModal() {
+            if (composeSending) {
+                showToast('邮件发送中，请稍候', 'info');
+                return;
+            }
+            setComposeSendStatus('');
             setModalVisible('composeEmailModal', false);
         }
 
@@ -346,6 +377,7 @@
             document.getElementById('composeSubject').value = '';
             const languageGroup = document.getElementById('composeQuoteLanguageGroup');
             if (languageGroup) languageGroup.style.display = 'none';
+            setComposeSendStatus('');
             const editor = document.getElementById('composeBodyEditor');
             if (editor) editor.innerHTML = '';
             const fileInput = document.getElementById('composeAttachments');
@@ -452,6 +484,11 @@
         }
 
         async function submitComposeEmail() {
+            if (composeSending) {
+                showToast('正在发送中，请稍候', 'info');
+                return;
+            }
+
             const mode = document.getElementById('composeMode')?.value || 'new';
             const email = document.getElementById('composeFromEmail')?.value?.trim() || '';
             if (!email || isComposeAggregatedAccountKey(email)) {
@@ -475,8 +512,9 @@
                 return;
             }
 
-            const sendBtn = document.getElementById('composeSendBtn');
-            if (sendBtn) sendBtn.disabled = true;
+            composeSending = true;
+            setComposeSendStatus('正在发送，请稍候…', { busy: true });
+            showToast('正在发送邮件…', 'info');
 
             try {
                 let url = '/api/emails/send';
@@ -499,7 +537,8 @@
                     composeSelectedFiles.forEach(file => formData.append('attachments', file, file.name));
                     response = await fetchWithTimeout(url, {
                         method: 'POST',
-                        body: formData
+                        body: formData,
+                        timeoutMs: COMPOSE_SEND_TIMEOUT_MS
                     });
                 } else {
                     response = await fetchWithTimeout(url, {
@@ -516,27 +555,50 @@
                             method,
                             message_id: messageId,
                             reply_all: mode === 'reply_all'
-                        })
+                        }),
+                        timeoutMs: COMPOSE_SEND_TIMEOUT_MS
                     });
                 }
 
                 const data = await response.json().catch(() => ({}));
                 if (!response.ok || !data.success) {
                     const code = data.code || data?.details?.code || '';
+                    const errorText = (typeof data.error === 'string' && data.error)
+                        || data?.error?.message
+                        || data?.details?.message
+                        || '发送失败';
                     if (code === 'GRAPH_MAIL_SEND_SCOPE_REQUIRED') {
                         showToast('当前账号缺少 Mail.Send 权限，请重新授权后再发信', 'error');
+                    } else if (data && typeof data === 'object') {
+                        handleApiError({ ...data, success: false, error: data.error || errorText }, errorText);
                     } else {
-                        handleApiError(data, data.error || '发送失败');
+                        showToast(errorText, 'error');
                     }
+                    setComposeSendStatus(errorText, { busy: false });
                     return;
                 }
 
                 showToast(data.message || '邮件已发送', 'success');
+                composeSending = false;
+                setComposeSendStatus('');
                 hideComposeModal();
             } catch (error) {
-                showToast(error?.message || '发送失败', 'error');
+                const timedOut = error?.name === 'AbortError' || /timeout|abort/i.test(String(error?.message || ''));
+                const message = timedOut
+                    ? '发送超时，请检查网络后重试'
+                    : (error?.message || '发送失败');
+                showToast(message, 'error');
+                setComposeSendStatus(message, { busy: false });
             } finally {
-                if (sendBtn) sendBtn.disabled = false;
+                composeSending = false;
+                const sendBtn = document.getElementById('composeSendBtn');
+                if (sendBtn) {
+                    sendBtn.disabled = false;
+                    sendBtn.setAttribute('aria-busy', 'false');
+                    sendBtn.textContent = sendBtn.dataset.defaultLabel || '发送';
+                }
+                const cancelBtn = document.getElementById('composeCancelBtn');
+                if (cancelBtn) cancelBtn.disabled = false;
             }
         }
 

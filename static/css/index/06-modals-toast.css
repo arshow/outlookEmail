@@ -2506,7 +2506,7 @@
             color: #ffffff;
             border-radius: 8px;
             font-size: 14px;
-            z-index: 2000;
+            z-index: 3000;
             opacity: 0;
             transition: all 0.3s;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);

@@ -878,7 +878,8 @@
                 </aside>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" type="button" onclick="hideComposeModal()">取消</button>
+                <span class="form-hint" id="composeSendStatus" style="margin-right: auto; display: none;" aria-live="polite"></span>
+                <button class="btn btn-secondary" type="button" id="composeCancelBtn" onclick="hideComposeModal()">取消</button>
                 <button class="btn btn-primary" type="button" id="composeSendBtn" onclick="submitComposeEmail()">发送</button>
             </div>
         </div>
