@@ -16,9 +16,12 @@ if ROOT_DIR not in sys.path:
 from outlook_web.translate_mymemory import (
     TranslateError,
     chunk_text,
+    looks_mostly_chinese,
     prepare_translate_fields,
+    resolve_source_lang,
     translate_email_fields_to_zh,
     translate_to_zh,
+    _langpair,
 )
 
 web_outlook_app = importlib.import_module('web_outlook_app')
@@ -46,6 +49,41 @@ class ChunkTextTests(unittest.TestCase):
 
 
 class TranslateMyMemoryTests(unittest.TestCase):
+    def test_resolve_autodetect_to_en(self):
+        self.assertEqual(resolve_source_lang('autodetect'), 'en')
+        self.assertEqual(_langpair('autodetect'), 'en|zh-CN')
+
+    def test_looks_mostly_chinese(self):
+        self.assertTrue(looks_mostly_chinese('无主题'))
+        self.assertFalse(looks_mostly_chinese('Be honest can I ask you something plz?'))
+
+    def test_skip_chinese_without_api_call(self):
+        session = MagicMock()
+        result = translate_to_zh('这是中文邮件正文', session=session)
+        self.assertTrue(result['skipped'])
+        self.assertEqual(result['translation'], '这是中文邮件正文')
+        session.get.assert_not_called()
+
+    def test_skip_placeholder_subject(self):
+        session = MagicMock()
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {
+            'responseStatus': 200,
+            'responseData': {'translatedText': '老实说我能问你一件事吗？'},
+        }
+        session.get.return_value = response
+        result = translate_email_fields_to_zh(
+            subject='无主题',
+            body='Be honest can I ask you something plz?',
+            source_lang='autodetect',
+            session=session,
+        )
+        self.assertEqual(result['subject_translation'], '')
+        self.assertEqual(result['body_translation'], '老实说我能问你一件事吗？')
+        self.assertEqual(session.get.call_count, 1)
+        self.assertEqual(session.get.call_args.kwargs['params']['langpair'], 'en|zh-CN')
+
     def test_prepare_fields_requires_content(self):
         with self.assertRaises(TranslateError):
             prepare_translate_fields(text='', html='', subject='', html_to_plain=lambda x: x)

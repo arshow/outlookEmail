@@ -785,19 +785,20 @@
                             <input type="text" class="form-input" id="composeSubject" placeholder="邮件主题">
                         </div>
                     </div>
-                    <div class="form-group" id="composeQuoteLanguageGroup" style="display: none;">
-                        <label class="form-label">引用语言</label>
-                        <div class="provider-tabs" id="composeQuoteLanguageTabs" style="margin-bottom: 8px;">
-                            <label class="provider-tab-item">
-                                <input type="radio" name="composeQuoteLanguage" value="zh" onchange="onComposeQuoteLanguageChange()">
-                                <span class="provider-tab-label" style="padding: 10px 8px;">中文</span>
-                            </label>
-                            <label class="provider-tab-item">
-                                <input type="radio" name="composeQuoteLanguage" value="en" checked onchange="onComposeQuoteLanguageChange()">
-                                <span class="provider-tab-label" style="padding: 10px 8px;">English</span>
-                            </label>
+                    <div class="form-group compose-quote-language-group" id="composeQuoteLanguageGroup" style="display: none;" title="中文保持现有引用格式；English 使用英文引用头，时间按太平洋时区显示">
+                        <div class="compose-quote-language-row">
+                            <label class="form-label">引用语言</label>
+                            <div class="provider-tabs" id="composeQuoteLanguageTabs">
+                                <label class="provider-tab-item">
+                                    <input type="radio" name="composeQuoteLanguage" value="zh" onchange="onComposeQuoteLanguageChange()">
+                                    <span class="provider-tab-label">中文</span>
+                                </label>
+                                <label class="provider-tab-item">
+                                    <input type="radio" name="composeQuoteLanguage" value="en" checked onchange="onComposeQuoteLanguageChange()">
+                                    <span class="provider-tab-label">English</span>
+                                </label>
+                            </div>
                         </div>
-                        <div class="form-hint">中文保持现有引用格式；English 使用英文引用头，时间按太平洋时区显示</div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">正文</label>
@@ -821,31 +822,35 @@
                         <a class="btn btn-sm btn-secondary" href="/ai" target="_blank" rel="noopener">管理</a>
                     </div>
                     <div class="compose-ai-panel">
-                        <div class="compose-ai-scope">
-                            <label class="provider-tab-item">
-                                <input type="radio" name="composeAiContextScope" value="current" checked>
-                                <span class="provider-tab-label" style="padding: 8px 10px;">仅本封邮件</span>
-                            </label>
-                            <label class="provider-tab-item">
-                                <input type="radio" name="composeAiContextScope" value="contact_local">
-                                <span class="provider-tab-label" style="padding: 8px 10px;">该联系人本地历史</span>
-                            </label>
-                        </div>
-                        <div class="form-hint" id="composeAiScopeHint">仅使用本地内容，不二次远程拉信。选择「该联系人本地历史」时附带本地已保留的全部往来（正文会截断）。</div>
-                        <div class="compose-ai-actions">
-                            <button type="button" class="btn btn-sm btn-primary" id="composeAiAnalyzeBtn" onclick="analyzeComposeAiReply()" data-default-label="生成建议">生成建议</button>
-                            <button type="button" class="btn btn-sm btn-secondary" id="composeAiShorterBtn" onclick="refineComposeAiReply('shorter')" disabled data-default-label="更短">更短</button>
-                            <button type="button" class="btn btn-sm btn-secondary" id="composeAiPoliterBtn" onclick="refineComposeAiReply('politer')" disabled data-default-label="更礼貌">更礼貌</button>
-                            <button type="button" class="btn btn-sm btn-secondary" id="composeAiRegenBtn" onclick="refineComposeAiReply('regenerate')" disabled data-default-label="重写">重写</button>
-                        </div>
-                        <div class="compose-ai-custom-row">
-                            <input type="text" class="form-input" id="composeAiCustomInstruction" placeholder="自定义改写指令（可选）">
-                            <button type="button" class="btn btn-sm btn-secondary" id="composeAiCustomBtn" onclick="refineComposeAiReply('custom')" disabled data-default-label="按指令改写">按指令改写</button>
+                        <div class="compose-ai-controls">
+                            <div class="compose-ai-scope provider-tabs">
+                                <label class="provider-tab-item">
+                                    <input type="radio" name="composeAiContextScope" value="current" checked>
+                                    <span class="provider-tab-label">仅本封</span>
+                                </label>
+                                <label class="provider-tab-item">
+                                    <input type="radio" name="composeAiContextScope" value="contact_local">
+                                    <span class="provider-tab-label">本地历史</span>
+                                </label>
+                            </div>
+                            <div class="form-hint" id="composeAiScopeHint">仅本地内容，不二次远程拉信；历史模式附带该联系人本地全部往来。</div>
+                            <button type="button" class="btn btn-sm btn-primary compose-ai-generate-btn" id="composeAiAnalyzeBtn" onclick="analyzeComposeAiReply()" data-default-label="生成建议">生成建议</button>
+                            <div class="compose-ai-refine-row">
+                                <button type="button" class="btn btn-sm btn-secondary" id="composeAiShorterBtn" onclick="refineComposeAiReply('shorter')" disabled data-default-label="更短">更短</button>
+                                <button type="button" class="btn btn-sm btn-secondary" id="composeAiPoliterBtn" onclick="refineComposeAiReply('politer')" disabled data-default-label="更礼貌">更礼貌</button>
+                                <button type="button" class="btn btn-sm btn-secondary" id="composeAiRegenBtn" onclick="refineComposeAiReply('regenerate')" disabled data-default-label="重写">重写</button>
+                            </div>
+                            <div class="compose-ai-custom-row">
+                                <input type="text" class="form-input" id="composeAiCustomInstruction" placeholder="自定义改写指令（可选）">
+                                <button type="button" class="btn btn-sm btn-secondary" id="composeAiCustomBtn" onclick="refineComposeAiReply('custom')" disabled data-default-label="改写">改写</button>
+                            </div>
                         </div>
                         <div class="compose-ai-result" id="composeAiResult" style="display: none;">
                             <section class="compose-ai-result-section compose-ai-result-section--meta">
-                                <div class="compose-ai-section-label">分析状态</div>
-                                <div class="compose-ai-meta" id="composeAiMeta"></div>
+                                <div class="compose-ai-meta-row">
+                                    <span class="compose-ai-section-label">分析状态</span>
+                                    <div class="compose-ai-meta" id="composeAiMeta"></div>
+                                </div>
                             </section>
                             <section class="compose-ai-result-section compose-ai-result-section--info">
                                 <div class="compose-ai-section-label">摘要</div>
@@ -853,7 +858,7 @@
                             </section>
                             <section class="compose-ai-result-section compose-ai-result-section--draft">
                                 <div class="compose-ai-section-label">建议回复正文</div>
-                                <pre class="compose-ai-text" id="composeAiReplyText"></pre>
+                                <div class="compose-ai-text" id="composeAiReplyText"></div>
                             </section>
                             <section class="compose-ai-result-section compose-ai-result-section--zh">
                                 <div class="compose-ai-section-label">中文对照</div>

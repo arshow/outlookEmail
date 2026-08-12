@@ -1009,7 +1009,7 @@ def api_translate_email():
     text = str(data.get('text') or '')
     html = str(data.get('html') or '')
     subject = str(data.get('subject') or '')
-    source_lang = str(data.get('source_lang') or 'autodetect').strip() or 'autodetect'
+    source_lang = str(data.get('source_lang') or 'en').strip() or 'en'
 
     try:
         fields = prepare_translate_fields(

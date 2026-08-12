@@ -14,7 +14,7 @@ from outlook_web.ai.db import (
 from outlook_web.ai.knowledge import parse_keywords
 from outlook_web.ai.llm import test_provider_connection
 from outlook_web.ai.rules import match_rules, parse_forbidden_phrases, preclassify
-from outlook_web.ai.service import analyze_email, refine_reply
+from outlook_web.ai.service import analyze_email, refine_reply, translate_email_to_zh
 from outlook_web.ai.settings import (
     get_ai_reply_settings,
     public_ai_reply_settings,
@@ -600,6 +600,36 @@ def api_ai_refine():
             target_language=str(data.get('target_language') or ''),
             db=get_db(),
             run_id=int(data['run_id']) if data.get('run_id') else None,
+        )
+        return jsonify(result)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+
+@app.route('/api/ai/translate', methods=['POST'])
+@login_required
+def api_ai_translate_email():
+    """Translate inbound email subject/body using configured /ai provider."""
+    _ensure_ai_tables()
+    data = request.get_json(silent=True) or {}
+    text = str(data.get('text') or '')
+    html = str(data.get('html') or '')
+    subject = str(data.get('subject') or '')
+
+    plain_body = text.strip()
+    if not plain_body and html:
+        plain_body = html_to_plain_text(html).strip()
+    if not plain_body and not subject.strip():
+        return jsonify({'success': False, 'error': 'text 与 html 至少提供一项有效正文'}), 400
+
+    settings = _load_ai_settings()
+    try:
+        result = translate_email_to_zh(
+            settings=settings,
+            subject=subject,
+            body=plain_body,
         )
         return jsonify(result)
     except ValueError as exc:

@@ -34,6 +34,7 @@ def build_analysis_prompt(
         f'Example JSON output: {json.dumps(ANALYSIS_JSON_EXAMPLE, ensure_ascii=False)}',
         'The operator UI is Chinese: summaryZh, riskReasons, internalAdviceZh and replyTextZh must be Simplified Chinese.',
         'replyText must use the correspondent language and must never claim unverified refunds, commitments, delivery dates, account changes, or payment outcomes.',
+        'replyText and replyTextZh must be plain email body text using real newlines; do not escape newlines as \\n, and do not wrap the whole reply in HTML unless the customer context clearly requires HTML formatting.',
         'replyTextZh must be a faithful Simplified Chinese translation of replyText for the operator; if replyText is already Chinese, replyTextZh may match it.',
         'If required facts are missing, acknowledge the request and say you will check before confirming.',
         'Distinguish the current email that needs a reply from historical reference messages. Do not treat historical unverified promises as confirmed facts.',
@@ -88,4 +89,17 @@ def build_translate_zh_prompt(reply_text: str) -> str:
         '只输出 JSON 对象，格式严格为 {"replyTextZh":"中文译文"}。',
         '不要添加未经验证的承诺或新事实。',
         f'Text:\n{reply_text}',
+    ])
+
+
+def build_translate_email_zh_prompt(*, subject: str = '', body: str = '') -> str:
+    return '\n'.join([
+        '将下面收到的邮件翻译成简体中文，供内部人员快速阅读。',
+        '只输出 JSON 对象，格式严格为 {"subjectZh":"主题中文","bodyZh":"正文中文"}。',
+        '忠实翻译，不要添加原文没有的信息、承诺或评论。',
+        '若某字段为空，对应译文也输出空字符串。',
+        '若原文已是中文，可原样返回。',
+        'bodyZh 使用真实换行，不要转义为 \\n，不要包一层 HTML。',
+        f'Subject:\n{subject or ""}',
+        f'Body:\n{body or ""}',
     ])

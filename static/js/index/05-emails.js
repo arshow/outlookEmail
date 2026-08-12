@@ -2484,7 +2484,8 @@
             `;
 
             emailTranslateViewMode = 'original';
-            emailTranslateInFlight = false;
+            emailTranslateActiveProvider = '';
+            emailTranslateInFlightProvider = '';
             updateTranslateEmailButtonLabel();
 
             // 如果是 HTML 内容，设置 iframe 内容
@@ -2684,7 +2685,8 @@
 
         const emailTranslateCache = {};
         let emailTranslateViewMode = 'original';
-        let emailTranslateInFlight = false;
+        let emailTranslateActiveProvider = '';
+        let emailTranslateInFlightProvider = '';
 
         function getEmailTranslateCacheKey(email = currentEmailDetail) {
             if (!email) return '';
@@ -2694,23 +2696,67 @@
             return `${account}|${messageId}`;
         }
 
+        function getEmailTranslateBucket(cacheKey) {
+            if (!cacheKey) return null;
+            if (!emailTranslateCache[cacheKey]) {
+                emailTranslateCache[cacheKey] = {};
+            }
+            return emailTranslateCache[cacheKey];
+        }
+
+        function providerDisplayName(provider, model) {
+            if (provider === 'mymemory') return 'MyMemory 免费翻译';
+            if (provider === 'ai' || provider === 'gemini' || provider === 'deepseek') {
+                const name = provider === 'ai' ? 'AI' : String(provider).toUpperCase();
+                return model ? `AI 翻译（${name} / ${model}）` : 'AI 翻译';
+            }
+            return provider ? `翻译（${provider}）` : '翻译';
+        }
+
         function updateTranslateEmailButtonLabel() {
-            const textEl = document.getElementById('translateEmailBtnText');
-            const btn = document.getElementById('translateEmailBtn');
-            if (!textEl || !btn) return;
-            if (emailTranslateInFlight) {
-                textEl.textContent = '翻译中…';
-                btn.disabled = true;
-                return;
-            }
-            btn.disabled = false;
+            const configs = [
+                {
+                    provider: 'mymemory',
+                    btnId: 'translateEmailBtn',
+                    textId: 'translateEmailBtnText',
+                    idle: '免费翻译',
+                    busy: '翻译中…',
+                },
+                {
+                    provider: 'ai',
+                    btnId: 'aiTranslateEmailBtn',
+                    textId: 'aiTranslateEmailBtnText',
+                    idle: 'AI翻译',
+                    busy: 'AI翻译中…',
+                },
+            ];
             const cacheKey = getEmailTranslateCacheKey();
-            const hasCache = !!(cacheKey && emailTranslateCache[cacheKey]);
-            if (!hasCache) {
-                textEl.textContent = '翻译成中文';
-                return;
-            }
-            textEl.textContent = emailTranslateViewMode === 'translation' ? '显示原文' : '显示译文';
+            const bucket = cacheKey ? emailTranslateCache[cacheKey] : null;
+
+            configs.forEach((cfg) => {
+                const textEl = document.getElementById(cfg.textId);
+                const btn = document.getElementById(cfg.btnId);
+                if (!textEl || !btn) return;
+                if (emailTranslateInFlightProvider) {
+                    btn.disabled = true;
+                    textEl.textContent = emailTranslateInFlightProvider === cfg.provider ? cfg.busy : cfg.idle;
+                    return;
+                }
+                btn.disabled = false;
+                const hasCache = !!(bucket && bucket[cfg.provider]);
+                if (!hasCache) {
+                    textEl.textContent = cfg.idle;
+                    return;
+                }
+                if (
+                    emailTranslateViewMode === 'translation'
+                    && emailTranslateActiveProvider === cfg.provider
+                ) {
+                    textEl.textContent = '显示原文';
+                    return;
+                }
+                textEl.textContent = '显示译文';
+            });
         }
 
         function setEmailOriginalBodyVisible(visible) {
@@ -2735,7 +2781,7 @@
                 </div>
                 <div class="email-translate-panel__subject" id="emailTranslateSubject"></div>
                 <div class="email-translate-panel__body" id="emailTranslateBody"></div>
-                <div class="email-translate-panel__foot">MyMemory 免费翻译</div>
+                <div class="email-translate-panel__foot"></div>
             `;
             const firstChild = detailBody.firstElementChild;
             if (firstChild) {
@@ -2767,7 +2813,7 @@
             updateTranslateEmailButtonLabel();
         }
 
-        function renderEmailTranslatePanel(payload) {
+        function renderEmailTranslatePanel(payload, providerKey) {
             const panel = ensureEmailTranslatePanel();
             if (!panel) return;
             const subjectEl = document.getElementById('emailTranslateSubject');
@@ -2788,29 +2834,63 @@
             }
             const foot = panel.querySelector('.email-translate-panel__foot');
             if (foot) {
-                const notes = ['MyMemory 免费翻译'];
+                const notes = [providerDisplayName(payload?.provider || providerKey, payload?.model)];
                 if (payload?.truncated) notes.push('原文过长已截断');
                 foot.textContent = notes.join(' · ');
             }
+            emailTranslateActiveProvider = providerKey;
             emailTranslateViewMode = 'translation';
             applyEmailTranslateViewMode();
         }
 
         function resetEmailTranslateUi() {
             emailTranslateViewMode = 'original';
-            emailTranslateInFlight = false;
+            emailTranslateActiveProvider = '';
+            emailTranslateInFlightProvider = '';
             const panel = document.querySelector('#emailDetail .email-translate-panel');
             if (panel) panel.remove();
             setEmailOriginalBodyVisible(true);
             updateTranslateEmailButtonLabel();
         }
 
-        async function toggleEmailTranslation() {
+        function buildEmailTranslateRequestPayload() {
+            const body = String(currentEmailDetail?.body || '');
+            const isHtml = currentEmailDetail?.body_type === 'html'
+                || (body && (body.includes('<html') || body.includes('<div') || body.includes('<p>')));
+            return {
+                subject: String(currentEmailDetail?.subject || '').trim(),
+                html: isHtml ? body : '',
+                text: isHtml ? '' : body,
+                source_lang: 'en',
+            };
+        }
+
+        async function ensureAiTranslateReady() {
+            try {
+                const response = await fetchWithTimeout('/api/ai/status');
+                const data = await response.json().catch(() => ({}));
+                if (!data.enabled) {
+                    showToast('请先在 /ai 启用 AI', 'error');
+                    return false;
+                }
+                if (!data.ready) {
+                    showToast('请先在 /ai 配置当前提供商 API Key', 'error');
+                    return false;
+                }
+                return true;
+            } catch (error) {
+                showToast(error?.message || '无法读取 AI 状态', 'error');
+                return false;
+            }
+        }
+
+        async function toggleEmailTranslation(provider = 'mymemory') {
+            const providerKey = provider === 'ai' ? 'ai' : 'mymemory';
             if (!currentEmailDetail) {
                 showToast('请先选择一封邮件', 'warning');
                 return;
             }
-            if (emailTranslateInFlight) return;
+            if (emailTranslateInFlightProvider) return;
 
             const cacheKey = getEmailTranslateCacheKey(currentEmailDetail);
             if (!cacheKey) {
@@ -2818,39 +2898,41 @@
                 return;
             }
 
-            const cached = emailTranslateCache[cacheKey];
+            const bucket = getEmailTranslateBucket(cacheKey);
+            const cached = bucket[providerKey];
             if (cached) {
-                if (emailTranslateViewMode === 'translation') {
+                if (
+                    emailTranslateViewMode === 'translation'
+                    && emailTranslateActiveProvider === providerKey
+                ) {
                     emailTranslateViewMode = 'original';
                     applyEmailTranslateViewMode();
                 } else {
-                    renderEmailTranslatePanel(cached);
+                    renderEmailTranslatePanel(cached, providerKey);
                 }
                 return;
             }
 
-            const body = String(currentEmailDetail.body || '');
-            const isHtml = currentEmailDetail.body_type === 'html'
-                || (body && (body.includes('<html') || body.includes('<div') || body.includes('<p>')));
-            const payload = {
-                subject: String(currentEmailDetail.subject || '').trim(),
-                html: isHtml ? body : '',
-                text: isHtml ? '' : body,
-                source_lang: 'autodetect',
-            };
+            if (providerKey === 'ai') {
+                const ready = await ensureAiTranslateReady();
+                if (!ready) return;
+            }
+
+            const payload = buildEmailTranslateRequestPayload();
             if (!payload.subject && !payload.html && !payload.text) {
                 showToast('当前邮件没有可翻译内容', 'warning');
                 return;
             }
 
-            emailTranslateInFlight = true;
+            emailTranslateInFlightProvider = providerKey;
             updateTranslateEmailButtonLabel();
+            const endpoint = providerKey === 'ai' ? '/api/ai/translate' : '/api/emails/translate';
             try {
-                const response = await fetchWithTimeout('/api/emails/translate', {
+                const response = await fetchWithTimeout(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
-                    timeoutMs: 60000,
+                    timeoutMs: providerKey === 'ai' ? 90000 : 60000,
                     timeoutMessage: '翻译超时，请稍后重试',
                 });
                 const data = await response.json().catch(() => ({}));
@@ -2858,19 +2940,20 @@
                     handleApiError(data, data.error || '翻译失败');
                     return;
                 }
-                emailTranslateCache[cacheKey] = {
+                bucket[providerKey] = {
                     translation: data.translation || '',
                     subject_translation: data.subject_translation || '',
                     body_translation: data.body_translation || '',
-                    provider: data.provider || 'mymemory',
+                    provider: data.provider || providerKey,
+                    model: data.model || '',
                     truncated: !!data.truncated,
                 };
-                renderEmailTranslatePanel(emailTranslateCache[cacheKey]);
+                renderEmailTranslatePanel(bucket[providerKey], providerKey);
                 showToast(data.truncated ? '已翻译（原文过长已截断）' : '翻译完成', 'success');
             } catch (error) {
                 showToast(error?.message || '翻译失败', 'error');
             } finally {
-                emailTranslateInFlight = false;
+                emailTranslateInFlightProvider = '';
                 updateTranslateEmailButtonLabel();
             }
         }

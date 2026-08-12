@@ -690,14 +690,45 @@
                 || (Array.isArray(analysis.missingFacts) && analysis.missingFacts.length > 0);
         }
 
+        function normalizeComposeAiText(value) {
+            let text = String(value || '');
+            // Models sometimes return literal "\n" sequences instead of real newlines.
+            text = text.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+            text = text.replace(/\r\n/g, '\n');
+            return text.trim();
+        }
+
+        function composeAiLooksLikeHtml(value) {
+            return /<\/?[a-z][\s\S]*>/i.test(String(value || ''));
+        }
+
+        function sanitizeComposeAiHtml(html) {
+            if (typeof DOMPurify !== 'undefined' && DOMPurify.sanitize) {
+                return DOMPurify.sanitize(html, {
+                    USE_PROFILES: { html: true },
+                    ADD_ATTR: ['target'],
+                });
+            }
+            return String(html || '');
+        }
+
+        function formatComposeAiReplyHtml(value) {
+            const text = normalizeComposeAiText(value);
+            if (!text) return '';
+            if (composeAiLooksLikeHtml(text)) {
+                return sanitizeComposeAiHtml(text);
+            }
+            return escapeHtml(text).replace(/\n/g, '<br>');
+        }
+
         function renderComposeAiResult(payload) {
             const analysis = payload.analysis || {};
             const meta = payload.meta || {};
             composeAiState.runId = payload.run_id || null;
             composeAiState.analysis = analysis;
             composeAiState.meta = meta;
-            composeAiState.replyText = analysis.replyText || '';
-            composeAiState.replyTextZh = analysis.replyTextZh || '';
+            composeAiState.replyText = normalizeComposeAiText(analysis.replyText || '');
+            composeAiState.replyTextZh = normalizeComposeAiText(analysis.replyTextZh || '');
 
             const result = document.getElementById('composeAiResult');
             const metaEl = document.getElementById('composeAiMeta');
@@ -710,7 +741,7 @@
             if (result) result.style.display = '';
             const risk = String(analysis.riskLevel || 'yellow');
             const historyNote = meta.context_scope === 'contact_local'
-                ? ` · 已纳入本地历史 ${meta.history_count || 0} 封`
+                ? ` · 本地历史 ${meta.history_count || 0} 封`
                 : '';
             const degradeNote = meta.degraded && meta.degrade_reason
                 ? ` · ${meta.degrade_reason}`
@@ -718,19 +749,20 @@
             if (metaEl) {
                 metaEl.innerHTML = (
                     `<span class="compose-ai-risk ${escapeHtml(risk)}">${escapeHtml(risk)}</span>` +
-                    `${escapeHtml(payload.provider || '')}/${escapeHtml(payload.model || '')}` +
+                    `<span class="compose-ai-model">${escapeHtml(payload.provider || '')}/${escapeHtml(payload.model || '')}</span>` +
                     `${escapeHtml(historyNote)}${escapeHtml(degradeNote)}` +
                     (payload.cached ? ' · 缓存' : '')
                 );
+                metaEl.title = metaEl.textContent || '';
             }
             if (summaryEl) {
                 const missing = Array.isArray(analysis.missingFacts) && analysis.missingFacts.length
                     ? `\n缺事实：${analysis.missingFacts.join(', ')}`
                     : '';
-                summaryEl.textContent = `${analysis.summaryZh || '-'}${missing}`;
+                summaryEl.textContent = `${normalizeComposeAiText(analysis.summaryZh || '-')}${missing}`;
             }
-            if (zhEl) zhEl.textContent = analysis.replyTextZh || '-';
-            if (textEl) textEl.textContent = analysis.replyText || '';
+            if (zhEl) zhEl.innerHTML = formatComposeAiReplyHtml(composeAiState.replyTextZh || '-');
+            if (textEl) textEl.innerHTML = formatComposeAiReplyHtml(composeAiState.replyText || '');
             const needsReview = composeAiNeedsReview(analysis);
             const insertBlock = document.getElementById('composeAiInsertBlock');
             if (insertBlock) insertBlock.style.display = analysis.replyText ? '' : 'none';
@@ -870,7 +902,7 @@
 
         function insertComposeAiReply() {
             if (composeAiState.busy) return;
-            const text = String(composeAiState.replyText || '').trim();
+            const text = normalizeComposeAiText(composeAiState.replyText || '');
             if (!text) {
                 showToast('没有可填入的草稿', 'error');
                 return;
@@ -884,13 +916,14 @@
             }
             const editor = document.getElementById('composeBodyEditor');
             if (!editor) return;
-            const escaped = escapeHtml(text).replace(/\n/g, '<br>');
+            // Preserve HTML drafts; convert plain text newlines to <br>.
+            const draftHtml = formatComposeAiReplyHtml(text);
             const existing = editor.innerHTML || '';
             // Keep quoted original below the AI draft when present.
-            if (existing.includes('-----Original Message-----') || existing.includes('---------- Forwarded message ---------')) {
-                editor.innerHTML = `${escaped}<br><br>${existing}`;
+            if (existing.includes('-----Original Message-----') || existing.includes('---------- Forwarded message ---------') || existing.includes('原始邮件')) {
+                editor.innerHTML = `${draftHtml}<br><br>${existing}`;
             } else {
-                editor.innerHTML = `${escaped}${existing ? `<br><br>${existing}` : ''}`;
+                editor.innerHTML = `${draftHtml}${existing ? `<br><br>${existing}` : ''}`;
             }
             editor.focus();
             const insertBtn = document.getElementById('composeAiInsertBtn');

@@ -18,7 +18,12 @@ from outlook_web.ai.context import build_analysis_context, context_haystack
 from outlook_web.ai.db import get_knowledge_revision, list_knowledge_entries, list_published_rules
 from outlook_web.ai.knowledge import match_knowledge_entries
 from outlook_web.ai.llm import call_structured_model
-from outlook_web.ai.prompts import build_analysis_prompt, build_refine_prompt, build_translate_zh_prompt
+from outlook_web.ai.prompts import (
+    build_analysis_prompt,
+    build_refine_prompt,
+    build_translate_email_zh_prompt,
+    build_translate_zh_prompt,
+)
 from outlook_web.ai.rules import apply_output_guards, match_rules
 from outlook_web.ai.schema import normalize_analysis, normalize_refined_reply, parse_json_text
 from outlook_web.ai.settings import resolve_runtime_credentials
@@ -54,6 +59,100 @@ def _translate_reply_zh(credentials: Dict[str, Any], reply_text: str) -> str:
             if isinstance(value, str) and value.strip():
                 return value.strip()
     raise ValueError(f"{credentials['provider']} 返回了空的中文翻译")
+
+
+EMAIL_TRANSLATE_MAX_CHARS = 8000
+
+
+def translate_email_to_zh(
+    *,
+    settings: Dict[str, Any],
+    subject: str = '',
+    body: str = '',
+) -> Dict[str, Any]:
+    """Translate inbound email subject/body to Simplified Chinese via configured AI."""
+    if not settings.get('enabled'):
+        raise ValueError('AI 智能回复未启用，请先在 /ai 配置并开启')
+
+    subject_text = str(subject or '').strip()
+    body_text = str(body or '').strip()
+    if subject_text in {'无主题', '(无主题)', 'No Subject', 'no subject'}:
+        subject_text = ''
+    if not subject_text and not body_text:
+        raise ValueError('没有可翻译的文本')
+
+    truncated = False
+    remaining = EMAIL_TRANSLATE_MAX_CHARS
+    subject_piece = ''
+    body_piece = ''
+    if subject_text:
+        subject_piece = subject_text[:remaining]
+        if len(subject_text) > remaining:
+            truncated = True
+        remaining = max(0, remaining - len(subject_piece))
+    if body_text:
+        if remaining <= 0:
+            truncated = True
+        else:
+            body_piece = body_text[:remaining]
+            if len(body_text) > remaining:
+                truncated = True
+
+    credentials = resolve_runtime_credentials(settings)
+    prompt = build_translate_email_zh_prompt(subject=subject_piece, body=body_piece)
+    raw_text = call_structured_model(
+        provider=credentials['provider'],
+        api_key=credentials['api_key'],
+        model=credentials['model'],
+        prompt=prompt,
+        temperature=0.1,
+        max_output_tokens=2400,
+        response_schema={
+            'type': 'object',
+            'required': ['subjectZh', 'bodyZh'],
+            'properties': {
+                'subjectZh': {'type': 'string'},
+                'bodyZh': {'type': 'string'},
+            },
+        },
+        gemini_base_url=credentials['gemini_base_url'],
+        deepseek_base_url=credentials['deepseek_base_url'],
+        gemini_socks5=credentials.get('gemini_socks5'),
+    )
+    parsed = parse_json_text(raw_text, f"{credentials['provider']} 返回了无效翻译 JSON")
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{credentials['provider']} 返回了无效翻译 JSON")
+
+    subject_zh = ''
+    body_zh = ''
+    for key in ('subjectZh', 'subject_zh', 'subject'):
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            subject_zh = value.strip()
+            break
+    for key in ('bodyZh', 'body_zh', 'body', 'translation', 'replyTextZh', 'text'):
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            body_zh = value.strip()
+            break
+
+    if not subject_zh and not body_zh:
+        raise ValueError(f"{credentials['provider']} 返回了空的中文翻译")
+
+    if subject_zh and body_zh:
+        combined = f'{subject_zh}\n\n{body_zh}'
+    else:
+        combined = subject_zh or body_zh
+
+    return {
+        'success': True,
+        'translation': combined.strip(),
+        'subject_translation': subject_zh,
+        'body_translation': body_zh,
+        'provider': credentials['provider'],
+        'model': credentials['model'],
+        'truncated': truncated,
+    }
 
 
 def _load_latest_run(db, account_email: str, message_id: str, context_scope: str, fingerprint: str):

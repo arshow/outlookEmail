@@ -136,6 +136,36 @@
             padding-right: 4px;
         }
 
+        .compose-quote-language-group {
+            margin-bottom: 12px;
+        }
+
+        .compose-quote-language-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .compose-quote-language-row .form-label {
+            margin: 0;
+            flex: 0 0 auto;
+            white-space: nowrap;
+        }
+
+        .compose-quote-language-row .provider-tabs {
+            flex: 0 1 220px;
+            margin: 0;
+            min-width: 160px;
+        }
+
+        .compose-quote-language-row .provider-tab-label {
+            flex-direction: row;
+            padding: 6px 10px;
+            font-size: 12px;
+            gap: 0;
+        }
+
         .compose-ai-sidebar {
             flex: 0 0 clamp(400px, 42%, 520px);
             width: clamp(400px, 42%, 520px);
@@ -221,36 +251,56 @@
             gap: 10px;
         }
 
-        .compose-ai-scope {
+        .compose-ai-controls {
             display: flex;
             flex-direction: column;
+            gap: 10px;
+            padding-bottom: 4px;
+        }
+
+        .compose-ai-scope.provider-tabs {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
             gap: 8px;
+            margin: 0;
         }
 
         .compose-ai-scope .provider-tab-item {
             width: 100%;
+            margin: 0;
         }
 
-        .compose-ai-actions,
+        .compose-ai-scope .provider-tab-label {
+            width: 100%;
+            justify-content: center;
+            padding: 8px 6px;
+            font-size: 12px;
+        }
+
+        .compose-ai-generate-btn {
+            width: 100%;
+            min-height: 36px;
+            font-weight: 650;
+        }
+
+        .compose-ai-refine-row {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .compose-ai-refine-row .btn {
+            width: 100%;
+            min-width: 0;
+            padding-left: 6px;
+            padding-right: 6px;
+        }
+
         .compose-ai-custom-row {
-            display: flex;
-            flex-wrap: wrap;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
             gap: 8px;
             align-items: center;
-        }
-
-        .compose-ai-actions .btn,
-        .compose-ai-custom-row .btn {
-            flex: 1 1 calc(50% - 8px);
-        }
-
-        .compose-ai-actions .btn-primary {
-            flex: 1 1 100%;
-        }
-
-        .compose-ai-custom-row {
-            flex-direction: column;
-            align-items: stretch;
         }
 
         .compose-ai-custom-row .form-input {
@@ -259,8 +309,8 @@
         }
 
         .compose-ai-custom-row .btn {
-            flex: 1 1 auto;
-            width: 100%;
+            white-space: nowrap;
+            min-width: 64px;
         }
 
         .compose-ai-insert-block {
@@ -311,6 +361,39 @@
         .compose-ai-result-section--meta {
             background: #fffbeb;
             border-color: #fde68a;
+            padding-top: 8px;
+            padding-bottom: 8px;
+            gap: 0;
+        }
+
+        .compose-ai-meta-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            flex-wrap: nowrap;
+        }
+
+        .compose-ai-meta-row .compose-ai-section-label {
+            flex: 0 0 auto;
+            white-space: nowrap;
+            margin: 0;
+        }
+
+        .compose-ai-meta-row .compose-ai-meta {
+            display: flex;
+            align-items: center;
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+
+        .compose-ai-model {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
         }
 
         .compose-ai-result-section--info {
@@ -375,8 +458,7 @@
             line-height: 1.45;
         }
 
-        .compose-ai-summary,
-        .compose-ai-zh {
+        .compose-ai-summary {
             font-size: 13px;
             color: var(--skin-text-muted);
             white-space: pre-wrap;
@@ -384,12 +466,24 @@
         }
 
         .compose-ai-zh {
+            font-size: 13px;
             color: var(--skin-text);
+            white-space: normal;
+            word-break: break-word;
+            line-height: 1.5;
+        }
+
+        .compose-ai-zh p {
+            margin: 0 0 0.75em;
+        }
+
+        .compose-ai-zh p:last-child {
+            margin-bottom: 0;
         }
 
         .compose-ai-text {
             margin: 0;
-            white-space: pre-wrap;
+            white-space: normal;
             word-break: break-word;
             font-family: inherit;
             font-size: 13px;
@@ -401,6 +495,14 @@
             overflow: auto;
             color: var(--skin-text);
             line-height: 1.5;
+        }
+
+        .compose-ai-text p {
+            margin: 0 0 0.75em;
+        }
+
+        .compose-ai-text p:last-child {
+            margin-bottom: 0;
         }
 
         .compose-ai-risk {
@@ -1406,6 +1508,10 @@
         .translate-email-btn:disabled {
             opacity: 0.6;
             cursor: not-allowed;
+        }
+
+        .email-detail-action-btn--translate-ai .btn-icon {
+            color: currentColor;
         }
 
         .raw-email-header {

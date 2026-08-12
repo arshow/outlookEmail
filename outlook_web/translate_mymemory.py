@@ -11,9 +11,12 @@ MYMEMORY_URL = 'https://api.mymemory.translated.net/get'
 DEFAULT_MAX_CHUNK_CHARS = 450
 DEFAULT_MAX_TOTAL_CHARS = 8000
 DEFAULT_TIMEOUT_SECONDS = 15
+DEFAULT_SOURCE_LANG = 'en'
+TARGET_LANG = 'zh-CN'
 PROVIDER_NAME = 'mymemory'
 
 _SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?。！？\n])\s+')
+_CJK_RE = re.compile(r'[\u4e00-\u9fff]')
 
 
 class TranslateError(Exception):
@@ -64,11 +67,34 @@ def chunk_text(text: str, max_chars: int = DEFAULT_MAX_CHUNK_CHARS) -> List[str]
     return [chunk for chunk in chunks if chunk]
 
 
-def _langpair(source_lang: str) -> str:
-    source = str(source_lang or 'autodetect').strip() or 'autodetect'
+def looks_mostly_chinese(text: str) -> bool:
+    """Heuristic: skip MyMemory when source is already Simplified Chinese-heavy."""
+    chars = [ch for ch in str(text or '') if not ch.isspace()]
+    if not chars:
+        return False
+    cjk_count = sum(1 for ch in chars if _CJK_RE.match(ch))
+    return (cjk_count / len(chars)) >= 0.35
+
+
+def resolve_source_lang(source_lang: str) -> str:
+    """MyMemory requires two distinct ISO languages; Autodetect is unreliable."""
+    source = str(source_lang or DEFAULT_SOURCE_LANG).strip() or DEFAULT_SOURCE_LANG
     if source.lower() in {'auto', 'autodetect', 'detect'}:
-        source = 'Autodetect'
-    return f'{source}|zh-CN'
+        return DEFAULT_SOURCE_LANG
+    # Normalize common aliases.
+    lowered = source.lower()
+    if lowered in {'zh', 'zh-cn', 'zh_cn', 'chinese'}:
+        return TARGET_LANG
+    if lowered in {'en-us', 'en-gb', 'english'}:
+        return 'en'
+    return source
+
+
+def _langpair(source_lang: str) -> str:
+    source = resolve_source_lang(source_lang)
+    if source.lower() in {TARGET_LANG.lower(), 'zh', 'zh-cn', 'zh_cn'}:
+        raise TranslateError('原文已是中文，无需翻译', status_code=400)
+    return f'{source}|{TARGET_LANG}'
 
 
 def _extract_translated_text(payload: Any) -> str:
@@ -120,7 +146,13 @@ def _translate_chunk(
         details = payload.get('responseDetails') or payload.get('quotaFinished')
         if status in (429, '429') or details is True:
             raise TranslateError('翻译免费额度已用尽，请稍后再试', status_code=429)
-        raise TranslateError(f'翻译失败: {details or status}', status_code=502)
+        detail_text = str(details or status or '')
+        upper = detail_text.upper()
+        if 'DISTINCT LANGUAGES' in upper:
+            raise TranslateError('翻译失败：源语言与目标语言相同，请确认原文不是中文', status_code=400)
+        if 'INVALID SOURCE LANGUAGE' in upper:
+            raise TranslateError('翻译失败：不支持的源语言，请重试', status_code=400)
+        raise TranslateError(f'翻译失败: {detail_text}', status_code=502)
 
     return _extract_translated_text(payload)
 
@@ -128,7 +160,7 @@ def _translate_chunk(
 def translate_to_zh(
     text: str,
     *,
-    source_lang: str = 'autodetect',
+    source_lang: str = DEFAULT_SOURCE_LANG,
     max_chunk_chars: int = DEFAULT_MAX_CHUNK_CHARS,
     max_total_chars: int = DEFAULT_MAX_TOTAL_CHARS,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
@@ -139,22 +171,35 @@ def translate_to_zh(
     if not raw.strip():
         raise TranslateError('没有可翻译的文本', status_code=400)
 
+    if looks_mostly_chinese(raw):
+        return {
+            'translation': raw.strip(),
+            'provider': PROVIDER_NAME,
+            'truncated': False,
+            'chunk_count': 0,
+            'skipped': True,
+        }
+
     truncated = False
     working = raw
     if len(working) > max_total_chars:
         working = working[:max_total_chars]
         truncated = True
 
+    resolved_source = resolve_source_lang(source_lang)
     parts = chunk_text(working, max_chars=max_chunk_chars)
     translated_parts: List[str] = []
     for part in parts:
         if not part.strip():
             translated_parts.append(part)
             continue
+        if looks_mostly_chinese(part):
+            translated_parts.append(part)
+            continue
         translated_parts.append(
             _translate_chunk(
                 part,
-                source_lang=source_lang,
+                source_lang=resolved_source,
                 timeout=timeout,
                 session=session,
             )
@@ -165,6 +210,7 @@ def translate_to_zh(
         'provider': PROVIDER_NAME,
         'truncated': truncated,
         'chunk_count': len(parts),
+        'skipped': False,
     }
 
 
@@ -194,7 +240,7 @@ def translate_email_fields_to_zh(
     *,
     subject: str = '',
     body: str = '',
-    source_lang: str = 'autodetect',
+    source_lang: str = DEFAULT_SOURCE_LANG,
     max_total_chars: int = DEFAULT_MAX_TOTAL_CHARS,
     session: Optional[requests.Session] = None,
 ) -> Dict[str, Any]:
@@ -204,10 +250,15 @@ def translate_email_fields_to_zh(
     if not subject_text and not body_text:
         raise TranslateError('没有可翻译的文本', status_code=400)
 
+    # Placeholder subjects shown in UI should not hit the translator.
+    if subject_text in {'无主题', '(无主题)', 'No Subject', 'no subject'}:
+        subject_text = ''
+
     remaining = max_total_chars
     truncated = False
     subject_zh = ''
     body_zh = ''
+    resolved_source = resolve_source_lang(source_lang)
 
     if subject_text:
         subject_piece = subject_text[:remaining]
@@ -217,7 +268,7 @@ def translate_email_fields_to_zh(
         if subject_piece.strip():
             subject_result = translate_to_zh(
                 subject_piece,
-                source_lang=source_lang,
+                source_lang=resolved_source,
                 max_total_chars=len(subject_piece),
                 session=session,
             )
@@ -233,7 +284,7 @@ def translate_email_fields_to_zh(
                 truncated = True
             body_result = translate_to_zh(
                 body_piece,
-                source_lang=source_lang,
+                source_lang=resolved_source,
                 max_total_chars=len(body_piece),
                 session=session,
             )
@@ -244,6 +295,9 @@ def translate_email_fields_to_zh(
         combined = f'{subject_zh}\n\n{body_zh}'
     else:
         combined = subject_zh or body_zh
+
+    if not combined.strip():
+        raise TranslateError('没有可翻译的文本', status_code=400)
 
     return {
         'translation': combined.strip(),

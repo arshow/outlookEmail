@@ -317,6 +317,38 @@ class AiReplyTestCase(unittest.TestCase):
         self.assertEqual(payload.get('detail_source'), 'local')
         self.assertEqual(payload['analysis']['replyText'], analysis['replyText'])
 
+    def test_ai_translate_requires_enabled(self):
+        response = self.client.post('/api/ai/translate', json={
+            'subject': 'Hello',
+            'text': 'How are you?',
+        })
+        payload = response.get_json()
+        self.assertFalse(payload['success'])
+        self.assertIn('AI', payload.get('error') or '')
+
+    def test_ai_translate_success_with_mocked_llm(self):
+        self.client.put('/api/ai/settings', json={
+            'enabled': True,
+            'provider': 'gemini',
+            'model': 'gemini-2.5-flash',
+            'gemini_api_key': 'gm-test-key',
+        })
+        translated = {
+            'subjectZh': '你好',
+            'bodyZh': '你好吗？',
+        }
+        with patch('outlook_web.ai.service.call_structured_model', return_value=json.dumps(translated)):
+            response = self.client.post('/api/ai/translate', json={
+                'subject': 'Hello',
+                'text': 'How are you?',
+            })
+        payload = response.get_json()
+        self.assertTrue(payload['success'], payload)
+        self.assertEqual(payload['provider'], 'gemini')
+        self.assertEqual(payload['subject_translation'], '你好')
+        self.assertEqual(payload['body_translation'], '你好吗？')
+        self.assertEqual(payload['translation'], '你好\n\n你好吗？')
+
 
 if __name__ == '__main__':
     unittest.main()

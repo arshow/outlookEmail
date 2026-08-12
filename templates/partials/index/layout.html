@@ -473,7 +473,7 @@
                     </button>
                     <button class="translate-email-btn email-detail-action-btn email-detail-action-btn--translate" type="button"
                         id="translateEmailBtn"
-                        title="翻译成中文（MyMemory 免费）" aria-label="翻译成中文" onclick="toggleEmailTranslation()">
+                        title="翻译成中文（MyMemory 免费）" aria-label="翻译成中文" onclick="toggleEmailTranslation('mymemory')">
                         <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
                             <path d="M5 8l6 6"></path>
                             <path d="M4 14l6-6 2-3"></path>
@@ -482,7 +482,16 @@
                             <path d="M22 22l-5-10-5 10"></path>
                             <path d="M14 18h6"></path>
                         </svg>
-                        <span class="email-detail-action-btn__text" id="translateEmailBtnText">翻译成中文</span>
+                        <span class="email-detail-action-btn__text" id="translateEmailBtnText">免费翻译</span>
+                    </button>
+                    <button class="translate-email-btn email-detail-action-btn email-detail-action-btn--translate-ai" type="button"
+                        id="aiTranslateEmailBtn"
+                        title="AI 翻译成中文（复用 /ai 配置）" aria-label="AI 翻译" onclick="toggleEmailTranslation('ai')">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
+                            <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"></path>
+                            <path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z"></path>
+                        </svg>
+                        <span class="email-detail-action-btn__text" id="aiTranslateEmailBtnText">AI翻译</span>
                     </button>
                     <label class="email-trust-toggle" title="信任此邮件" aria-label="信任此邮件">
                         <input type="checkbox" id="trustEmailCheckbox" onchange="toggleTrustMode(this)">
