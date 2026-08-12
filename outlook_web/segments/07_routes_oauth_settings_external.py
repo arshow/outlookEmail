@@ -16,6 +16,60 @@ if TYPE_CHECKING:
 
 # ==================== OAuth Token API ====================
 
+# 手动授权弹窗可选的回调地址（需与 Azure 应用注册中的重定向 URI 一致）
+OAUTH_REDIRECT_URI_PRESETS = (
+    'http://localhost:8080',
+    'http://cbtop.top:8080',
+)
+
+
+def normalize_oauth_redirect_uri(redirect_uri: Any = None) -> str:
+    """规范化并校验 redirect_uri，仅允许预设值。"""
+    import urllib.parse
+
+    raw = str(redirect_uri or '').strip()
+    if not raw:
+        candidate = str(OAUTH_REDIRECT_URI or '').strip() or OAUTH_REDIRECT_URI_PRESETS[0]
+    else:
+        candidate = raw
+        if '://' not in candidate:
+            candidate = f'http://{candidate.lstrip("/")}'
+        parsed = urllib.parse.urlparse(candidate)
+        # 只保留 scheme://host[:port]，去掉 path/query
+        netloc = parsed.netloc or parsed.path
+        scheme = parsed.scheme or 'http'
+        candidate = f'{scheme}://{netloc}'.rstrip('/')
+
+    allowed = {item.rstrip('/') for item in OAUTH_REDIRECT_URI_PRESETS}
+    default_normalized = str(OAUTH_REDIRECT_URI or '').strip().rstrip('/')
+    if default_normalized:
+        allowed.add(default_normalized)
+
+    if candidate.rstrip('/') not in allowed:
+        return ''
+    return candidate.rstrip('/')
+
+
+def resolve_oauth_redirect_uri(redirect_uri: Any = None, redirected_url: Any = None) -> str:
+    """优先使用显式 redirect_uri；否则从回调 URL 推导；最后回退默认值。"""
+    import urllib.parse
+
+    explicit = normalize_oauth_redirect_uri(redirect_uri)
+    if explicit:
+        return explicit
+
+    callback = str(redirected_url or '').strip()
+    if callback:
+        parsed = urllib.parse.urlparse(callback)
+        if parsed.scheme and parsed.netloc:
+            inferred = normalize_oauth_redirect_uri(f'{parsed.scheme}://{parsed.netloc}')
+            if inferred:
+                return inferred
+
+    fallback = normalize_oauth_redirect_uri(OAUTH_REDIRECT_URI)
+    return fallback or OAUTH_REDIRECT_URI_PRESETS[0]
+
+
 def extract_oauth_authorization_code(redirected_url: str) -> tuple[bool, str, str]:
     """从 OAuth 回调 URL 提取授权码。"""
     import urllib.parse
@@ -36,17 +90,21 @@ def extract_oauth_authorization_code(redirected_url: str) -> tuple[bool, str, st
     return True, auth_code, ''
 
 
-def exchange_oauth_code_for_tokens(redirected_url: str) -> Dict[str, Any]:
+def exchange_oauth_code_for_tokens(redirected_url: str, redirect_uri: Any = None) -> Dict[str, Any]:
     """使用授权后的回调 URL 换取 Microsoft OAuth token。"""
     success, auth_code, error_message = extract_oauth_authorization_code(redirected_url)
     if not success:
         return {'success': False, 'error': error_message}
 
+    resolved_redirect_uri = resolve_oauth_redirect_uri(redirect_uri, redirected_url)
+    if not resolved_redirect_uri:
+        return {'success': False, 'error': '回调地址无效，仅支持 localhost:8080 或 cbtop.top:8080'}
+
     token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
     token_data = {
         "client_id": OAUTH_CLIENT_ID,
         "code": auth_code,
-        "redirect_uri": OAUTH_REDIRECT_URI,
+        "redirect_uri": resolved_redirect_uri,
         "grant_type": "authorization_code",
         "scope": " ".join(OAUTH_SCOPES)
     }
@@ -121,11 +179,20 @@ def api_get_oauth_auth_url():
     """生成 OAuth 授权 URL"""
     import urllib.parse
 
+    requested_redirect = request.args.get('redirect_uri')
+    redirect_uri = resolve_oauth_redirect_uri(requested_redirect)
+    if requested_redirect and not normalize_oauth_redirect_uri(requested_redirect):
+        return jsonify({
+            'success': False,
+            'error': '回调地址无效，仅支持 localhost:8080 或 cbtop.top:8080',
+            'allowed_redirect_uris': list(OAUTH_REDIRECT_URI_PRESETS),
+        }), 400
+
     base_auth_url = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
     params = {
         "client_id": OAUTH_CLIENT_ID,
         "response_type": "code",
-        "redirect_uri": OAUTH_REDIRECT_URI,
+        "redirect_uri": redirect_uri,
         "response_mode": "query",
         "scope": " ".join(OAUTH_SCOPES),
         "state": "12345"
@@ -136,7 +203,8 @@ def api_get_oauth_auth_url():
         'success': True,
         'auth_url': auth_url,
         'client_id': OAUTH_CLIENT_ID,
-        'redirect_uri': OAUTH_REDIRECT_URI
+        'redirect_uri': redirect_uri,
+        'allowed_redirect_uris': list(OAUTH_REDIRECT_URI_PRESETS),
     })
 
 
@@ -145,7 +213,10 @@ def api_get_oauth_auth_url():
 def api_exchange_oauth_token():
     """使用授权码换取 Refresh Token"""
     data = request.get_json(silent=True) or {}
-    token_result = exchange_oauth_code_for_tokens(data.get('redirected_url', ''))
+    token_result = exchange_oauth_code_for_tokens(
+        data.get('redirected_url', ''),
+        redirect_uri=data.get('redirect_uri'),
+    )
     return jsonify(token_result)
 
 
@@ -189,7 +260,10 @@ def api_reauthorize_account(account_id):
         }), 400
 
     data = request.get_json(silent=True) or {}
-    token_result = exchange_oauth_code_for_tokens(data.get('redirected_url', ''))
+    token_result = exchange_oauth_code_for_tokens(
+        data.get('redirected_url', ''),
+        redirect_uri=data.get('redirect_uri'),
+    )
     if not token_result.get('success'):
         return jsonify({
             'success': False,

@@ -51,9 +51,88 @@
         // ==================== OAuth Refresh Token 相关 ====================
 
         let oauthReauthorizeAccount = null;
+        const OAUTH_REDIRECT_URI_PRESETS = [
+            'http://localhost:8080',
+            'http://cbtop.top:8080'
+        ];
+        const OAUTH_REDIRECT_URI_STORAGE_KEY = 'oauth_redirect_uri';
 
         function isOAuthReauthorizeMode() {
             return !!(oauthReauthorizeAccount && oauthReauthorizeAccount.id);
+        }
+
+        function normalizeOAuthRedirectUri(value) {
+            const raw = String(value || '').trim();
+            if (!raw) return OAUTH_REDIRECT_URI_PRESETS[0];
+            const withScheme = raw.includes('://') ? raw : `http://${raw.replace(/^\/+/, '')}`;
+            try {
+                const parsed = new URL(withScheme);
+                const normalized = `${parsed.protocol}//${parsed.host}`.replace(/\/$/, '');
+                if (OAUTH_REDIRECT_URI_PRESETS.includes(normalized)) {
+                    return normalized;
+                }
+            } catch (e) {
+                // ignore invalid URL
+            }
+            return OAUTH_REDIRECT_URI_PRESETS[0];
+        }
+
+        function getSelectedOAuthRedirectUri() {
+            const checked = document.querySelector('input[name="oauthRedirectUri"]:checked');
+            return normalizeOAuthRedirectUri(checked?.value || localStorage.getItem(OAUTH_REDIRECT_URI_STORAGE_KEY));
+        }
+
+        function setSelectedOAuthRedirectUri(redirectUri) {
+            const normalized = normalizeOAuthRedirectUri(redirectUri);
+            const radios = document.querySelectorAll('input[name="oauthRedirectUri"]');
+            radios.forEach((radio) => {
+                radio.checked = radio.value === normalized;
+            });
+            try {
+                localStorage.setItem(OAUTH_REDIRECT_URI_STORAGE_KEY, normalized);
+            } catch (e) {
+                // ignore storage failures
+            }
+            updateOAuthRedirectUrlHint(normalized);
+            return normalized;
+        }
+
+        function updateOAuthRedirectUrlHint(redirectUri) {
+            const hint = document.getElementById('oauthRedirectUrlHint');
+            if (!hint) return;
+            const base = normalizeOAuthRedirectUri(redirectUri);
+            hint.textContent = `URL 格式类似：${base}/?code=xxxxx&state=12345`;
+        }
+
+        async function loadOAuthAuthUrl() {
+            const redirectUri = getSelectedOAuthRedirectUri();
+            updateOAuthRedirectUrlHint(redirectUri);
+            const authUrlInput = document.getElementById('authUrlInput');
+            try {
+                const response = await fetch(`/api/oauth/auth-url?redirect_uri=${encodeURIComponent(redirectUri)}`);
+                const data = await response.json();
+                if (data.success) {
+                    if (authUrlInput) {
+                        authUrlInput.value = data.auth_url;
+                    }
+                    if (data.redirect_uri) {
+                        setSelectedOAuthRedirectUri(data.redirect_uri);
+                    }
+                    return true;
+                }
+                showToast(data.error || '获取授权链接失败', 'error');
+                return false;
+            } catch (error) {
+                showToast('获取授权链接失败', 'error');
+                return false;
+            }
+        }
+
+        async function onOAuthRedirectUriChange() {
+            const redirectUri = getSelectedOAuthRedirectUri();
+            setSelectedOAuthRedirectUri(redirectUri);
+            invalidateRefreshTokenPreview();
+            await loadOAuthAuthUrl();
         }
 
         function setOAuthElementDisplay(id, visible, displayValue = '') {
@@ -80,7 +159,7 @@
             if (sectionHintEl) {
                 sectionHintEl.textContent = reauthMode
                     ? '请确认当前账号邮箱，并粘贴授权后的回调 URL。系统会保存新授权并自动执行一次 Token 刷新验证。'
-                    : '换取并预览只需要粘贴授权后的回调 URL。邮箱、密码和目标分组仅在保存账号时使用，可稍后补充。';
+                    : '换取并预览只需要粘贴授权后的回调 URL。邮箱、密码、备注和目标分组仅在保存账号时使用，可稍后补充。';
             }
             if (emailLabelEl) emailLabelEl.textContent = reauthMode ? '当前邮箱账号' : '邮箱账号（保存时可选）';
             if (emailInput) {
@@ -132,9 +211,11 @@
             setOAuthElementDisplay('copyOauthEmailBtn', reauthMode);
 
             setOAuthElementDisplay('oauthTargetGroup', !reauthMode);
+            setOAuthElementDisplay('oauthRemarkGroup', !reauthMode);
             setOAuthElementDisplay('oauthForwardGroup', !reauthMode, 'flex');
             setOAuthElementDisplay('oauthPreviewPasswordGroup', !reauthMode);
             setOAuthElementDisplay('oauthPreviewGroupGroup', !reauthMode);
+            setOAuthElementDisplay('oauthPreviewRemarkGroup', !reauthMode);
 
             if (exchangeBtn) {
                 exchangeBtn.disabled = false;
@@ -217,6 +298,10 @@
             document.getElementById('oauthPreviewEmail').value = oauthPreviewAccount.email || '';
             document.getElementById('oauthPreviewPassword').value = oauthPreviewAccount.password || '';
             document.getElementById('oauthPreviewClientId').value = oauthPreviewAccount.client_id || '';
+            const previewRemarkEl = document.getElementById('oauthPreviewRemark');
+            if (previewRemarkEl) {
+                previewRemarkEl.value = oauthPreviewAccount.remark || '';
+            }
             document.getElementById('oauthPreviewGroup').value = group?.name || (Number.isFinite(fallbackGroupId) ? String(fallbackGroupId) : '');
             document.getElementById('oauthPreviewRefreshToken').value = oauthPreviewAccount.refresh_token || '';
             if (resultEl) {
@@ -240,6 +325,10 @@
             // 重置表单
             document.getElementById('oauthEmailInput').value = oauthReauthorizeAccount?.email || '';
             document.getElementById('oauthPasswordInput').value = '';
+            const remarkInput = document.getElementById('oauthRemarkInput');
+            if (remarkInput) {
+                remarkInput.value = '';
+            }
             document.getElementById('redirectUrlInput').value = '';
             document.getElementById('oauthForwardEnabled').checked = false;
             invalidateRefreshTokenPreview();
@@ -261,19 +350,17 @@
                 }
             }
 
-            // 获取授权 URL
+            // 恢复上次选择的回调地址，并获取授权 URL
+            let preferredRedirectUri = OAUTH_REDIRECT_URI_PRESETS[0];
             try {
-                const response = await fetch('/api/oauth/auth-url');
-                const data = await response.json();
-
-                if (data.success) {
-                    document.getElementById('authUrlInput').value = data.auth_url;
-                } else {
-                    showToast('获取授权链接失败', 'error');
-                }
-            } catch (error) {
-                showToast('获取授权链接失败', 'error');
+                preferredRedirectUri = normalizeOAuthRedirectUri(
+                    localStorage.getItem(OAUTH_REDIRECT_URI_STORAGE_KEY) || preferredRedirectUri
+                );
+            } catch (e) {
+                preferredRedirectUri = OAUTH_REDIRECT_URI_PRESETS[0];
             }
+            setSelectedOAuthRedirectUri(preferredRedirectUri);
+            await loadOAuthAuthUrl();
         }
 
         // 隐藏获取 Refresh Token 模态框
@@ -352,6 +439,7 @@
             const { silentSuccess = false, keepSavingState = false } = options;
             const email = document.getElementById('oauthEmailInput').value.trim();
             const password = document.getElementById('oauthPasswordInput').value;
+            const remark = (document.getElementById('oauthRemarkInput')?.value || '').trim();
             const redirectUrl = document.getElementById('redirectUrlInput').value.trim();
             const groupId = parseInt(document.getElementById('tokenSaveGroupSelect')?.value || '0', 10);
             const forwardEnabled = !!document.getElementById('oauthForwardEnabled')?.checked;
@@ -376,7 +464,8 @@
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        redirected_url: redirectUrl
+                        redirected_url: redirectUrl,
+                        redirect_uri: getSelectedOAuthRedirectUri()
                     })
                 });
 
@@ -386,6 +475,7 @@
                     oauthPreviewAccount = {
                         email,
                         password,
+                        remark,
                         client_id: data.client_id,
                         refresh_token: data.refresh_token,
                         group_id: groupId,
@@ -469,7 +559,10 @@
                 const response = await fetch(`/api/accounts/${accountId}/reauthorize`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ redirected_url: redirectUrl })
+                    body: JSON.stringify({
+                        redirected_url: redirectUrl,
+                        redirect_uri: getSelectedOAuthRedirectUri()
+                    })
                 });
                 const data = await response.json();
                 if (!data.success) {
@@ -523,6 +616,12 @@
                 return;
             }
 
+            // 保存前同步表单最新备注/分组/转发设置
+            oauthPreviewAccount.remark = (document.getElementById('oauthRemarkInput')?.value || '').trim();
+            oauthPreviewAccount.group_id = parseInt(document.getElementById('tokenSaveGroupSelect')?.value || '0', 10)
+                || oauthPreviewAccount.group_id;
+            oauthPreviewAccount.forward_enabled = !!document.getElementById('oauthForwardEnabled')?.checked;
+
             const saveBtn = document.getElementById('saveTokenAccountBtn');
             const exchangeBtn = document.getElementById('exchangeTokenBtn');
             saveBtn.disabled = true;
@@ -544,6 +643,7 @@
                         account_string: accountString,
                         group_id: oauthPreviewAccount.group_id,
                         provider: 'outlook',
+                        remark: oauthPreviewAccount.remark || '',
                         forward_enabled: !!oauthPreviewAccount.forward_enabled
                     })
                 });

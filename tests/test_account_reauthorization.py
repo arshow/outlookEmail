@@ -307,6 +307,8 @@ class AccountReauthorizationTests(unittest.TestCase):
         self.assertTrue(payload['success'])
         self.assertEqual(payload['client_id'], web_outlook_app.OAUTH_CLIENT_ID)
         self.assertEqual(payload['redirect_uri'], web_outlook_app.OAUTH_REDIRECT_URI)
+        self.assertIn('http://localhost:8080', payload['allowed_redirect_uris'])
+        self.assertIn('http://cbtop.top:8080', payload['allowed_redirect_uris'])
 
         auth_query = urllib.parse.parse_qs(
             urllib.parse.urlparse(payload['auth_url']).query
@@ -318,6 +320,32 @@ class AccountReauthorizationTests(unittest.TestCase):
         self.assertIn('https://graph.microsoft.com/Mail.ReadWrite', scope)
         self.assertIn('https://graph.microsoft.com/User.Read', scope)
         self.assertNotIn('https://outlook.office.com/', scope)
+
+    def test_auth_url_route_accepts_preset_redirect_uri(self):
+        response = self.client.get(
+            '/api/oauth/auth-url',
+            query_string={'redirect_uri': 'http://cbtop.top:8080'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['redirect_uri'], 'http://cbtop.top:8080')
+        auth_query = urllib.parse.parse_qs(
+            urllib.parse.urlparse(payload['auth_url']).query
+        )
+        self.assertEqual(auth_query['redirect_uri'][0], 'http://cbtop.top:8080')
+
+    def test_auth_url_route_rejects_unknown_redirect_uri(self):
+        response = self.client.get(
+            '/api/oauth/auth-url',
+            query_string={'redirect_uri': 'http://evil.example:8080'},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.get_json()
+        self.assertFalse(payload['success'])
+        self.assertIn('回调地址无效', payload['error'])
 
     def test_exchange_token_route_keeps_existing_preview_response_shape(self):
         class FakeResponse:
@@ -346,12 +374,41 @@ class AccountReauthorizationTests(unittest.TestCase):
         self.assertEqual(payload['client_id'], web_outlook_app.OAUTH_CLIENT_ID)
         self.assertEqual(payload['token_type'], 'Bearer')
         self.assertEqual(post_mock.call_args.kwargs['data']['code'], 'preview-code')
+        self.assertEqual(post_mock.call_args.kwargs['data']['redirect_uri'], 'http://localhost:8080')
         scope = post_mock.call_args.kwargs['data']['scope']
         self.assertEqual(scope, ' '.join(web_outlook_app.OAUTH_SCOPES))
         self.assertIn('https://graph.microsoft.com/Mail.Read', scope)
         self.assertIn('https://graph.microsoft.com/Mail.ReadWrite', scope)
         self.assertIn('https://graph.microsoft.com/User.Read', scope)
         self.assertNotIn('https://outlook.office.com/', scope)
+
+    def test_exchange_token_route_uses_explicit_redirect_uri(self):
+        class FakeResponse:
+            status_code = 200
+            headers = {'content-type': 'application/json'}
+
+            @staticmethod
+            def json():
+                return {
+                    'refresh_token': 'preview-refresh-token',
+                    'token_type': 'Bearer',
+                    'expires_in': 3600,
+                    'scope': 'offline_access',
+                }
+
+        with patch.object(web_outlook_app.requests, 'post', return_value=FakeResponse()) as post_mock:
+            response = self.client.post(
+                '/api/oauth/exchange-token',
+                json={
+                    'redirected_url': 'http://cbtop.top:8080/?code=preview-code',
+                    'redirect_uri': 'http://cbtop.top:8080',
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(post_mock.call_args.kwargs['data']['redirect_uri'], 'http://cbtop.top:8080')
 
 
 if __name__ == '__main__':

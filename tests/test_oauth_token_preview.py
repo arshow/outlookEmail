@@ -23,7 +23,11 @@ def test_oauth_preview_labels_account_fields_optional():
 
     assert '邮箱账号（保存时可选）' in html
     assert '密码（保存时可选）' in html
+    assert '备注（保存时可选）' in html
+    assert 'id="oauthRemarkInput"' in html
+    assert 'id="oauthPreviewRemark"' in html
     assert '换取并预览只需要粘贴授权后的回调 URL' in html
+    assert '邮箱、密码、备注和目标分组' in html
 
 
 def test_reauthorize_mode_posts_to_account_endpoint_without_saving_new_account():
@@ -46,6 +50,7 @@ def test_reauthorize_entry_is_scoped_to_outlook_accounts():
     assert '重新授权并刷新' in primary_html
     assert "reauthorizeGroup.style.display = isOutlook ? '' : 'none'" in groups_js
     assert 'id="oauthPasswordGroup"' in oauth_html
+    assert 'id="oauthRemarkGroup"' in oauth_html
     assert 'id="oauthTargetGroup"' in oauth_html
     assert 'id="oauthForwardGroup"' in oauth_html
 
@@ -116,3 +121,29 @@ def test_reauthorize_from_edit_passes_password_from_dataset():
     assert "document.getElementById('editPassword')" in edit_reauth_source
     assert 'dataset.secretValue' in edit_reauth_source
     assert 'password: accountPassword' in edit_reauth_source
+
+
+def test_oauth_save_includes_remark_field():
+    source = OAUTH_JS_PATH.read_text(encoding='utf-8')
+    html = OAUTH_DIALOG_PATH.read_text(encoding='utf-8')
+
+    assert 'id="oauthRemarkInput"' in html
+    assert "document.getElementById('oauthRemarkInput')" in source
+    assert 'remark,' in source or 'remark: oauthPreviewAccount.remark' in source
+    assert "remark: oauthPreviewAccount.remark || ''" in source
+    assert "setOAuthElementDisplay('oauthRemarkGroup', !reauthMode)" in source
+
+
+def test_oauth_dialog_has_redirect_uri_presets():
+    html = OAUTH_DIALOG_PATH.read_text(encoding='utf-8')
+    source = OAUTH_JS_PATH.read_text(encoding='utf-8')
+
+    assert 'name="oauthRedirectUri"' in html
+    assert 'value="http://localhost:8080"' in html
+    assert 'value="http://cbtop.top:8080"' in html
+    assert 'localhost:8080' in html
+    assert 'cbtop.top:8080' in html
+    assert 'function getSelectedOAuthRedirectUri' in source
+    assert 'function loadOAuthAuthUrl' in source
+    assert "redirect_uri=${encodeURIComponent(redirectUri)}" in source
+    assert 'redirect_uri: getSelectedOAuthRedirectUri()' in source

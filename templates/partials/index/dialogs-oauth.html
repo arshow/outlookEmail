@@ -9,7 +9,7 @@
                 <div class="settings-panel" id="oauthAccountFieldsPanel" style="margin-bottom: 16px;">
                     <div class="settings-section-head" style="margin-bottom: 14px;">
                         <h4 id="oauthAccountSectionTitle" style="margin-top: 0;">待入库账号</h4>
-                        <p id="oauthAccountSectionHint">换取并预览只需要粘贴授权后的回调 URL。邮箱、密码和目标分组仅在保存账号时使用，可稍后补充。</p>
+                        <p id="oauthAccountSectionHint">换取并预览只需要粘贴授权后的回调 URL。邮箱、密码、备注和目标分组仅在保存账号时使用，可稍后补充。</p>
                     </div>
                     <div class="settings-grid">
                         <div class="form-group" id="oauthEmailGroup">
@@ -36,6 +36,10 @@
                                 </button>
                             </div>
                         </div>
+                        <div class="form-group" id="oauthRemarkGroup">
+                            <label class="form-label">备注（保存时可选）</label>
+                            <input type="text" class="form-input" id="oauthRemarkInput" placeholder="例如：HS_189 Vultr" maxlength="500">
+                        </div>
                         <div class="form-group" id="oauthTargetGroup">
                             <label class="form-label">目标分组</label>
                             <select class="form-select" id="tokenSaveGroupSelect"></select>
@@ -47,6 +51,21 @@
                             </label>
                         </div>
                     </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">回调地址</label>
+                    <div class="provider-tabs" id="oauthRedirectUriTabs" style="margin-bottom: 8px;">
+                        <label class="provider-tab-item">
+                            <input type="radio" name="oauthRedirectUri" value="http://localhost:8080" checked onchange="onOAuthRedirectUriChange()">
+                            <span class="provider-tab-label" style="padding: 10px 8px;">localhost:8080</span>
+                        </label>
+                        <label class="provider-tab-item">
+                            <input type="radio" name="oauthRedirectUri" value="http://cbtop.top:8080" onchange="onOAuthRedirectUriChange()">
+                            <span class="provider-tab-label" style="padding: 10px 8px;">cbtop.top:8080</span>
+                        </label>
+                    </div>
+                    <div class="form-hint">须与 Azure 应用注册中的重定向 URI 一致；授权链接与换 Token 会使用同一地址</div>
                 </div>
 
                 <div class="form-group">
@@ -67,7 +86,7 @@
                     <textarea class="form-textarea" id="redirectUrlInput"
                         placeholder="授权成功后，浏览器会跳转到一个空白页，请复制地址栏中的完整 URL 并粘贴到这里"
                         style="height: 80px; font-size: 12px; font-family: monospace;"></textarea>
-                    <div class="form-hint">URL 格式类似：http://localhost:8080/?code=xxxxx&state=12345</div>
+                    <div class="form-hint" id="oauthRedirectUrlHint">URL 格式类似：http://localhost:8080/?code=xxxxx&state=12345</div>
                 </div>
 
                 <div class="form-group" id="refreshTokenResult" style="display: none;">
@@ -89,6 +108,10 @@
                             <div class="form-group" id="oauthPreviewGroupGroup">
                                 <label class="form-label">目标分组</label>
                                 <input type="text" class="form-input" id="oauthPreviewGroup" readonly>
+                            </div>
+                            <div class="form-group" id="oauthPreviewRemarkGroup">
+                                <label class="form-label">备注</label>
+                                <input type="text" class="form-input" id="oauthPreviewRemark" readonly>
                             </div>
                         </div>
                         <div class="form-group" style="margin-bottom: 0;">
