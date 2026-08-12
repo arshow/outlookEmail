@@ -1536,6 +1536,14 @@ def api_update_account_v2(account_id):
             inbox_poll_enabled = bool(raw_inbox_poll)
     else:
         inbox_poll_enabled = bool(current_account['inbox_poll_enabled']) if current_account.get('inbox_poll_enabled') is not None else True
+    if 'aggregated_inbox_enabled' in data:
+        raw_aggregated = data.get('aggregated_inbox_enabled')
+        if isinstance(raw_aggregated, str):
+            aggregated_inbox_enabled = raw_aggregated.strip().lower() in {'1', 'true', 'yes', 'on'}
+        else:
+            aggregated_inbox_enabled = bool(raw_aggregated)
+    else:
+        aggregated_inbox_enabled = bool(current_account.get('aggregated_inbox_enabled'))
     proxy_url = str(data.get('proxy_url', current_account.get('proxy_url', '')) or '').strip()
     fallback_proxy_url_1 = str(
         data.get('fallback_proxy_url_1', current_account.get('fallback_proxy_url_1', '')) or ''
@@ -1609,6 +1617,7 @@ def api_update_account_v2(account_id):
         fallback_proxy_url_1,
         fallback_proxy_url_2,
         inbox_poll_enabled=inbox_poll_enabled,
+        aggregated_inbox_enabled=aggregated_inbox_enabled,
     ):
         cleaned_aliases = get_account_aliases(account_id)
         db = get_db()

@@ -246,6 +246,58 @@ class AggregatedInboxTests(unittest.TestCase):
             self.assertTrue(alpha.get('aggregated_inbox_enabled'))
             self.assertTrue(beta.get('aggregated_inbox_enabled'))
 
+    def test_edit_account_can_enable_aggregated_inbox(self):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                'UPDATE accounts SET aggregated_inbox_enabled = 0 WHERE id = ?',
+                (self.account_alpha['id'],),
+            )
+            db.commit()
+            alpha = web_outlook_app.get_account_by_id(self.account_alpha['id'])
+
+        response = self.client.put(f'/api/accounts/{self.account_alpha["id"]}', json={
+            'email': alpha['email'],
+            'client_id': alpha['client_id'],
+            'refresh_token': alpha['refresh_token'],
+            'account_type': 'outlook',
+            'provider': 'outlook',
+            'group_id': alpha['group_id'],
+            'remark': alpha.get('remark') or '',
+            'status': 'active',
+            'forward_enabled': False,
+            'inbox_poll_enabled': True,
+            'aggregated_inbox_enabled': True,
+        })
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+
+        with self.app.app_context():
+            updated = web_outlook_app.get_account_by_id(self.account_alpha['id'])
+            self.assertTrue(bool(updated.get('aggregated_inbox_enabled')))
+
+        # 再次编辑但不带该字段时，应保留已开启状态
+        response = self.client.put(f'/api/accounts/{self.account_alpha["id"]}', json={
+            'email': alpha['email'],
+            'client_id': alpha['client_id'],
+            'refresh_token': alpha['refresh_token'],
+            'account_type': 'outlook',
+            'provider': 'outlook',
+            'group_id': alpha['group_id'],
+            'remark': 'keep-agg',
+            'status': 'active',
+            'forward_enabled': False,
+            'inbox_poll_enabled': True,
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['success'])
+
+        with self.app.app_context():
+            updated = web_outlook_app.get_account_by_id(self.account_alpha['id'])
+            self.assertTrue(bool(updated.get('aggregated_inbox_enabled')))
+            self.assertEqual(updated.get('remark'), 'keep-agg')
+
     def test_aggregated_inbox_local_source_reads_retention_only(self):
         with self.app.app_context():
             web_outlook_app.set_setting('normal_mail_local_retention_enabled', 'true')
