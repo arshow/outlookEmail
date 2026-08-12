@@ -780,6 +780,20 @@
                     <label class="form-label">主题</label>
                     <input type="text" class="form-input" id="composeSubject" placeholder="邮件主题">
                 </div>
+                <div class="form-group" id="composeQuoteLanguageGroup" style="display: none;">
+                    <label class="form-label">引用语言</label>
+                    <div class="provider-tabs" id="composeQuoteLanguageTabs" style="margin-bottom: 8px;">
+                        <label class="provider-tab-item">
+                            <input type="radio" name="composeQuoteLanguage" value="zh" onchange="onComposeQuoteLanguageChange()">
+                            <span class="provider-tab-label" style="padding: 10px 8px;">中文</span>
+                        </label>
+                        <label class="provider-tab-item">
+                            <input type="radio" name="composeQuoteLanguage" value="en" checked onchange="onComposeQuoteLanguageChange()">
+                            <span class="provider-tab-label" style="padding: 10px 8px;">English</span>
+                        </label>
+                    </div>
+                    <div class="form-hint">中文保持现有引用格式；English 使用英文引用头，时间按太平洋时区显示</div>
+                </div>
                 <div class="form-group">
                     <label class="form-label">正文</label>
                     <div class="compose-editor-toolbar">

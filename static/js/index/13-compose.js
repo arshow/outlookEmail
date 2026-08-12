@@ -8,6 +8,9 @@
         ]);
 
         let composeSelectedFiles = [];
+        let composeQuotedDetail = null;
+        const COMPOSE_QUOTE_LANGUAGE_STORAGE_KEY = 'compose_quote_language';
+        const COMPOSE_PACIFIC_TIME_ZONE = 'America/Los_Angeles';
 
         function extractComposeAddress(value) {
             if (!value) return '';
@@ -128,12 +131,93 @@
             return pattern.test(normalized) ? normalized : `${prefix} ${normalized}`;
         }
 
-        function buildQuotedHtml(detail) {
+        function normalizeComposeQuoteLanguage(value) {
+            return String(value || '').trim().toLowerCase() === 'en' ? 'en' : 'zh';
+        }
+
+        function getComposeQuoteLanguage() {
+            const checked = document.querySelector('input[name="composeQuoteLanguage"]:checked');
+            if (checked) {
+                return normalizeComposeQuoteLanguage(checked.value);
+            }
+            try {
+                return normalizeComposeQuoteLanguage(
+                    localStorage.getItem(COMPOSE_QUOTE_LANGUAGE_STORAGE_KEY) || 'en'
+                );
+            } catch (e) {
+                return 'en';
+            }
+        }
+
+        function setComposeQuoteLanguage(language) {
+            const normalized = normalizeComposeQuoteLanguage(language);
+            document.querySelectorAll('input[name="composeQuoteLanguage"]').forEach((radio) => {
+                radio.checked = radio.value === normalized;
+            });
+            try {
+                localStorage.setItem(COMPOSE_QUOTE_LANGUAGE_STORAGE_KEY, normalized);
+            } catch (e) {
+                // ignore storage failures
+            }
+            return normalized;
+        }
+
+        function formatComposeQuoteDate(dateStr, language = 'zh') {
+            const raw = String(dateStr || '').trim();
+            if (!raw) return '';
+            if (normalizeComposeQuoteLanguage(language) !== 'en') {
+                return raw;
+            }
+
+            let date = new Date(raw);
+            if (Number.isNaN(date.getTime()) && /^\d+$/.test(raw)) {
+                const timestamp = Number(raw);
+                date = new Date(timestamp < 1000000000000 ? timestamp * 1000 : timestamp);
+            }
+            if (Number.isNaN(date.getTime())) {
+                return raw;
+            }
+
+            try {
+                return new Intl.DateTimeFormat('en-US', {
+                    timeZone: COMPOSE_PACIFIC_TIME_ZONE,
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true,
+                    timeZoneName: 'short'
+                }).format(date);
+            } catch (e) {
+                return raw;
+            }
+        }
+
+        function buildQuotedHtml(detail, language = 'zh') {
+            const lang = normalizeComposeQuoteLanguage(language);
             const from = escapeHtml(detail?.from || '');
-            const subject = escapeHtml(detail?.subject || '(无主题)');
-            const date = escapeHtml(detail?.date || detail?.received_at || detail?.receivedDateTime || '');
+            const emptySubject = lang === 'en' ? '(No Subject)' : '(无主题)';
+            const subject = escapeHtml(detail?.subject || emptySubject);
+            const date = escapeHtml(formatComposeQuoteDate(
+                detail?.date || detail?.received_at || detail?.receivedDateTime || '',
+                lang
+            ));
             const rawBody = detail?.body?.content || detail?.body || detail?.body_preview || '';
             const body = typeof rawBody === 'string' ? rawBody : '';
+
+            if (lang === 'en') {
+                return (
+                    `<br><hr>` +
+                    `<p>----- Original Message -----<br>` +
+                    `From: ${from}<br>` +
+                    `Subject: ${subject}<br>` +
+                    `Sent: ${date}</p>` +
+                    `<blockquote>${body}</blockquote>`
+                );
+            }
+
             return (
                 `<br><hr>` +
                 `<p>----- 原始邮件 -----<br>` +
@@ -142,6 +226,34 @@
                 `时间: ${date}</p>` +
                 `<blockquote>${body}</blockquote>`
             );
+        }
+
+        function extractComposeUserDraftHtml(editorHtml) {
+            const html = String(editorHtml || '');
+            const match = html.match(/<hr\b[^>]*>/i);
+            if (!match) return html;
+            return html.slice(0, match.index);
+        }
+
+        function applyComposeQuotedBody(detail) {
+            const editor = document.getElementById('composeBodyEditor');
+            if (!editor) return;
+            composeQuotedDetail = detail || null;
+            const language = getComposeQuoteLanguage();
+            const quoteHtml = buildQuotedHtml(detail, language);
+            const draft = extractComposeUserDraftHtml(editor.innerHTML);
+            const draftIsEmpty = !draft.trim() || /^(\s|<br\s*\/?>|&nbsp;)*$/i.test(draft);
+            if (draftIsEmpty) {
+                editor.innerHTML = quoteHtml;
+                return;
+            }
+            editor.innerHTML = `${draft.replace(/(?:<br\s*\/?>|\s|&nbsp;)*$/i, '')}${quoteHtml}`;
+        }
+
+        function onComposeQuoteLanguageChange() {
+            setComposeQuoteLanguage(getComposeQuoteLanguage());
+            if (!composeQuotedDetail) return;
+            applyComposeQuotedBody(composeQuotedDetail);
         }
 
         function renderComposeAttachmentList() {
@@ -205,6 +317,7 @@
 
         function resetComposeForm() {
             composeSelectedFiles = [];
+            composeQuotedDetail = null;
             document.getElementById('composeMode').value = 'new';
             document.getElementById('composeMessageId').value = '';
             document.getElementById('composeFolder').value = currentFolder || 'inbox';
@@ -214,6 +327,8 @@
             document.getElementById('composeCc').value = '';
             document.getElementById('composeBcc').value = '';
             document.getElementById('composeSubject').value = '';
+            const languageGroup = document.getElementById('composeQuoteLanguageGroup');
+            if (languageGroup) languageGroup.style.display = 'none';
             const editor = document.getElementById('composeBodyEditor');
             if (editor) editor.innerHTML = '';
             const fileInput = document.getElementById('composeAttachments');
@@ -262,6 +377,16 @@
             const titleEl = document.getElementById('composeEmailModalTitle');
             const detail = currentEmailDetail || {};
             const selfAddress = accountEmail.toLowerCase();
+            const languageGroup = document.getElementById('composeQuoteLanguageGroup');
+            let preferredQuoteLanguage = 'en';
+            try {
+                preferredQuoteLanguage = normalizeComposeQuoteLanguage(
+                    localStorage.getItem(COMPOSE_QUOTE_LANGUAGE_STORAGE_KEY) || 'en'
+                );
+            } catch (e) {
+                preferredQuoteLanguage = 'en';
+            }
+            setComposeQuoteLanguage(preferredQuoteLanguage);
 
             if (mode === 'reply' || mode === 'reply_all') {
                 titleEl.textContent = mode === 'reply_all' ? '全部回复' : '回复';
@@ -282,14 +407,17 @@
                 document.getElementById('composeTo').value = uniqueAddresses(toList).join(', ');
                 document.getElementById('composeCc').value = ccList.join(', ');
                 document.getElementById('composeSubject').value = ensureSubjectPrefix(detail.subject || '', 'Re:');
-                document.getElementById('composeBodyEditor').innerHTML = buildQuotedHtml(detail);
+                if (languageGroup) languageGroup.style.display = '';
+                applyComposeQuotedBody(detail);
             } else if (mode === 'forward') {
                 titleEl.textContent = '转发邮件';
                 document.getElementById('composeMessageId').value = currentEmailId || detail.id || '';
                 document.getElementById('composeSubject').value = ensureSubjectPrefix(detail.subject || '', 'Fw:');
-                document.getElementById('composeBodyEditor').innerHTML = buildQuotedHtml(detail);
+                if (languageGroup) languageGroup.style.display = '';
+                applyComposeQuotedBody(detail);
             } else {
                 titleEl.textContent = '写邮件';
+                if (languageGroup) languageGroup.style.display = 'none';
             }
 
             const attachmentInput = document.getElementById('composeAttachments');
