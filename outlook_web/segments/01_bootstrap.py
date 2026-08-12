@@ -782,6 +782,10 @@ GPTMAIL_API_KEY = os.getenv("GPTMAIL_API_KEY", "gpt-test")  # 测试 API Key，�
 DUCKMAIL_BASE_URL = os.getenv("DUCKMAIL_BASE_URL", "https://api.duckmail.sbs")
 DUCKMAIL_API_KEY = os.getenv("DUCKMAIL_API_KEY", "")  # 可选，dk_ 前缀，用于私有域名
 
+# HFMail API 配置（Outlook 辅助邮箱代绑；界面设置优先）
+HFMAIL_BASE_URL = os.getenv("HFMAIL_BASE_URL", "")
+HFMAIL_API_TOKEN = os.getenv("HFMAIL_API_TOKEN", "")
+
 # Cloudflare Temp Email 配置
 CLOUDFLARE_WORKER_DOMAIN = os.getenv("CLOUDFLARE_WORKER_DOMAIN") or os.getenv("WORKER_DOMAIN", "")
 CLOUDFLARE_EMAIL_DOMAINS = os.getenv("CLOUDFLARE_EMAIL_DOMAINS") or os.getenv("EMAIL_DOMAIN", "")
@@ -2102,6 +2106,16 @@ def init_db():
         INSERT OR IGNORE INTO settings (key, value)
         VALUES ('duckmail_api_key', ?)
     ''', (DUCKMAIL_API_KEY,))
+
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('hfmail_base_url', ?)
+    ''', (HFMAIL_BASE_URL,))
+
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('hfmail_api_token', ?)
+    ''', (HFMAIL_API_TOKEN,))
 
     cursor.execute('''
         INSERT OR IGNORE INTO settings (key, value)
@@ -3541,6 +3555,23 @@ def get_duckmail_api_key() -> str:
     """获取 DuckMail API Key（优先从数据库读取）"""
     api_key = get_setting('duckmail_api_key')
     return api_key if api_key else DUCKMAIL_API_KEY
+
+
+def get_hfmail_base_url() -> str:
+    """获取 HFMail API 基础 URL（优先从数据库读取）"""
+    url = str(get_setting('hfmail_base_url') or HFMAIL_BASE_URL or '').strip()
+    return url.rstrip('/')
+
+
+def get_hfmail_api_token() -> str:
+    """获取 HFMail Bearer Token（优先从数据库读取）"""
+    token = str(get_setting('hfmail_api_token') or HFMAIL_API_TOKEN or '').strip()
+    return token
+
+
+def is_hfmail_configured() -> bool:
+    """HFMail Base URL 与 Token 均非空时视为已配置。"""
+    return bool(get_hfmail_base_url() and get_hfmail_api_token())
 
 
 def get_cloudflare_worker_domain() -> str:

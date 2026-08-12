@@ -592,6 +592,9 @@ def api_get_settings():
     # 返回 DuckMail 设置
     settings['duckmail_base_url'] = get_duckmail_base_url()
     settings['duckmail_api_key'] = get_duckmail_api_key()
+    # 返回 HFMail 设置（Outlook 辅助邮箱代绑）
+    settings['hfmail_base_url'] = get_hfmail_base_url()
+    settings['hfmail_api_token'] = get_hfmail_api_token()
     settings['cloudflare_worker_domain'] = get_cloudflare_worker_domain()
     settings['cloudflare_email_domains'] = ', '.join(get_cloudflare_email_domains())
     settings['cloudflare_admin_password'] = get_cloudflare_admin_password()
@@ -955,6 +958,20 @@ def api_update_settings():
             updated.append('DuckMail API Key')
         else:
             errors.append('更新 DuckMail API Key 失败')
+
+    if 'hfmail_base_url' in data:
+        new_hf_url = str(data['hfmail_base_url'] or '').strip().rstrip('/')
+        if set_setting('hfmail_base_url', new_hf_url):
+            updated.append('HFMail API 地址')
+        else:
+            errors.append('更新 HFMail API 地址失败')
+
+    if 'hfmail_api_token' in data:
+        new_hf_token = str(data['hfmail_api_token'] or '').strip()
+        if set_setting('hfmail_api_token', new_hf_token):
+            updated.append('HFMail API Token')
+        else:
+            errors.append('更新 HFMail API Token 失败')
 
     if 'cloudflare_worker_domain' in data:
         new_domain = data['cloudflare_worker_domain'].strip()

@@ -1,12 +1,127 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+import time
+import urllib.parse
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
     # These segmented files are executed into the shared `web_outlook_app`
     # globals at runtime. Importing from the assembled module keeps IDE
     # inspections from flagging the shared names as unresolved.
     from web_outlook_app import *  # noqa: F403
+
+
+# ==================== HFMail 辅助邮箱 API ====================
+
+def hfmail_request(method: str, endpoint: str, params: dict = None,
+                   json_data: dict = None, timeout: int = 35) -> Optional[Dict]:
+    """发送 HFMail /api/v1 请求（Bearer Token）。"""
+    base_url = get_hfmail_base_url()
+    token = get_hfmail_api_token()
+    if not base_url or not token:
+        return {'success': False, 'error': 'HFMail 未配置', 'status_code': 0}
+
+    url = f"{base_url}{endpoint}"
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+    }
+    try:
+        if method.upper() == 'GET':
+            response = requests.get(url, headers=headers, params=params, timeout=timeout)
+        elif method.upper() == 'POST':
+            response = requests.post(url, headers=headers, json=json_data or {}, timeout=timeout)
+        else:
+            return {'success': False, 'error': f'不支持的方法: {method}', 'status_code': 0}
+
+        try:
+            payload = response.json()
+        except Exception:
+            payload = {'detail': (response.text or '')[:300]}
+
+        if response.status_code >= 200 and response.status_code < 300:
+            if isinstance(payload, dict):
+                payload.setdefault('success', True)
+                payload['status_code'] = response.status_code
+                return payload
+            return {'success': True, 'data': payload, 'status_code': response.status_code}
+
+        detail = ''
+        if isinstance(payload, dict):
+            detail = str(payload.get('detail') or payload.get('error') or '')
+        return {
+            'success': False,
+            'error': detail or f'HFMail 请求失败: HTTP {response.status_code}',
+            'status_code': response.status_code,
+            'payload': payload,
+        }
+    except Exception as exc:
+        return {'success': False, 'error': f'HFMail 请求异常: {exc}', 'status_code': 0}
+
+
+def hfmail_create_mailbox(seed: str) -> Tuple[Optional[str], str]:
+    """按 seed 生成 HFMail 临时邮箱。返回 (email, error)。"""
+    normalized_seed = str(seed or '').strip()
+    if not normalized_seed:
+        return None, 'seed 为空'
+    result = hfmail_request('POST', '/api/v1/mailboxes', json_data={'seed': normalized_seed})
+    if not result or not result.get('success'):
+        return None, str((result or {}).get('error') or '创建 HFMail 邮箱失败')
+    email_addr = str(result.get('email') or '').strip()
+    if not email_addr:
+        return None, 'HFMail 未返回邮箱地址'
+    return email_addr, ''
+
+
+def hfmail_wait_verification_code(
+    email_addr: str,
+    *,
+    since: Optional[str] = None,
+    sender_contains: str = 'microsoft',
+    total_timeout_seconds: int = 90,
+    wait_seconds_per_call: int = 25,
+) -> Tuple[Optional[str], str, Optional[Dict]]:
+    """轮询 HFMail 获取验证码。返回 (code, error, payload)。"""
+    mailbox = str(email_addr or '').strip()
+    if not mailbox:
+        return None, '邮箱为空', None
+
+    encoded = urllib.parse.quote(mailbox, safe='')
+    endpoint = f'/api/v1/mailboxes/{encoded}/verification-code'
+    deadline = time.time() + max(5, int(total_timeout_seconds or 90))
+    per_wait = max(0, min(30, int(wait_seconds_per_call or 25)))
+    last_error = 'Verification code not found'
+
+    while time.time() < deadline:
+        remaining = max(0, int(deadline - time.time()))
+        wait_seconds = min(per_wait, remaining)
+        params = {'wait_seconds': wait_seconds}
+        if since:
+            params['since'] = since
+        if sender_contains:
+            params['sender_contains'] = sender_contains
+
+        # wait_seconds 可能接近 30，HTTP timeout 需留余量
+        result = hfmail_request('GET', endpoint, params=params, timeout=max(35, wait_seconds + 10))
+        if result and result.get('success') and str(result.get('code') or '').strip():
+            return str(result.get('code')).strip(), '', result
+
+        status_code = int((result or {}).get('status_code') or 0)
+        last_error = str((result or {}).get('error') or last_error)
+        if status_code and status_code not in {404}:
+            # 401/5xx 等不再空转
+            if status_code >= 500 or status_code in {401, 403}:
+                return None, last_error, result
+        if remaining <= 0:
+            break
+
+    return None, last_error, None
+
+
+def hfmail_utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 # ==================== GPTMail 临时邮箱 API ====================

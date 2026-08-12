@@ -120,6 +120,191 @@ def absolute_form_action(action: str, current_url: str) -> str:
     return path
 
 
+def extract_named_inputs(html: str) -> Dict[str, Dict[str, str]]:
+    """提取带 name 的 input，返回 name -> {type, value, id}。"""
+    inputs: Dict[str, Dict[str, str]] = {}
+    for match in re.finditer(r'<input\b([^>]*)>', html or '', re.IGNORECASE):
+        attrs = match.group(1) or ''
+        name_match = re.search(r'\bname=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+        if not name_match:
+            continue
+        name = name_match.group(1)
+        type_match = re.search(r'\btype=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+        value_match = re.search(r'\bvalue=["\']([^"\']*)["\']', attrs, re.IGNORECASE)
+        id_match = re.search(r'\bid=["\']([^"\']+)["\']', attrs, re.IGNORECASE)
+        inputs[name] = {
+            'type': (type_match.group(1) if type_match else 'text').lower(),
+            'value': value_match.group(1) if value_match else '',
+            'id': id_match.group(1) if id_match else '',
+        }
+    return inputs
+
+
+def pick_proof_email_field(inputs: Dict[str, Dict[str, str]]) -> Optional[str]:
+    for name, meta in inputs.items():
+        lowered = name.lower()
+        input_type = meta.get('type') or ''
+        if input_type in {'hidden', 'submit', 'button', 'checkbox', 'radio', 'password'}:
+            continue
+        if input_type == 'email':
+            return name
+        if any(token in lowered for token in ('email', 'proof', 'altemail', 'recovery')):
+            return name
+    return None
+
+
+def pick_proof_code_field(inputs: Dict[str, Dict[str, str]]) -> Optional[str]:
+    for name, meta in inputs.items():
+        lowered = name.lower()
+        input_type = meta.get('type') or ''
+        if input_type in {'hidden', 'submit', 'button', 'checkbox', 'radio', 'password', 'email'}:
+            continue
+        if any(token in lowered for token in ('otc', 'ott', 'code', 'verify', 'verification')):
+            return name
+    # 常见备用：单文本框页面
+    text_fields = [
+        name for name, meta in inputs.items()
+        if (meta.get('type') or 'text') in {'text', 'tel', 'number'}
+        and name.lower() not in {'action', 'canary', 'hpgrequestid'}
+    ]
+    if len(text_fields) == 1:
+        return text_fields[0]
+    return None
+
+
+def html_looks_like_proof_code_page(url: str, html: str) -> bool:
+    text = html or ''
+    url_l = (url or '').lower()
+    if any(token in url_l for token in ('proofs/verify', 'proofs/confirm', 'interrupt/proofs')):
+        return True
+    if re.search(r'name=["\'][^"\']*(otc|ott|VerificationCode|security.?code)[^"\']*["\']', text, re.I):
+        return True
+    if re.search(r'(enter|输入).{0,20}(code|验证码)', text, re.I):
+        return True
+    return False
+
+
+def build_proof_skip_form_data(form_html: str) -> Dict[str, str]:
+    form_data = extract_hidden_inputs(form_html)
+    form_data['action'] = 'Skip'
+    return form_data
+
+
+def follow_oauth_redirects(session: Any, resp2: Any, *, max_hops: int = 8) -> Any:
+    hops = 0
+    while getattr(resp2, 'status_code', None) in (301, 302, 303, 307) and hops < max_hops:
+        loc = (getattr(resp2, 'headers', None) or {}).get('Location', '')
+        if not loc:
+            break
+        if 'localhost' in loc:
+            return make_light_response(loc)
+        resp2 = session.get(loc, timeout=30, allow_redirects=False)
+        hops += 1
+    return resp2
+
+
+def try_bind_microsoft_proof_email(
+    session: Any,
+    *,
+    current_url: str,
+    form_action: str,
+    form_html: str,
+    account_email: str,
+    log: Optional[Callable[[str], None]] = None,
+) -> Optional[Any]:
+    """尝试用 HFMail 代填并代绑辅助邮箱。成功返回下一跳响应，失败返回 None（调用方应 Skip）。"""
+    try:
+        with app.app_context():
+            if not is_hfmail_configured():
+                return None
+
+            recovery_email, create_error = hfmail_create_mailbox(account_email)
+            if not recovery_email:
+                graph_oauth_log(log, f"HFMail 创建辅助邮箱失败，回退 Skip: {create_error}")
+                return None
+
+            inputs = extract_named_inputs(form_html)
+            email_field = pick_proof_email_field(inputs)
+            if not email_field:
+                graph_oauth_log(log, "安全信息页未找到邮箱输入框，回退 Skip")
+                return None
+
+            since = hfmail_utc_now_iso()
+            form_data = extract_hidden_inputs(form_html)
+            form_data[email_field] = recovery_email
+            # 常见提交动作；若页面已有 action 且不是 Skip，保留
+            existing_action = str(form_data.get('action') or '').strip()
+            if not existing_action or existing_action.lower() == 'skip':
+                form_data['action'] = 'AddProof'
+            graph_oauth_log(log, f"提交 Microsoft 辅助邮箱: {recovery_email}")
+
+            resp2 = session.post(
+                form_action,
+                data=form_data,
+                timeout=30,
+                allow_redirects=False,
+            )
+            resp2 = follow_oauth_redirects(session, resp2)
+
+            # 最多再处理两轮验证码/确认页
+            for _ in range(2):
+                next_url = getattr(resp2, 'url', '') or ''
+                next_html = getattr(resp2, 'text', '') or ''
+                if 'localhost' in next_url and 'code=' in next_url:
+                    return resp2
+                if not html_looks_like_proof_code_page(next_url, next_html):
+                    # 已离开 proofs 验证页，视为绑定流程走通（或被重定向到下一 OAuth 步）
+                    if 'proofs/add' not in next_url.lower():
+                        return resp2
+                    # 仍停在 Add 页且没有验证码框，视为失败
+                    return None
+
+                code_form_match = re.search(
+                    r'<form[^>]*action="([^"]+)"[^>]*>(.*?)</form>',
+                    next_html,
+                    re.DOTALL | re.IGNORECASE,
+                )
+                if not code_form_match:
+                    graph_oauth_log(log, "验证码页面缺少表单，回退 Skip")
+                    return None
+
+                code_inputs = extract_named_inputs(code_form_match.group(2))
+                code_field = pick_proof_code_field(code_inputs)
+                if not code_field:
+                    graph_oauth_log(log, "验证码页面未找到验证码输入框，回退 Skip")
+                    return None
+
+                graph_oauth_log(log, f"等待 HFMail 验证码: {recovery_email}")
+                code, code_error, _payload = hfmail_wait_verification_code(
+                    recovery_email,
+                    since=since,
+                    sender_contains='microsoft',
+                    total_timeout_seconds=90,
+                    wait_seconds_per_call=25,
+                )
+                if not code:
+                    graph_oauth_log(log, f"获取辅助邮箱验证码失败，回退 Skip: {code_error}")
+                    return None
+
+                code_form_data = extract_hidden_inputs(code_form_match.group(2))
+                code_form_data[code_field] = code
+                if not str(code_form_data.get('action') or '').strip():
+                    code_form_data['action'] = 'VerifyProof'
+                graph_oauth_log(log, "提交 Microsoft 辅助邮箱验证码")
+                resp2 = session.post(
+                    absolute_form_action(code_form_match.group(1), next_url or current_url),
+                    data=code_form_data,
+                    timeout=30,
+                    allow_redirects=False,
+                )
+                resp2 = follow_oauth_redirects(session, resp2)
+
+            return resp2
+    except Exception as exc:
+        graph_oauth_log(log, f"辅助邮箱代绑异常，回退 Skip: {type(exc).__name__}: {exc}")
+        return None
+
+
 def extract_graph_refresh_token(
     email: str,
     password: str,
@@ -324,12 +509,24 @@ def extract_graph_refresh_token(
                 )
                 if not form_match:
                     return make_graph_oauth_response(False, "安全信息页面处理失败", "无法找到表单")
+                form_action = absolute_form_action(form_match.group(1), current_url)
+                form_html = form_match.group(2)
+                bind_resp = try_bind_microsoft_proof_email(
+                    session,
+                    current_url=current_url,
+                    form_action=form_action,
+                    form_html=form_html,
+                    account_email=email,
+                    log=log,
+                )
+                if bind_resp is not None:
+                    resp2 = bind_resp
+                    continue
+
                 graph_oauth_log(log, "跳过 Microsoft 安全信息添加页面")
-                form_data = extract_hidden_inputs(form_match.group(2))
-                form_data["action"] = "Skip"
                 resp2 = session.post(
-                    absolute_form_action(form_match.group(1), current_url),
-                    data=form_data,
+                    form_action,
+                    data=build_proof_skip_form_data(form_html),
                     timeout=30,
                     allow_redirects=False,
                 )

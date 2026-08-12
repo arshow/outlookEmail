@@ -1802,6 +1802,12 @@
                     document.getElementById('settingsExternalApiKey').value = data.settings.external_api_key || '';
                     document.getElementById('settingsDuckmailBaseUrl').value = data.settings.duckmail_base_url || '';
                     document.getElementById('settingsDuckmailApiKey').value = data.settings.duckmail_api_key || '';
+                    if (document.getElementById('settingsHfmailBaseUrl')) {
+                        document.getElementById('settingsHfmailBaseUrl').value = data.settings.hfmail_base_url || '';
+                    }
+                    if (document.getElementById('settingsHfmailApiToken')) {
+                        document.getElementById('settingsHfmailApiToken').value = data.settings.hfmail_api_token || '';
+                    }
                     document.getElementById('settingsCloudflareAiEnabled').checked = String(data.settings.cloudflare_ai_username_enabled) === 'true';
                     document.getElementById('settingsCloudflareAiApiUrl').value = data.settings.cloudflare_ai_username_api_url || '';
                     document.getElementById('settingsCloudflareAiModel').value = data.settings.cloudflare_ai_username_model || '';
@@ -1930,6 +1936,8 @@
             settings.external_api_key = externalApiKey;
             settings.duckmail_base_url = document.getElementById('settingsDuckmailBaseUrl').value.trim();
             settings.duckmail_api_key = document.getElementById('settingsDuckmailApiKey').value.trim();
+            settings.hfmail_base_url = (document.getElementById('settingsHfmailBaseUrl')?.value || '').trim();
+            settings.hfmail_api_token = (document.getElementById('settingsHfmailApiToken')?.value || '').trim();
             settings.cloudflare_ai_username_enabled = !!document.getElementById('settingsCloudflareAiEnabled')?.checked;
             settings.cloudflare_ai_username_api_url = document.getElementById('settingsCloudflareAiApiUrl')?.value.trim() || '';
             settings.cloudflare_ai_username_model = document.getElementById('settingsCloudflareAiModel')?.value.trim() || '';

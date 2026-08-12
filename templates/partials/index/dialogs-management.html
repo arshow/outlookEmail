@@ -71,6 +71,12 @@
                                         <span>自部署实例地址与私有域名 API Key</span>
                                     </button>
                                 </li>
+                                <li>
+                                    <button type="button" class="settings-sidebar-link" data-target="settingsHfMailSection" onclick="scrollSettingsSection('settingsHfMailSection', this)">
+                                        <strong>HFMail 辅助邮箱</strong>
+                                        <span>Outlook 自动授权时代绑辅助邮箱</span>
+                                    </button>
+                                </li>
                             </ul>
                         </div>
                     </aside>
@@ -785,6 +791,26 @@
                             <label class="form-label">DuckMail API Key（可选）</label>
                             <input type="text" class="form-input" id="settingsDuckmailApiKey" placeholder="dk_ 前缀的 API Key">
                             <div class="form-hint">用于获取私有域名，可从 <a class="inline-link" href="https://domain.duckmail.sbs" target="_blank">domain.duckmail.sbs</a> 获取。</div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="settings-section" id="settingsHfMailSection">
+                    <div class="settings-section-head">
+                        <span class="settings-section-kicker">HFMail</span>
+                        <h4>HFMail 辅助邮箱设置</h4>
+                        <p>用于 Outlook 自动授权时，遇到 Microsoft 安全信息页代填并代绑辅助邮箱。地址与 Token 都填写后才会启用；失败时自动回退跳过。</p>
+                    </div>
+                    <div class="settings-panel settings-panel-grid">
+                        <div class="form-group">
+                            <label class="form-label">HFMail API 地址</label>
+                            <input type="text" class="form-input" id="settingsHfmailBaseUrl" placeholder="http://host:3000">
+                            <div class="form-hint">HFMail 服务 Base URL，例如 <code>http://192.168.1.10:3000</code>，不要带尾斜杠。</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">HFMail API Token</label>
+                            <input type="password" class="form-input" id="settingsHfmailApiToken" placeholder="Bearer Token" autocomplete="off">
+                            <div class="form-hint">对应 HFMail 的 <code>HFMAIL_API_TOKEN</code>，请求头使用 <code>Authorization: Bearer &lt;token&gt;</code>。</div>
                         </div>
                     </div>
                 </section>

@@ -2716,10 +2716,21 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
         self.assertLess(settings_html.index('data-target="forwardingSettingsSection"'), settings_html.index('data-target="settingsCloudflareSection"'))
         self.assertLess(settings_html.index('data-target="settingsCloudflareSection"'), settings_html.index('data-target="settingsAccessSection"'))
         self.assertLess(settings_html.index('data-target="settingsAccessSection"'), settings_html.index('data-target="settingsDuckMailSection"'))
+        self.assertLess(settings_html.index('data-target="settingsDuckMailSection"'), settings_html.index('data-target="settingsHfMailSection"'))
 
         self.assertLess(settings_html.index('id="forwardingSettingsSection"'), settings_html.index('id="settingsCloudflareSection"'))
         self.assertLess(settings_html.index('id="settingsCloudflareSection"'), settings_html.index('id="settingsAccessSection"'))
         self.assertLess(settings_html.index('id="settingsAccessSection"'), settings_html.index('id="settingsDuckMailSection"'))
+        self.assertLess(settings_html.index('id="settingsDuckMailSection"'), settings_html.index('id="settingsHfMailSection"'))
+        self.assertIn('id="settingsHfmailBaseUrl"', settings_html)
+        self.assertIn('id="settingsHfmailApiToken"', settings_html)
+        self.assertIn('HFMail 辅助邮箱', settings_html)
+
+        settings_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '07-settings.js').read_text(encoding='utf-8')
+        self.assertIn("settings.hfmail_base_url", settings_js)
+        self.assertIn("settings.hfmail_api_token", settings_js)
+        self.assertIn("data.settings.hfmail_base_url", settings_js)
+        self.assertIn("data.settings.hfmail_api_token", settings_js)
 
     def test_cloudflare_channel_form_actions_distinguish_create_and_reset(self):
         settings_html = pathlib.Path(ROOT_DIR, 'templates', 'partials', 'index', 'dialogs-management.html').read_text(encoding='utf-8')
