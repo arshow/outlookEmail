@@ -471,6 +471,19 @@
                         </svg>
                         <span class="email-detail-action-btn__text">显示邮件源</span>
                     </button>
+                    <button class="translate-email-btn email-detail-action-btn email-detail-action-btn--translate" type="button"
+                        id="translateEmailBtn"
+                        title="翻译成中文（MyMemory 免费）" aria-label="翻译成中文" onclick="toggleEmailTranslation()">
+                        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
+                            <path d="M5 8l6 6"></path>
+                            <path d="M4 14l6-6 2-3"></path>
+                            <path d="M2 5h12"></path>
+                            <path d="M7 2h1"></path>
+                            <path d="M22 22l-5-10-5 10"></path>
+                            <path d="M14 18h6"></path>
+                        </svg>
+                        <span class="email-detail-action-btn__text" id="translateEmailBtnText">翻译成中文</span>
+                    </button>
                     <label class="email-trust-toggle" title="信任此邮件" aria-label="信任此邮件">
                         <input type="checkbox" id="trustEmailCheckbox" onchange="toggleTrustMode(this)">
                         <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">

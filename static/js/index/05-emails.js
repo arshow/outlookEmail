@@ -2280,6 +2280,7 @@
                             </div>
                         `;
                         document.getElementById('emailDetailToolbar').style.display = 'none';
+                        resetEmailTranslateUi();
                     }
 
                     if (failedCount > 0) {
@@ -2482,6 +2483,10 @@
                 </div>
             `;
 
+            emailTranslateViewMode = 'original';
+            emailTranslateInFlight = false;
+            updateTranslateEmailButtonLabel();
+
             // 如果是 HTML 内容，设置 iframe 内容
             if (isHtml) {
                 const iframe = document.getElementById('emailBodyFrame');
@@ -2675,6 +2680,199 @@
             if (!modal) return;
             modal.classList.remove('show');
             updateModalBodyState();
+        }
+
+        const emailTranslateCache = {};
+        let emailTranslateViewMode = 'original';
+        let emailTranslateInFlight = false;
+
+        function getEmailTranslateCacheKey(email = currentEmailDetail) {
+            if (!email) return '';
+            const account = String(email.account_email || currentAccount || '').trim();
+            const messageId = String(email.id || '').trim();
+            if (!account || !messageId) return '';
+            return `${account}|${messageId}`;
+        }
+
+        function updateTranslateEmailButtonLabel() {
+            const textEl = document.getElementById('translateEmailBtnText');
+            const btn = document.getElementById('translateEmailBtn');
+            if (!textEl || !btn) return;
+            if (emailTranslateInFlight) {
+                textEl.textContent = '翻译中…';
+                btn.disabled = true;
+                return;
+            }
+            btn.disabled = false;
+            const cacheKey = getEmailTranslateCacheKey();
+            const hasCache = !!(cacheKey && emailTranslateCache[cacheKey]);
+            if (!hasCache) {
+                textEl.textContent = '翻译成中文';
+                return;
+            }
+            textEl.textContent = emailTranslateViewMode === 'translation' ? '显示原文' : '显示译文';
+        }
+
+        function setEmailOriginalBodyVisible(visible) {
+            const detailBody = document.querySelector('#emailDetail .email-detail-body');
+            if (!detailBody) return;
+            detailBody.querySelectorAll('#emailBodyFrame, .email-body-text').forEach((node) => {
+                node.style.display = visible ? '' : 'none';
+            });
+        }
+
+        function ensureEmailTranslatePanel() {
+            const detailBody = document.querySelector('#emailDetail .email-detail-body');
+            if (!detailBody) return null;
+            let panel = detailBody.querySelector('.email-translate-panel');
+            if (panel) return panel;
+            panel = document.createElement('div');
+            panel.className = 'email-translate-panel';
+            panel.innerHTML = `
+                <div class="email-translate-panel__head">
+                    <div class="email-translate-panel__title">中文译文</div>
+                    <button type="button" class="btn btn-sm btn-secondary" id="emailTranslateToggleBtn">显示原文</button>
+                </div>
+                <div class="email-translate-panel__subject" id="emailTranslateSubject"></div>
+                <div class="email-translate-panel__body" id="emailTranslateBody"></div>
+                <div class="email-translate-panel__foot">MyMemory 免费翻译</div>
+            `;
+            const firstChild = detailBody.firstElementChild;
+            if (firstChild) {
+                detailBody.insertBefore(panel, firstChild);
+            } else {
+                detailBody.appendChild(panel);
+            }
+            const toggleBtn = panel.querySelector('#emailTranslateToggleBtn');
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', () => {
+                    emailTranslateViewMode = emailTranslateViewMode === 'translation' ? 'original' : 'translation';
+                    applyEmailTranslateViewMode();
+                });
+            }
+            return panel;
+        }
+
+        function applyEmailTranslateViewMode() {
+            const panel = document.querySelector('#emailDetail .email-translate-panel');
+            const showingTranslation = emailTranslateViewMode === 'translation';
+            if (panel) {
+                panel.style.display = showingTranslation ? '' : 'none';
+                const toggleBtn = panel.querySelector('#emailTranslateToggleBtn');
+                if (toggleBtn) {
+                    toggleBtn.textContent = showingTranslation ? '显示原文' : '显示译文';
+                }
+            }
+            setEmailOriginalBodyVisible(!showingTranslation);
+            updateTranslateEmailButtonLabel();
+        }
+
+        function renderEmailTranslatePanel(payload) {
+            const panel = ensureEmailTranslatePanel();
+            if (!panel) return;
+            const subjectEl = document.getElementById('emailTranslateSubject');
+            const bodyEl = document.getElementById('emailTranslateBody');
+            const subjectZh = String(payload?.subject_translation || '').trim();
+            const bodyZh = String(payload?.body_translation || payload?.translation || '').trim();
+            if (subjectEl) {
+                if (subjectZh) {
+                    subjectEl.style.display = '';
+                    subjectEl.textContent = subjectZh;
+                } else {
+                    subjectEl.style.display = 'none';
+                    subjectEl.textContent = '';
+                }
+            }
+            if (bodyEl) {
+                bodyEl.textContent = bodyZh || '（译文为空）';
+            }
+            const foot = panel.querySelector('.email-translate-panel__foot');
+            if (foot) {
+                const notes = ['MyMemory 免费翻译'];
+                if (payload?.truncated) notes.push('原文过长已截断');
+                foot.textContent = notes.join(' · ');
+            }
+            emailTranslateViewMode = 'translation';
+            applyEmailTranslateViewMode();
+        }
+
+        function resetEmailTranslateUi() {
+            emailTranslateViewMode = 'original';
+            emailTranslateInFlight = false;
+            const panel = document.querySelector('#emailDetail .email-translate-panel');
+            if (panel) panel.remove();
+            setEmailOriginalBodyVisible(true);
+            updateTranslateEmailButtonLabel();
+        }
+
+        async function toggleEmailTranslation() {
+            if (!currentEmailDetail) {
+                showToast('请先选择一封邮件', 'warning');
+                return;
+            }
+            if (emailTranslateInFlight) return;
+
+            const cacheKey = getEmailTranslateCacheKey(currentEmailDetail);
+            if (!cacheKey) {
+                showToast('无法识别当前邮件', 'error');
+                return;
+            }
+
+            const cached = emailTranslateCache[cacheKey];
+            if (cached) {
+                if (emailTranslateViewMode === 'translation') {
+                    emailTranslateViewMode = 'original';
+                    applyEmailTranslateViewMode();
+                } else {
+                    renderEmailTranslatePanel(cached);
+                }
+                return;
+            }
+
+            const body = String(currentEmailDetail.body || '');
+            const isHtml = currentEmailDetail.body_type === 'html'
+                || (body && (body.includes('<html') || body.includes('<div') || body.includes('<p>')));
+            const payload = {
+                subject: String(currentEmailDetail.subject || '').trim(),
+                html: isHtml ? body : '',
+                text: isHtml ? '' : body,
+                source_lang: 'autodetect',
+            };
+            if (!payload.subject && !payload.html && !payload.text) {
+                showToast('当前邮件没有可翻译内容', 'warning');
+                return;
+            }
+
+            emailTranslateInFlight = true;
+            updateTranslateEmailButtonLabel();
+            try {
+                const response = await fetchWithTimeout('/api/emails/translate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    timeoutMs: 60000,
+                    timeoutMessage: '翻译超时，请稍后重试',
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || !data.success) {
+                    handleApiError(data, data.error || '翻译失败');
+                    return;
+                }
+                emailTranslateCache[cacheKey] = {
+                    translation: data.translation || '',
+                    subject_translation: data.subject_translation || '',
+                    body_translation: data.body_translation || '',
+                    provider: data.provider || 'mymemory',
+                    truncated: !!data.truncated,
+                };
+                renderEmailTranslatePanel(emailTranslateCache[cacheKey]);
+                showToast(data.truncated ? '已翻译（原文过长已截断）' : '翻译完成', 'success');
+            } catch (error) {
+                showToast(error?.message || '翻译失败', 'error');
+            } finally {
+                emailTranslateInFlight = false;
+                updateTranslateEmailButtonLabel();
+            }
         }
 
         async function openRawEmailModal() {

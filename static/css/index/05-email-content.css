@@ -879,6 +879,50 @@
             color: #333;
         }
 
+        .email-translate-panel {
+            margin: 0 0 20px;
+            padding: 16px 18px;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            background: #f8fafc;
+        }
+
+        .email-translate-panel__head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .email-translate-panel__title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #0f172a;
+        }
+
+        .email-translate-panel__subject {
+            margin-bottom: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            color: #111827;
+            line-height: 1.4;
+        }
+
+        .email-translate-panel__body {
+            white-space: pre-wrap;
+            font-size: 15px;
+            line-height: 1.7;
+            color: #1f2937;
+            word-break: break-word;
+        }
+
+        .email-translate-panel__foot {
+            margin-top: 12px;
+            font-size: 12px;
+            color: #94a3b8;
+        }
+
         .email-attachments {
             margin-bottom: 20px;
             padding: 16px;

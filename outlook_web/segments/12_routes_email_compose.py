@@ -994,3 +994,45 @@ def api_forward_email():
     if not result.get('success'):
         return _error_response(result.get('error'))
     return jsonify({'success': True, 'message': '转发已发送', 'message_id': result.get('message_id')})
+
+
+@app.route('/api/emails/translate', methods=['POST'])
+@login_required
+def api_translate_email():
+    from outlook_web.translate_mymemory import (
+        TranslateError,
+        prepare_translate_fields,
+        translate_email_fields_to_zh,
+    )
+
+    data = request.get_json(silent=True) or {}
+    text = str(data.get('text') or '')
+    html = str(data.get('html') or '')
+    subject = str(data.get('subject') or '')
+    source_lang = str(data.get('source_lang') or 'autodetect').strip() or 'autodetect'
+
+    try:
+        fields = prepare_translate_fields(
+            text=text,
+            html=html,
+            subject=subject,
+            html_to_plain=html_to_plain_text,
+        )
+        result = translate_email_fields_to_zh(
+            subject=fields['subject'],
+            body=fields['body'],
+            source_lang=source_lang,
+        )
+    except TranslateError as exc:
+        return jsonify({'success': False, 'error': exc.message}), exc.status_code
+    except Exception as exc:
+        return jsonify({'success': False, 'error': f'翻译失败: {exc}'}), 500
+
+    return jsonify({
+        'success': True,
+        'translation': result.get('translation') or '',
+        'subject_translation': result.get('subject_translation') or '',
+        'body_translation': result.get('body_translation') or '',
+        'provider': result.get('provider') or 'mymemory',
+        'truncated': bool(result.get('truncated')),
+    })
