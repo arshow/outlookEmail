@@ -214,6 +214,43 @@ class EmailSendApiTests(unittest.TestCase):
         self.assertEqual(config['port'], 465)
         self.assertTrue(config['use_ssl'])
 
+    def test_normalize_compose_message_id_strips_selection_key(self):
+        self.assertEqual(
+            web_outlook_app.normalize_compose_message_id('12::inbox::graph::AAMkAGI2'),
+            'AAMkAGI2',
+        )
+        self.assertEqual(
+            web_outlook_app.normalize_compose_message_id('inbox::graph::AAMkAGI2'),
+            'AAMkAGI2',
+        )
+        self.assertEqual(
+            web_outlook_app.normalize_compose_message_id('AAMkAGI2'),
+            'AAMkAGI2',
+        )
+
+    def test_build_graph_message_action_url_encodes_id(self):
+        url = web_outlook_app.build_graph_message_action_url('inbox::graph::AAMk/A+B=', 'createReply')
+        self.assertTrue(url.endswith('/createReply'))
+        self.assertIn('/me/messages/', url)
+        self.assertNotIn('AAMk/A+B=', url)
+        self.assertIn('AAMk%2FA%2BB%3D', url)
+
+    def test_reply_normalizes_selection_key_message_id(self):
+        with patch.object(
+            web_outlook_app,
+            'reply_email_via_graph',
+            return_value={'success': True, 'message_id': 'draft-1'},
+        ) as mocked:
+            response = self.client.post('/api/emails/reply', json={
+                'email': 'sender@outlook.com',
+                'message_id': 'sender@outlook.com::inbox::graph::AAMkRealId',
+                'body_html': '<p>hi</p>',
+                'reply_all': False,
+            })
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['success'])
+        self.assertEqual(mocked.call_args.kwargs['message_id'], 'AAMkRealId')
+
 
 if __name__ == '__main__':
     unittest.main()

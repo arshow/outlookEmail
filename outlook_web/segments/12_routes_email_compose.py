@@ -11,6 +11,33 @@ if TYPE_CHECKING:
 EMAIL_ADDRESS_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 
+def normalize_compose_message_id(message_id: Any) -> str:
+    """提取可用于 Graph/IMAP 的原始邮件 ID。
+
+    前端 selection key 形如:
+    - account::folder::idMode::id
+    - folder::idMode::id
+    真正的 provider message id 在最后一段。
+    """
+    raw = str(message_id or '').strip()
+    if not raw:
+        return ''
+    if '::' not in raw:
+        return raw
+    parts = [part for part in raw.split('::') if part != '']
+    if len(parts) >= 3:
+        # folder::idMode::id 或 account::folder::idMode::id
+        return parts[-1]
+    return raw
+
+
+def build_graph_message_action_url(message_id: str, action: str = '') -> str:
+    encoded_id = quote(normalize_compose_message_id(message_id), safe='')
+    base = f'https://graph.microsoft.com/v1.0/me/messages/{encoded_id}'
+    action_name = str(action or '').strip().strip('/')
+    return f'{base}/{action_name}' if action_name else base
+
+
 def _coerce_bool(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
@@ -426,7 +453,7 @@ def _graph_create_and_send(
     proxy_url: str = None,
     fallback_proxy_urls: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    create_url = f'https://graph.microsoft.com/v1.0/me/messages/{message_id}/{action}'
+    create_url = build_graph_message_action_url(message_id, action)
     create_response = graph_send_json(
         access_token, create_url, {}, proxy_url, fallback_proxy_urls
     )
@@ -486,7 +513,7 @@ def _graph_create_and_send(
     if patch_payload:
         patch_response = graph_send_json(
             access_token,
-            f'https://graph.microsoft.com/v1.0/me/messages/{draft_id}',
+            build_graph_message_action_url(draft_id),
             patch_payload,
             proxy_url,
             fallback_proxy_urls,
@@ -513,7 +540,7 @@ def _graph_create_and_send(
         }
         attach_response = graph_send_json(
             access_token,
-            f'https://graph.microsoft.com/v1.0/me/messages/{draft_id}/attachments',
+            build_graph_message_action_url(draft_id, 'attachments'),
             attach_payload,
             proxy_url,
             fallback_proxy_urls,
@@ -532,7 +559,7 @@ def _graph_create_and_send(
 
     send_response = graph_send_json(
         access_token,
-        f'https://graph.microsoft.com/v1.0/me/messages/{draft_id}/send',
+        build_graph_message_action_url(draft_id, 'send'),
         None,
         proxy_url,
         fallback_proxy_urls,
@@ -541,7 +568,7 @@ def _graph_create_and_send(
     if send_response.status_code == 400:
         send_response = request_with_proxy_failover(
             'post',
-            f'https://graph.microsoft.com/v1.0/me/messages/{draft_id}/send',
+            build_graph_message_action_url(draft_id, 'send'),
             headers={
                 'Authorization': f'Bearer {access_token}',
                 'Content-Length': '0',
@@ -602,9 +629,10 @@ def reply_email_via_graph(
         return {'success': False, 'error': token_result.get('error')}
 
     action = 'createReplyAll' if reply_all else 'createReply'
+    resolved_message_id = normalize_compose_message_id(message_id)
     result = _graph_create_and_send(
         token_result['access_token'],
-        message_id=message_id,
+        message_id=resolved_message_id,
         action=action,
         body_html=body_html,
         body_text=body_text,
@@ -623,7 +651,7 @@ def reply_email_via_graph(
     detail_result = get_email_detail_graph_result(
         account.get('client_id', ''),
         account.get('refresh_token', ''),
-        message_id,
+        resolved_message_id,
         proxy_url,
         fallback_proxy_urls,
     )
@@ -678,9 +706,10 @@ def forward_email_via_graph(
     if not token_result.get('success'):
         return {'success': False, 'error': token_result.get('error')}
 
+    resolved_message_id = normalize_compose_message_id(message_id)
     result = _graph_create_and_send(
         token_result['access_token'],
-        message_id=message_id,
+        message_id=resolved_message_id,
         action='createForward',
         body_html=body_html,
         body_text=body_text,
@@ -698,7 +727,7 @@ def forward_email_via_graph(
     detail_result = get_email_detail_graph_result(
         account.get('client_id', ''),
         account.get('refresh_token', ''),
-        message_id,
+        resolved_message_id,
         proxy_url,
         fallback_proxy_urls,
     )
@@ -804,7 +833,7 @@ def parse_compose_request(require_message_id: bool = False) -> Tuple[Optional[Di
     if attach_error:
         return None, _error_response(attach_error)
 
-    message_id = str(data.get('message_id') or '').strip()
+    message_id = normalize_compose_message_id(data.get('message_id'))
     if require_message_id and not message_id:
         return None, (jsonify({'success': False, 'error': 'message_id 不能为空'}), 400)
 

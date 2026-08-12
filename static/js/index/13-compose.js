@@ -408,7 +408,8 @@
 
             if (mode === 'reply' || mode === 'reply_all') {
                 titleEl.textContent = mode === 'reply_all' ? '全部回复' : '回复';
-                document.getElementById('composeMessageId').value = currentEmailId || detail.id || '';
+                // 必须用详情里的原始 provider id；currentEmailId 可能是 selection key
+                document.getElementById('composeMessageId').value = String(detail.id || '').trim();
                 const from = extractComposeAddress(detail.from);
                 let toList = from ? [from] : [];
                 let ccList = [];
@@ -429,7 +430,7 @@
                 applyComposeQuotedBody(detail);
             } else if (mode === 'forward') {
                 titleEl.textContent = '转发邮件';
-                document.getElementById('composeMessageId').value = currentEmailId || detail.id || '';
+                document.getElementById('composeMessageId').value = String(detail.id || '').trim();
                 document.getElementById('composeSubject').value = ensureSubjectPrefix(detail.subject || '', 'Fw:');
                 if (languageGroup) languageGroup.style.display = '';
                 applyComposeQuotedBody(detail);
