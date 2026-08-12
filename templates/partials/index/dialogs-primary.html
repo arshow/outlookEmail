@@ -825,11 +825,11 @@
                         <div class="compose-ai-controls">
                             <div class="compose-ai-scope provider-tabs">
                                 <label class="provider-tab-item">
-                                    <input type="radio" name="composeAiContextScope" value="current" checked>
+                                    <input type="radio" name="composeAiContextScope" value="current" checked onchange="onComposeAiContextScopeChange()">
                                     <span class="provider-tab-label">仅本封</span>
                                 </label>
                                 <label class="provider-tab-item">
-                                    <input type="radio" name="composeAiContextScope" value="contact_local">
+                                    <input type="radio" name="composeAiContextScope" value="contact_local" onchange="onComposeAiContextScopeChange()">
                                     <span class="provider-tab-label">本地历史</span>
                                 </label>
                             </div>

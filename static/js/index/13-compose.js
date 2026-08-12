@@ -578,12 +578,19 @@
         }
 
         function setComposeAiActionEnabled(enabled) {
+            const canUse = !!enabled && !composeAiState.busy;
             ['composeAiShorterBtn', 'composeAiPoliterBtn', 'composeAiRegenBtn', 'composeAiCustomBtn', 'composeAiInsertBtn']
                 .forEach((id) => {
                     const btn = document.getElementById(id);
-                    if (!btn || btn.classList.contains('is-loading')) return;
-                    btn.disabled = !enabled || composeAiState.busy;
+                    if (!btn) return;
+                    btn.disabled = !canUse;
+                    btn.setAttribute('aria-disabled', canUse ? 'false' : 'true');
                 });
+            const analyzeBtn = document.getElementById('composeAiAnalyzeBtn');
+            if (analyzeBtn && composeAiState.busy) {
+                analyzeBtn.disabled = true;
+                analyzeBtn.setAttribute('aria-disabled', 'true');
+            }
             const insertBlock = document.getElementById('composeAiInsertBlock');
             if (insertBlock && enabled) insertBlock.style.display = '';
         }
@@ -595,11 +602,30 @@
             btn.classList.remove('is-loading');
         }
 
+        function lockComposeAiControls(locked) {
+            const customInput = document.getElementById('composeAiCustomInstruction');
+            if (customInput) customInput.disabled = !!locked;
+            document.querySelectorAll('input[name="composeAiContextScope"]').forEach((input) => {
+                input.disabled = !!locked;
+            });
+            COMPOSE_AI_ACTION_BUTTON_IDS.forEach((id) => {
+                const btn = document.getElementById(id);
+                if (!btn) return;
+                if (locked) {
+                    btn.disabled = true;
+                    btn.setAttribute('aria-disabled', 'true');
+                }
+            });
+        }
+
         function beginComposeAiBusy(activeBtnId, loadingText) {
             if (composeAiState.busy) return false;
             composeAiState.busy = true;
             const panel = document.querySelector('#composeAiPanel .compose-ai-panel');
-            if (panel) panel.classList.add('is-busy');
+            if (panel) {
+                panel.classList.add('is-busy');
+                panel.setAttribute('aria-busy', 'true');
+            }
             const busyHint = document.getElementById('composeAiBusyHint');
             if (busyHint) {
                 busyHint.style.display = '';
@@ -612,23 +638,23 @@
                     btn.dataset.defaultLabel = btn.textContent.trim();
                 }
                 btn.disabled = true;
+                btn.setAttribute('aria-disabled', 'true');
                 if (id === activeBtnId) {
                     btn.classList.add('is-loading');
                     btn.textContent = loadingText || '处理中…';
                 }
             });
-            const customInput = document.getElementById('composeAiCustomInstruction');
-            if (customInput) customInput.disabled = true;
-            document.querySelectorAll('input[name="composeAiContextScope"]').forEach((input) => {
-                input.disabled = true;
-            });
+            lockComposeAiControls(true);
             return true;
         }
 
         function endComposeAiBusy() {
             composeAiState.busy = false;
             const panel = document.querySelector('#composeAiPanel .compose-ai-panel');
-            if (panel) panel.classList.remove('is-busy');
+            if (panel) {
+                panel.classList.remove('is-busy');
+                panel.setAttribute('aria-busy', 'false');
+            }
             const busyHint = document.getElementById('composeAiBusyHint');
             if (busyHint) {
                 busyHint.style.display = 'none';
@@ -637,14 +663,82 @@
             COMPOSE_AI_ACTION_BUTTON_IDS.forEach((id) => {
                 restoreComposeAiButtonLabel(document.getElementById(id));
             });
+            lockComposeAiControls(false);
             const analyzeBtn = document.getElementById('composeAiAnalyzeBtn');
-            if (analyzeBtn) analyzeBtn.disabled = false;
-            const customInput = document.getElementById('composeAiCustomInstruction');
-            if (customInput) customInput.disabled = false;
-            document.querySelectorAll('input[name="composeAiContextScope"]').forEach((input) => {
-                input.disabled = false;
-            });
+            if (analyzeBtn) {
+                analyzeBtn.disabled = false;
+                analyzeBtn.setAttribute('aria-disabled', 'false');
+            }
             setComposeAiActionEnabled(!!composeAiState.replyText);
+        }
+
+        function clearComposeAiResultUi() {
+            composeAiState.runId = null;
+            composeAiState.analysis = null;
+            composeAiState.meta = null;
+            composeAiState.replyText = '';
+            composeAiState.replyTextZh = '';
+            const result = document.getElementById('composeAiResult');
+            if (result) result.style.display = 'none';
+            const insertBlock = document.getElementById('composeAiInsertBlock');
+            if (insertBlock) insertBlock.style.display = 'none';
+            const reviewLabel = document.getElementById('composeAiReviewLabel');
+            if (reviewLabel) reviewLabel.style.display = 'none';
+            const reviewed = document.getElementById('composeAiReviewed');
+            if (reviewed) reviewed.checked = false;
+            setComposeAiActionEnabled(false);
+        }
+
+        async function loadComposeAiLatest(options = {}) {
+            const silent = options.silent !== false;
+            const clearIfMissing = !!options.clearIfMissing;
+            if (!composeAiState.ready || composeAiState.busy) return false;
+            const email = document.getElementById('composeFromEmail')?.value?.trim() || '';
+            const messageId = document.getElementById('composeMessageId')?.value || '';
+            if (!email || !messageId) return false;
+            try {
+                const params = new URLSearchParams({
+                    email,
+                    message_id: messageId,
+                    context_scope: getComposeAiContextScope(),
+                });
+                const response = await fetchWithTimeout(`/api/ai/latest?${params.toString()}`);
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || !data.success || !data.found || !data.analysis) {
+                    if (clearIfMissing) clearComposeAiResultUi();
+                    return false;
+                }
+                renderComposeAiResult({
+                    run_id: data.run_id,
+                    analysis: data.analysis,
+                    meta: data.meta || {
+                        context_scope: data.context_scope,
+                        history_count: data.history_count,
+                    },
+                    provider: data.provider,
+                    model: data.model,
+                    cached: true,
+                });
+                const statusHint = document.getElementById('composeAiStatusHint');
+                if (statusHint && composeAiState.ready) {
+                    const base = statusHint.textContent || '';
+                    if (!base.includes('已加载缓存')) {
+                        statusHint.textContent = `${base}${base ? ' · ' : ''}已加载缓存`;
+                    }
+                }
+                if (!silent) {
+                    showToast('已加载缓存建议', 'success');
+                }
+                return true;
+            } catch (_error) {
+                if (clearIfMissing) clearComposeAiResultUi();
+                return false;
+            }
+        }
+
+        async function onComposeAiContextScopeChange() {
+            if (!composeAiState.ready || composeAiState.busy) return;
+            await loadComposeAiLatest({ silent: true, clearIfMissing: true });
         }
 
         async function prepareComposeAiPanel(mode) {
@@ -670,6 +764,10 @@
                     }
                 } else if (statusHint) {
                     statusHint.textContent = `已就绪：${data.provider || ''} / ${data.model || ''}`;
+                }
+                if (composeAiState.ready) {
+                    // Open reply with any existing draft for this mail+scope immediately.
+                    await loadComposeAiLatest({ silent: true, clearIfMissing: false });
                 }
             } catch (error) {
                 composeAiState.ready = false;
@@ -772,7 +870,10 @@
         }
 
         async function analyzeComposeAiReply(forceRefresh = false) {
-            if (composeAiState.busy) return;
+            if (composeAiState.busy) {
+                showToast('正在处理中，请稍候', 'info');
+                return;
+            }
             if (!composeAiState.ready) {
                 showToast('请先在 /ai 启用并配置 AI', 'error');
                 return;
@@ -833,7 +934,10 @@
         }
 
         async function refineComposeAiReply(mode) {
-            if (composeAiState.busy) return;
+            if (composeAiState.busy) {
+                showToast('正在处理中，请稍候', 'info');
+                return;
+            }
             if (!composeAiState.replyText) {
                 showToast('请先生成建议', 'error');
                 return;
@@ -901,7 +1005,10 @@
         }
 
         function insertComposeAiReply() {
-            if (composeAiState.busy) return;
+            if (composeAiState.busy) {
+                showToast('正在处理中，请稍候', 'info');
+                return;
+            }
             const text = normalizeComposeAiText(composeAiState.replyText || '');
             if (!text) {
                 showToast('没有可填入的草稿', 'error');

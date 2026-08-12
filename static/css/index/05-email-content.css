@@ -437,15 +437,21 @@
             flex: 0 0 auto;
         }
 
-        .compose-ai-panel.is-busy .btn.is-loading {
-            opacity: 0.85;
-            cursor: wait;
-        }
-
+        .compose-ai-panel.is-busy .compose-ai-controls,
+        .compose-ai-panel.is-busy .compose-ai-insert-block,
         .compose-ai-panel.is-busy .compose-ai-scope,
         .compose-ai-panel.is-busy .compose-ai-custom-row input {
             pointer-events: none;
-            opacity: 0.7;
+        }
+
+        .compose-ai-panel.is-busy .btn {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+
+        .compose-ai-panel.is-busy .btn.is-loading {
+            opacity: 0.9;
+            cursor: wait;
         }
 
         @keyframes compose-ai-spin {
