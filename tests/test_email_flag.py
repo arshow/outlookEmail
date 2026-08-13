@@ -220,6 +220,36 @@ class EmailFlagTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row['is_read'], 0)
 
+    def test_mark_read_graph_batch_encodes_message_id(self):
+        captured = {}
+
+        class FakeResponse:
+            status_code = 200
+
+            def json(self):
+                return {'responses': [{'id': '0', 'status': 200}]}
+
+        def fake_request(method, url, headers=None, json=None, timeout=None, **kwargs):
+            captured['json'] = json
+            return FakeResponse()
+
+        with patch.object(
+            web_outlook_app,
+            'get_access_token_graph_result',
+            return_value={'success': True, 'access_token': 'token'},
+        ), patch.object(web_outlook_app, 'request_with_proxy_failover', side_effect=fake_request):
+            result = web_outlook_app.mark_emails_read_graph_result(
+                'client-id',
+                'refresh-token',
+                ['AAMk+id/with extras='],
+            )
+
+        self.assertTrue(result['success'])
+        self.assertEqual(
+            captured['json']['requests'][0]['url'],
+            '/me/messages/AAMk%2Bid%2Fwith%20extras%3D',
+        )
+
     def test_local_retention_list_can_filter_flagged_status(self):
         self._seed_graph_retained_row('flagged-visible', is_flagged=1)
         self._seed_graph_retained_row('plain-visible', is_flagged=0)

@@ -1998,6 +1998,8 @@
                 const pendingKey = getEmailSelectionKey(item) || String(item.id);
                 pendingReadEmailIds.add(pendingKey);
             });
+            applyEmailReadState(normalizedItems, targetIsRead);
+            renderEmailList(currentEmails);
 
             try {
                 const requestGroups = groupEmailActionItemsByAccount(normalizedItems);
@@ -2052,11 +2054,6 @@
                     errors: results.flatMap(result => result.errors || [])
                 };
 
-                if (combined.updated_items.length > 0) {
-                    applyEmailReadState(combined.updated_items, targetIsRead);
-                    renderEmailList(currentEmails);
-                }
-
                 if (!silent) {
                     if (combined.success_count > 0 && combined.failed_count === 0) {
                         showToast(`已将 ${combined.success_count} 封邮件设为${actionLabel}`);
@@ -2073,6 +2070,8 @@
 
                 return combined;
             } catch (error) {
+                applyEmailReadState(normalizedItems, !targetIsRead);
+                renderEmailList(currentEmails);
                 if (!silent) {
                     showToast(`设为${actionLabel}失败，请检查网络后重试`, 'error');
                 }
@@ -2759,6 +2758,16 @@
             if (deleteBtn) deleteBtn.style.display = '';
             showMobileEmailDetail();
 
+            if (isEmailUnread(selectedEmail)) {
+                void requestMarkEmailsAsRead([{
+                    id: messageId,
+                    folder: requestFolder,
+                    id_mode: selectedEmail.id_mode || '',
+                    account_id: selectedEmail.account_id,
+                    account_email: accountEmail
+                }], { silent: true });
+            }
+
             // 加载邮件详情
             const container = document.getElementById('emailDetail');
             container.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
@@ -2782,15 +2791,6 @@
                         account_email: accountEmail
                     };
                     renderEmailDetail(currentEmailDetail);
-                    if (isEmailUnread(selectedEmail)) {
-                        void requestMarkEmailsAsRead([{
-                            id: messageId,
-                            folder: requestFolder,
-                            id_mode: selectedEmail.id_mode || '',
-                            account_id: selectedEmail.account_id,
-                            account_email: accountEmail
-                        }], { silent: true });
-                    }
                 } else {
                     handleApiError(data, '加载邮件详情失败');
                     const detailErrorMessage = data.error?.message

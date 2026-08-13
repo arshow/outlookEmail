@@ -639,7 +639,65 @@ class NormalMailRetentionTests(unittest.TestCase):
         self.assertEqual(state['is_read'], 1)
         self.assertIsNotNone(state['updated_at'])
 
-    def test_mark_read_remote_failure_does_not_update_retained_graph_row(self):
+    def test_mark_read_updates_same_message_across_folder_copies(self):
+        message_id = 'mark-read-dup-1'
+        self._seed_unread_graph_retained_row(message_id)
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode,
+                    subject, sender, recipients, received_at, is_read, list_cached
+                )
+                VALUES (?, 'graph:fid-inbox', ?, 'graph',
+                        'Unread subject', 'sender@example.com',
+                        'reader@example.com', '2026-05-27T07:00:00Z', 0, 1)
+                ''',
+                (self.account['id'], message_id)
+            )
+            db.commit()
+
+        remote_result = {
+            'success': True,
+            'success_count': 1,
+            'failed_count': 0,
+            'updated_ids': [message_id],
+            'errors': [],
+        }
+        with patch.object(web_outlook_app, 'mark_emails_read_graph_result', return_value=remote_result):
+            response = self.client.post(
+                '/api/emails/mark-read',
+                json={
+                    'email': 'retained@example.com',
+                    'method': 'graph',
+                    'folder': 'inbox',
+                    'items': [{
+                        'id': message_id,
+                        'folder': 'inbox',
+                        'id_mode': 'graph',
+                    }],
+                }
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['success'])
+        with self.app.app_context():
+            rows = web_outlook_app.get_db().execute(
+                '''
+                SELECT folder, is_read
+                FROM retained_normal_mail_messages
+                WHERE account_id = ? AND provider_message_id = ?
+                ORDER BY folder
+                ''',
+                (self.account['id'], message_id)
+            ).fetchall()
+        self.assertEqual([dict(row) for row in rows], [
+            {'folder': 'graph:fid-inbox', 'is_read': 1},
+            {'folder': 'inbox', 'is_read': 1},
+        ])
+
+    def test_mark_read_updates_local_cache_even_when_remote_fails(self):
         self._seed_unread_graph_retained_row('mark-read-failed-graph-1')
         remote_result = {
             'success': False,
@@ -670,7 +728,7 @@ class NormalMailRetentionTests(unittest.TestCase):
         self.assertEqual(payload['error'], 'remote failed')
 
         state = self._retained_read_state('mark-read-failed-graph-1')
-        self.assertEqual(state['is_read'], 0)
+        self.assertEqual(state['is_read'], 1)
 
     def test_delete_emails_removes_successful_retained_graph_row(self):
         self._seed_delete_graph_retained_rows()

@@ -2210,6 +2210,58 @@ def merge_email_action_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     return merged_result
 
 
+def mark_retained_normal_mail_rows_read_requested(account: Dict[str, Any],
+                                                  items: List[Dict[str, str]],
+                                                  is_read: bool = True,
+                                                  fallback_id_mode: str = '',
+                                                  db=None) -> int:
+    account_id = int((account or {}).get('id') or 0)
+    if not account_id:
+        return 0
+
+    keys = []
+    seen_keys = set()
+    for item in items or []:
+        message_id = str((item or {}).get('id') or '').strip()
+        if not message_id:
+            continue
+        id_mode = str((item or {}).get('id_mode') or fallback_id_mode or '').strip().lower()
+        key = (account_id, message_id, id_mode)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        keys.append(key)
+
+    if not keys:
+        return 0
+
+    database = db or get_db()
+    updated_count = 0
+    read_value = 1 if is_read else 0
+    for account_id, message_id, id_mode in keys:
+        if id_mode:
+            cursor = database.execute(
+                '''
+                UPDATE retained_normal_mail_messages
+                SET is_read = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE account_id = ? AND provider_message_id = ? AND id_mode = ?
+                ''',
+                (read_value, account_id, message_id, id_mode)
+            )
+        else:
+            cursor = database.execute(
+                '''
+                UPDATE retained_normal_mail_messages
+                SET is_read = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE account_id = ? AND provider_message_id = ?
+                ''',
+                (read_value, account_id, message_id)
+            )
+        updated_count += max(0, cursor.rowcount or 0)
+    database.commit()
+    return updated_count
+
+
 def mark_retained_normal_mail_rows_read(account: Dict[str, Any], items: List[Dict[str, str]],
                                         result: Dict[str, Any], fallback_id_mode: str = '',
                                         is_read: bool = True, db=None) -> int:
@@ -2251,9 +2303,9 @@ def mark_retained_normal_mail_rows_read(account: Dict[str, Any], items: List[Dic
             '''
             UPDATE retained_normal_mail_messages
             SET is_read = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE account_id = ? AND folder = ? AND provider_message_id = ? AND id_mode = ?
+            WHERE account_id = ? AND provider_message_id = ? AND id_mode = ?
             ''',
-            (read_value, *key)
+            (read_value, key[0], key[2], key[3])
         )
         updated_count += max(0, cursor.rowcount or 0)
     database.commit()
@@ -4553,6 +4605,11 @@ def api_mark_emails_read():
     account = get_account_by_email(email_addr)
     if not account:
         return jsonify({'success': False, 'error': '账号不存在'})
+
+    fallback_id_mode = 'graph' if method == 'graph' else 'uid'
+    mark_retained_normal_mail_rows_read_requested(
+        account, items, is_read=is_read, fallback_id_mode=fallback_id_mode
+    )
 
     proxy_url = get_account_proxy_url(account)
     fallback_proxy_urls = get_account_proxy_failover_urls(account)

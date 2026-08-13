@@ -779,7 +779,7 @@ def mark_emails_read_graph_result(client_id: str, refresh_token: str, message_id
             batch_requests.append({
                 'id': str(batch_index),
                 'method': 'PATCH',
-                'url': f'/me/messages/{message_id}',
+                'url': f'/me/messages/{quote(message_id, safe="")}',
                 'headers': {
                     'Content-Type': 'application/json',
                 },
@@ -904,7 +904,7 @@ def mark_emails_flag_graph_result(client_id: str, refresh_token: str, message_id
             batch_requests.append({
                 'id': str(batch_index),
                 'method': 'PATCH',
-                'url': f'/me/messages/{message_id}',
+                'url': f'/me/messages/{quote(message_id, safe="")}',
                 'headers': {
                     'Content-Type': 'application/json',
                 },
