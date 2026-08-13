@@ -598,19 +598,19 @@ def get_emails_graph(client_id: str, refresh_token: str, folder: str = 'inbox', 
         params = {
             "$top": top,
             "$skip": skip,
-            "$select": "id,subject,from,toRecipients,receivedDateTime,isRead,flag,hasAttachments,bodyPreview",
+            "$select": "id,subject,from,toRecipients,receivedDateTime,isRead,flag,hasAttachments,body,bodyPreview",
             "$orderby": "receivedDateTime desc"
         }
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "Prefer": "outlook.body-content-type='text'"
+            "Prefer": "outlook.body-content-type='html'"
         }
 
         res = get_with_proxy_fallback(
             url,
             headers=headers,
             params=params,
-            timeout=HTTP_REQUEST_TIMEOUT,
+            timeout=max(HTTP_REQUEST_TIMEOUT, 60),
             proxy_url=proxy_url,
             fallback_proxy_urls=fallback_proxy_urls,
         )
@@ -1283,8 +1283,6 @@ def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str
                     fetch_response_text = fetch_meta.decode('utf-8', errors='ignore') if isinstance(fetch_meta, (bytes, bytearray)) else str(fetch_meta or '')
                     internal_date = extract_imap_internaldate(fetch_meta)
                     msg = email.message_from_bytes(raw_email)
-                    body_preview = get_email_body(msg)
-
                     emails.append({
                         'id': msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id),
                         'subject': decode_header_value(msg.get("Subject", "无主题")),
@@ -1294,7 +1292,7 @@ def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str
                         'id_mode': 'sequence',
                         'is_read': bool(re.search(r'\\Seen\b', fetch_response_text, flags=re.IGNORECASE)),
                         'is_flagged': bool(re.search(r'\\Flagged\b', fetch_response_text, flags=re.IGNORECASE)),
-                        'body_preview': body_preview[:200] + "..." if len(body_preview) > 200 else body_preview
+                        **list_item_body_fields(msg),
                     })
             except Exception:
                 continue
@@ -1754,6 +1752,20 @@ def build_email_detail_from_message(msg, message_id: str, date_value: str = '') 
 
 def has_message_attachments(msg) -> bool:
     return len(extract_message_attachments(msg)) > 0
+
+
+def list_item_body_fields(msg) -> Dict[str, str]:
+    body_text, body_html = extract_text_and_html(msg)
+    preview_source = body_text or strip_html_content(body_html)
+    preview = preview_source[:200] + ('...' if len(preview_source) > 200 else '')
+    fields = {'body_preview': preview}
+    if body_html:
+        fields['body'] = body_html
+        fields['body_type'] = 'html'
+    elif body_text:
+        fields['body'] = body_text
+        fields['body_type'] = 'text'
+    return fields
 
 
 def create_imap_connection(imap_host: str, imap_port: int = 993, proxy_url: str = ''):
@@ -2818,9 +2830,6 @@ def get_emails_imap_generic(email_addr: str, imap_password: str, imap_host: str,
                 internal_date = extract_imap_internaldate(fetch_response_text)
 
                 msg = email.message_from_bytes(raw_email)
-                body_text, body_html = extract_text_and_html(msg)
-                preview_source = body_text or strip_html_content(body_html)
-                preview = preview_source[:200] + ('...' if len(preview_source) > 200 else '')
                 emails_data.append({
                     'id': uid.decode('utf-8', errors='ignore') if isinstance(uid, (bytes, bytearray)) else str(uid),
                     'subject': decode_header_value(msg.get('Subject', '无主题')),
@@ -2831,7 +2840,7 @@ def get_emails_imap_generic(email_addr: str, imap_password: str, imap_host: str,
                     'is_read': bool(re.search(r'\\Seen\b', fetch_response_text, flags=re.IGNORECASE)),
                     'is_flagged': bool(re.search(r'\\Flagged\b', fetch_response_text, flags=re.IGNORECASE)),
                     'has_attachments': has_message_attachments(msg),
-                    'body_preview': preview,
+                    **list_item_body_fields(msg),
                 })
             except Exception:
                 continue

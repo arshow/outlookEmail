@@ -1747,6 +1747,7 @@ def handle_remote_email_list_request(account: Dict[str, Any], requested_email: s
         apply_email_list_filters(
             account, result, False, subject_contains, from_contains, keyword
         )
+        strip_email_list_bodies(result.get('emails', []))
         add_resolved_account_metadata(result, requested_email, account)
         result['folder'] = storage_folder
         if folder_id:

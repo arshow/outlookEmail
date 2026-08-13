@@ -921,6 +921,151 @@ class NormalMailRetentionTests(unittest.TestCase):
         retained_ids = {row['provider_message_id'] for row in rows}
         self.assertEqual(retained_ids, {'old-uid-1', 'new-uid-2'})
 
+    def test_format_graph_email_item_includes_body(self):
+        item = web_outlook_app.format_graph_email_item({
+            'id': 'AAMk-body',
+            'subject': 'With body',
+            'from': {'emailAddress': {'address': 'a@example.com'}},
+            'toRecipients': [],
+            'receivedDateTime': '2026-05-27T05:00:00Z',
+            'isRead': False,
+            'flag': {'flagStatus': 'notFlagged'},
+            'hasAttachments': False,
+            'bodyPreview': 'preview',
+            'body': {'contentType': 'html', 'content': '<p>Full body</p>'},
+        }, 'inbox')
+
+        self.assertEqual(item['body'], '<p>Full body</p>')
+        self.assertEqual(item['body_type'], 'html')
+        self.assertEqual(item['body_preview'], 'preview')
+
+        plain = web_outlook_app.format_graph_email_item({
+            'id': 'AAMk-plain',
+            'subject': 'No body',
+            'from': {'emailAddress': {'address': 'b@example.com'}},
+            'toRecipients': [],
+            'receivedDateTime': '2026-05-27T06:00:00Z',
+            'isRead': True,
+            'bodyPreview': 'preview only',
+        }, 'inbox')
+        self.assertNotIn('body', plain)
+
+    def test_upsert_list_items_persists_body_without_clearing_on_empty_refresh(self):
+        with_body = {
+            'id': 'list-body-1',
+            'id_mode': 'graph',
+            'subject': 'Has body',
+            'from': 'sender@example.com',
+            'to': 'reader@example.com',
+            'date': '2026-05-27T05:00:00Z',
+            'is_read': False,
+            'has_attachments': False,
+            'body_preview': 'preview',
+            'body': '<p>Keep me</p>',
+            'body_type': 'html',
+        }
+        without_body = {
+            'id': 'list-body-1',
+            'id_mode': 'graph',
+            'subject': 'Has body',
+            'from': 'sender@example.com',
+            'to': 'reader@example.com',
+            'date': '2026-05-27T05:00:00Z',
+            'is_read': True,
+            'has_attachments': False,
+            'body_preview': 'updated preview',
+        }
+        with self.app.app_context():
+            web_outlook_app.upsert_retained_normal_mail_list_items(
+                self.account, 'inbox', [with_body]
+            )
+        rows = self._retained_detail_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['body'], '<p>Keep me</p>')
+        self.assertEqual(rows[0]['body_type'], 'html')
+        self.assertEqual(rows[0]['body_cached'], 1)
+        self.assertIsNotNone(rows[0]['body_cached_at'])
+
+        with self.app.app_context():
+            web_outlook_app.upsert_retained_normal_mail_list_items(
+                self.account, 'inbox', [without_body]
+            )
+        rows = self._retained_detail_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['body'], '<p>Keep me</p>')
+        self.assertEqual(rows[0]['body_type'], 'html')
+        self.assertEqual(rows[0]['body_cached'], 1)
+
+    def test_remote_list_persists_body_without_returning_it(self):
+        remote_result = {
+            'success': True,
+            'emails': [{
+                'id': 'remote-body-1',
+                'id_mode': 'graph',
+                'subject': 'Remote body',
+                'from': 'sender@example.com',
+                'to': 'reader@example.com',
+                'date': '2026-05-27T05:00:00Z',
+                'is_read': False,
+                'has_attachments': False,
+                'body_preview': 'preview',
+                'body': '<p>Stored locally</p>',
+                'body_type': 'html',
+            }],
+            'method': 'Graph API',
+            'has_more': False,
+        }
+        with self.app.app_context():
+            self.assertTrue(web_outlook_app.set_setting(
+                'normal_mail_local_retention_enabled',
+                'true',
+            ))
+        with patch.object(web_outlook_app, 'fetch_account_emails', return_value=remote_result):
+            response = self.client.get(
+                '/api/emails/retained@example.com?folder=inbox&skip=0&top=20'
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(len(payload['emails']), 1)
+        self.assertNotIn('body', payload['emails'][0])
+        self.assertEqual(payload['emails'][0]['body_preview'], 'preview')
+
+        rows = self._retained_detail_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['provider_message_id'], 'remote-body-1')
+        self.assertEqual(rows[0]['body'], '<p>Stored locally</p>')
+        self.assertEqual(rows[0]['body_type'], 'html')
+        self.assertEqual(rows[0]['body_cached'], 1)
+
+    def test_get_emails_graph_selects_body(self):
+        captured = {}
+
+        class FakeResponse:
+            status_code = 200
+
+            def json(self):
+                return {'value': []}
+
+        def fake_get(url, headers=None, params=None, timeout=None, **kwargs):
+            captured['params'] = params
+            captured['headers'] = headers
+            return FakeResponse()
+
+        with patch.object(
+            web_outlook_app,
+            'get_access_token_graph_result',
+            return_value={'success': True, 'access_token': 'token'},
+        ), patch.object(web_outlook_app, 'get_with_proxy_fallback', side_effect=fake_get):
+            result = web_outlook_app.get_emails_graph('client-id', 'refresh-token')
+
+        self.assertTrue(result['success'])
+        select_fields = captured['params']['$select'].split(',')
+        self.assertIn('body', select_fields)
+        self.assertIn('bodyPreview', select_fields)
+        self.assertIn("outlook.body-content-type='html'", captured['headers']['Prefer'])
+
     def test_local_retention_list_disabled_hides_seeded_rows_until_enabled(self):
         items = [{
             'id': 'disabled-local-row',

@@ -2601,6 +2601,28 @@ def build_retained_mail_status_sql(status: str) -> str:
     return ''
 
 
+def coerce_email_list_body(item: Dict[str, Any]) -> tuple[str, str]:
+    source = item or {}
+    body = source.get('body')
+    if isinstance(body, dict):
+        content = str(body.get('content') or '')
+        content_type = str(body.get('contentType') or source.get('body_type') or 'text').lower()
+        return content, ('html' if 'html' in content_type else 'text')
+    content = str(body or '') if isinstance(body, str) else ''
+    body_type = str(source.get('body_type') or 'text').lower()
+    if 'html' in body_type:
+        return content, 'html'
+    return content, 'text'
+
+
+def strip_email_list_bodies(emails: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    for item in emails or []:
+        if isinstance(item, dict):
+            item.pop('body', None)
+            item.pop('body_type', None)
+    return emails
+
+
 def normalize_email_list_item(item: Dict[str, Any], folder: str) -> Dict[str, Any]:
     row = dict(item or {})
     row['subject'] = row.get('subject', '无主题')
@@ -2618,6 +2640,13 @@ def normalize_email_list_item(item: Dict[str, Any], folder: str) -> Dict[str, An
         row['is_flagged'] = coerce_mail_is_flagged(row.get('is_flagged', False))
     row['has_attachments'] = bool(row.get('has_attachments', False))
     row['body_preview'] = row.get('body_preview', '')
+    body, body_type = coerce_email_list_body(row)
+    if body:
+        row['body'] = body
+        row['body_type'] = body_type
+    else:
+        row.pop('body', None)
+        row.pop('body_type', None)
     row['folder'] = row.get('folder') or folder
     row['id_mode'] = row.get('id_mode', '')
     return row
@@ -2663,6 +2692,9 @@ def build_retained_normal_mail_list_row(account_id: int, item: Dict[str, Any],
 
     normalized = normalize_email_list_item(source, storage_folder)
     normalized['folder'] = storage_folder
+    body = coerce_retained_mail_text(normalized.get('body'))
+    body_type = coerce_retained_mail_text(normalized.get('body_type')).strip().lower() or 'text'
+    body_cached = 1 if body.strip() else 0
     return {
         'account_id': account_id,
         'folder': normalized['folder'],
@@ -2677,6 +2709,9 @@ def build_retained_normal_mail_list_row(account_id: int, item: Dict[str, Any],
         'is_flagged': coerce_retained_mail_bool(normalized.get('is_flagged')),
         'has_attachments': coerce_retained_mail_bool(normalized.get('has_attachments')),
         'body_preview': coerce_retained_mail_text(normalized.get('body_preview')),
+        'body': body if body_cached else '',
+        'body_type': 'html' if 'html' in body_type else 'text',
+        'body_cached': body_cached,
     }
 
 
@@ -2808,12 +2843,15 @@ def upsert_retained_normal_mail_list_items(account: Dict[str, Any], folder: str,
             account_id, folder, provider_message_id, id_mode,
             subject, sender, recipients, received_at, received_at_sort,
             is_read, is_flagged, has_attachments, body_preview,
+            body, body_type, body_cached, body_cached_at,
             list_cached, list_cached_at, last_synced_at, updated_at
         )
         VALUES (
             :account_id, :folder, :provider_message_id, :id_mode,
             :subject, :sender, :recipients, :received_at, :received_at_sort,
             :is_read, :is_flagged, :has_attachments, :body_preview,
+            :body, :body_type, :body_cached,
+            CASE WHEN :body_cached = 1 THEN CURRENT_TIMESTAMP ELSE NULL END,
             1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
         )
         ON CONFLICT(account_id, folder, provider_message_id, id_mode)
@@ -2827,6 +2865,22 @@ def upsert_retained_normal_mail_list_items(account: Dict[str, Any], folder: str,
             is_flagged = excluded.is_flagged,
             has_attachments = excluded.has_attachments,
             body_preview = excluded.body_preview,
+            body = CASE
+                WHEN excluded.body_cached = 1 THEN excluded.body
+                ELSE retained_normal_mail_messages.body
+            END,
+            body_type = CASE
+                WHEN excluded.body_cached = 1 THEN excluded.body_type
+                ELSE retained_normal_mail_messages.body_type
+            END,
+            body_cached = CASE
+                WHEN excluded.body_cached = 1 THEN 1
+                ELSE retained_normal_mail_messages.body_cached
+            END,
+            body_cached_at = CASE
+                WHEN excluded.body_cached = 1 THEN CURRENT_TIMESTAMP
+                ELSE retained_normal_mail_messages.body_cached_at
+            END,
             list_cached = 1,
             list_cached_at = CURRENT_TIMESTAMP,
             last_synced_at = CURRENT_TIMESTAMP,
@@ -3586,7 +3640,8 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
 
 
 def format_graph_email_item(item: Dict[str, Any], folder: str) -> Dict[str, Any]:
-    return normalize_email_list_item({
+    body, body_type = coerce_email_list_body(item)
+    formatted = {
         'id': item.get('id'),
         'subject': item.get('subject', '无主题'),
         'from': item.get('from', {}).get('emailAddress', {}).get('address', '未知'),
@@ -3602,7 +3657,11 @@ def format_graph_email_item(item: Dict[str, Any], folder: str) -> Dict[str, Any]
         'body_preview': item.get('bodyPreview', ''),
         'folder': folder,
         'id_mode': 'graph',
-    }, folder)
+    }
+    if body:
+        formatted['body'] = body
+        formatted['body_type'] = body_type
+    return normalize_email_list_item(formatted, folder)
 
 
 def format_email_items(items: List[Dict[str, Any]], folder: str) -> List[Dict[str, Any]]:
@@ -4209,6 +4268,7 @@ def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: 
             annotate_aggregated_email_item(email_item, account)
             for email_item in raw_emails
         ]
+        strip_email_list_bodies(emails)
         response = {
             'success': True,
             'account_id': account_id,
