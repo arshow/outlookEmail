@@ -106,32 +106,40 @@
             filter: brightness(0.96);
         }
 
-        .fetch-all-btn {
-            background-color: var(--skin-surface);
-            border: 1px solid var(--skin-border-strong);
-            color: var(--skin-text);
-            cursor: pointer;
-            height: 34px;
+        .email-fetch-top {
             display: inline-flex;
             align-items: center;
-            justify-content: center;
-            padding: 0 10px;
+            gap: 6px;
+            height: 34px;
+            padding: 0 8px 0 10px;
+            border: 1px solid var(--skin-border-strong);
             border-radius: 10px;
-            transition: all 0.15s;
-            white-space: nowrap;
+            background-color: var(--skin-surface);
+            color: var(--skin-text-soft);
             font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .email-fetch-top-input {
+            width: 64px;
+            height: 26px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 0 6px;
+            font-size: 13px;
             font-weight: 600;
+            color: var(--skin-text);
+            background: #fff;
+            text-align: center;
         }
 
-        .fetch-all-btn:hover {
-            background-color: var(--skin-surface-soft);
-            border-color: #c4c9d4;
-            color: var(--skin-primary-hover);
+        .email-fetch-top-input:focus {
+            outline: none;
+            border-color: #111827;
         }
 
-        .fetch-all-btn:disabled {
+        .email-fetch-top-input:disabled {
             opacity: 0.55;
-            cursor: default;
         }
 
         /* 需高于后面 .modal-content 的同权覆盖（06-modals-toast.css） */

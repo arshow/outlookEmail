@@ -1,4 +1,4 @@
-        /* global applyPendingNewMailSync, beginMailboxViewChange, clearEmailStatusFilterOverride, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, hydrateEmailStatusFilterIfNeeded, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchInput, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailKeywordSearch, initEmailListScroll, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, normalizeEmailListItems, renderEmailList, saveAccountSearchQueryPreference, scheduleEmailListLoadCheck, searchAccounts, syncInboxDiscoveryEventSource */
+        /* global applyPendingNewMailSync, beginMailboxViewChange, clearEmailStatusFilterOverride, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, hydrateEmailStatusFilterIfNeeded, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchInput, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailFetchTopInput, initEmailKeywordSearch, initEmailListScroll, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, normalizeEmailListItems, renderEmailList, saveAccountSearchQueryPreference, scheduleEmailListLoadCheck, searchAccounts, syncInboxDiscoveryEventSource */
 
         // 全局状态
         let csrfToken = null;
@@ -1261,6 +1261,9 @@
             initEmailListScroll();
             if (typeof initEmailKeywordSearch === 'function') {
                 initEmailKeywordSearch();
+            }
+            if (typeof initEmailFetchTopInput === 'function') {
+                initEmailFetchTopInput();
             }
             initAccountListScroll();
             initAccountPageSizeSelect();

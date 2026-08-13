@@ -115,12 +115,12 @@
                 refreshBtn.classList.toggle('spinning', isLoading);
                 refreshBtn.title = isLoading
                     ? (isBackgroundSync ? '本地保留邮件已显示，正在后台同步远程邮件' : '正在获取邮件...')
-                    : '获取最近 20 封';
+                    : `获取最近 ${getEmailFetchTop()} 封`;
                 refreshBtn.toggleAttribute('aria-busy', isLoading);
             }
-            const fetchAllBtn = document.getElementById('fetchAllEmailsBtn');
-            if (fetchAllBtn) {
-                fetchAllBtn.disabled = isLoading && !isBackgroundSync;
+            const fetchTopInput = document.getElementById('emailFetchTopInput');
+            if (fetchTopInput) {
+                fetchTopInput.disabled = isLoading && !isBackgroundSync;
             }
             folderTabs.forEach(tab => {
                 tab.disabled = isLoading && !isBackgroundSync;
@@ -155,7 +155,7 @@
 
         function beginMailboxViewChange() {
             mailboxViewSeq += 1;
-            isFetchingAllEmails = false;
+            isFetchingRecentEmails = false;
             if (typeof setMailSyncStatus === 'function') {
                 setMailSyncStatus('');
             }
@@ -253,9 +253,12 @@
         }
 
         let currentEmailKeyword = '';
-        const EMAIL_FETCH_ALL_PAGE_SIZE = 50;
-        const EMAIL_FETCH_ALL_MAX = 500;
-        let isFetchingAllEmails = false;
+        const EMAIL_FETCH_PAGE_SIZE = 50;
+        const EMAIL_FETCH_TOP_DEFAULT = 500;
+        const EMAIL_FETCH_TOP_MIN = 1;
+        const EMAIL_FETCH_TOP_MAX = 2000;
+        const EMAIL_FETCH_TOP_STORAGE_KEY = 'emailFetchTop';
+        let isFetchingRecentEmails = false;
         let mailboxViewSeq = 0;
 
         function getEmailSearchKeyword() {
@@ -3463,8 +3466,72 @@
             syncEmailSearchClearButton();
         }
 
-        async function fetchAllEmails() {
-            if (isFetchingAllEmails) {
+        function clampEmailFetchTop(value) {
+            const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+            if (!Number.isFinite(parsed)) {
+                return EMAIL_FETCH_TOP_DEFAULT;
+            }
+            return Math.min(EMAIL_FETCH_TOP_MAX, Math.max(EMAIL_FETCH_TOP_MIN, parsed));
+        }
+
+        function getEmailFetchTop() {
+            const input = document.getElementById('emailFetchTopInput');
+            if (input) {
+                return clampEmailFetchTop(input.value);
+            }
+            try {
+                return clampEmailFetchTop(window.localStorage.getItem(EMAIL_FETCH_TOP_STORAGE_KEY));
+            } catch (error) {
+                return EMAIL_FETCH_TOP_DEFAULT;
+            }
+        }
+
+        function persistEmailFetchTop(value) {
+            const top = clampEmailFetchTop(value);
+            const input = document.getElementById('emailFetchTopInput');
+            if (input) {
+                input.value = String(top);
+            }
+            try {
+                window.localStorage.setItem(EMAIL_FETCH_TOP_STORAGE_KEY, String(top));
+            } catch (error) {
+                // ignore quota / private mode
+            }
+            const refreshBtn = document.querySelector('.refresh-btn');
+            if (refreshBtn && !refreshBtn.classList.contains('spinning')) {
+                refreshBtn.title = `获取最近 ${top} 封`;
+            }
+            return top;
+        }
+
+        function initEmailFetchTopInput() {
+            const input = document.getElementById('emailFetchTopInput');
+            if (!input || input.dataset.bound === 'true') {
+                return;
+            }
+            input.dataset.bound = 'true';
+            let stored = EMAIL_FETCH_TOP_DEFAULT;
+            try {
+                stored = clampEmailFetchTop(window.localStorage.getItem(EMAIL_FETCH_TOP_STORAGE_KEY));
+            } catch (error) {
+                stored = EMAIL_FETCH_TOP_DEFAULT;
+            }
+            input.value = String(stored);
+            persistEmailFetchTop(stored);
+            const commit = () => persistEmailFetchTop(input.value);
+            input.addEventListener('change', commit);
+            input.addEventListener('blur', commit);
+            input.addEventListener('keydown', event => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    persistEmailFetchTop(input.value);
+                    refreshEmails();
+                }
+            });
+        }
+
+        async function fetchRecentEmails() {
+            if (isFetchingRecentEmails) {
                 return;
             }
             if (isTempEmailGroup) {
@@ -3476,12 +3543,13 @@
                 return;
             }
 
+            const fetchTop = persistEmailFetchTop(getEmailFetchTop());
             const runSeq = mailboxViewSeq;
             const context = getCurrentMailboxContext();
             const stillSameView = () => runSeq === mailboxViewSeq && isCurrentMailboxContext(context);
-            isFetchingAllEmails = true;
+            isFetchingRecentEmails = true;
             setEmailListLoadingState(true);
-            setMailSyncStatus('正在获取全部邮件…');
+            setMailSyncStatus(`正在获取最近 ${fetchTop} 封邮件…`);
             const aggregated = context.aggregated === true;
             const account = aggregated ? AGGREGATED_INBOX_ACCOUNT_KEY : context.account;
             const cacheAccountKey = aggregated ? getAggregatedInboxCacheAccountKey() : context.account;
@@ -3493,14 +3561,15 @@
             try {
                 let skip = 0;
                 let pageIndex = 0;
-                while (skip < EMAIL_FETCH_ALL_MAX) {
+                while (skip < fetchTop) {
                     if (!stillSameView()) {
                         return;
                     }
+                    const pageTop = Math.min(EMAIL_FETCH_PAGE_SIZE, fetchTop - skip);
                     const data = await fetchRemoteEmails(account, cacheKey, {
                         aggregated,
                         skip,
-                        top: EMAIL_FETCH_ALL_PAGE_SIZE,
+                        top: pageTop,
                         keyword: '',
                         mergeWithCurrentList: pageIndex > 0,
                         keepSyncStatus: true,
@@ -3514,28 +3583,28 @@
                         break;
                     }
                     pageIndex += 1;
-                    skip += EMAIL_FETCH_ALL_PAGE_SIZE;
-                    setMailSyncStatus(`正在获取全部邮件…已 ${currentEmails.length} 封`);
-                    if (data.has_more !== true || currentEmails.length >= EMAIL_FETCH_ALL_MAX) {
+                    skip += pageTop;
+                    setMailSyncStatus(`正在获取最近 ${fetchTop} 封邮件…已 ${currentEmails.length} 封`);
+                    if (data.has_more !== true || currentEmails.length >= fetchTop) {
                         break;
                     }
                 }
                 if (!stillSameView()) {
                     return;
                 }
-                const reachedCap = currentEmails.length >= EMAIL_FETCH_ALL_MAX && hasMoreEmails;
+                const reachedCap = currentEmails.length >= fetchTop && hasMoreEmails;
                 const message = reachedCap
-                    ? `已获取 ${currentEmails.length} 封（已达 ${EMAIL_FETCH_ALL_MAX} 封上限）`
+                    ? `已获取最近 ${currentEmails.length} 封`
                     : `已获取 ${currentEmails.length} 封邮件`;
                 setMailSyncStatus(message);
                 showToast(message);
             } catch (error) {
                 if (stillSameView()) {
-                    showToast(isTimeoutAbortError(error) ? '获取全部邮件超时' : '获取全部邮件失败', 'error');
+                    showToast(isTimeoutAbortError(error) ? '获取最近邮件超时' : '获取最近邮件失败', 'error');
                 }
             } finally {
                 if (runSeq === mailboxViewSeq) {
-                    isFetchingAllEmails = false;
+                    isFetchingRecentEmails = false;
                     setEmailListLoadingState(false);
                 }
             }
@@ -3550,14 +3619,8 @@
                     } else {
                         loadTempEmailMessages(currentAccount);
                     }
-                } else if (isAggregatedInboxMode()) {
-                    const cacheAccountKey = getAggregatedInboxCacheAccountKey();
-                    invalidateEmailListCache(cacheAccountKey, currentFolder);
-                    loadEmails(AGGREGATED_INBOX_ACCOUNT_KEY, true);
                 } else {
-                    // 清除当前缓存并强制刷新
-                    invalidateEmailListCache(currentAccount, currentFolder);
-                    loadEmails(currentAccount, true);
+                    void fetchRecentEmails();
                 }
             } else {
                 showToast('请先选择一个邮箱账号', 'error');

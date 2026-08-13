@@ -2354,24 +2354,28 @@ class FrontendEmailListSecurityTests(unittest.TestCase):
 
     def test_email_list_has_fetch_all_and_keyword_search(self):
         layout = pathlib.Path(ROOT_DIR, 'templates', 'partials', 'index', 'layout.html').read_text(encoding='utf-8')
-        self.assertIn('id="fetchAllEmailsBtn"', layout)
-        self.assertIn('onclick="fetchAllEmails()"', layout)
+        self.assertIn('id="emailFetchTopInput"', layout)
+        self.assertNotIn('id="fetchAllEmailsBtn"', layout)
+        self.assertNotIn('onclick="fetchAllEmails()"', layout)
         self.assertIn('id="emailKeywordInput"', layout)
-        self.assertIn('function fetchAllEmails()', self.emails_js)
+        self.assertIn('function fetchRecentEmails()', self.emails_js)
+        self.assertIn('function getEmailFetchTop()', self.emails_js)
         self.assertIn('function setEmailKeyword(keyword, options = {})', self.emails_js)
         self.assertIn('function emailMatchesKeyword(email, keyword = getEmailSearchKeyword())', self.emails_js)
-        self.assertIn('EMAIL_FETCH_ALL_MAX = 500', self.emails_js)
+        self.assertIn('EMAIL_FETCH_TOP_DEFAULT = 500', self.emails_js)
         self.assertIn('hydrateEmailSearchFromLocal()', self.emails_js)
         self.assertIn('function beginMailboxViewChange()', self.emails_js)
         self.assertIn('function getCurrentMailboxContext()', self.emails_js)
-        fetch_all_start = self.emails_js.index('async function fetchAllEmails()')
-        fetch_all_source = self.emails_js[fetch_all_start:self.emails_js.index('// 刷新邮件', fetch_all_start)]
-        self.assertIn('context', fetch_all_source)
-        self.assertIn('stillSameView()', fetch_all_source)
+        fetch_recent_start = self.emails_js.index('async function fetchRecentEmails()')
+        fetch_recent_source = self.emails_js[fetch_recent_start:self.emails_js.index('// 刷新邮件', fetch_recent_start)]
+        self.assertIn('context', fetch_recent_source)
+        self.assertIn('stillSameView()', fetch_recent_source)
+        self.assertIn('void fetchRecentEmails()', self.emails_js)
         accounts_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '04-accounts.js').read_text(encoding='utf-8')
         self.assertIn('beginMailboxViewChange()', accounts_js)
         core_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '01-core.js').read_text(encoding='utf-8')
         self.assertIn('initEmailKeywordSearch()', core_js)
+        self.assertIn('initEmailFetchTopInput()', core_js)
         self.assertIn("query.set('keyword', keyword);", core_js)
 
     def test_email_checkbox_uses_delegated_click_without_inline_toggle(self):
