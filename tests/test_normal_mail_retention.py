@@ -1896,6 +1896,61 @@ class NormalMailRetentionTests(unittest.TestCase):
         graph_mock.assert_called_once()
         imap_mock.assert_called_once()
 
+    def test_prefer_local_detail_uses_body_cached_in_another_folder(self):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode,
+                    subject, sender, recipients, received_at,
+                    body_preview, list_cached
+                )
+                VALUES (?, 'graph:folder-1', 'shared-graph-1', 'graph',
+                        'Transform Your Store', 'noah@example.com',
+                        'reader@example.com', '2026-08-05T11:50:00Z',
+                        '', 1)
+                ''',
+                (self.account['id'],)
+            )
+            db.execute(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode,
+                    subject, sender, recipients, received_at,
+                    body, body_type, body_preview, has_attachments,
+                    list_cached, body_cached, body_cached_at
+                )
+                VALUES (?, 'junkemail', 'shared-graph-1', 'graph',
+                        'Transform Your Store', 'noah@example.com',
+                        'reader@example.com', '2026-08-05T11:50:00Z',
+                        '<p>Cached junk body</p>', 'html',
+                        'Make your Shopify store easier', 0,
+                        1, 1, CURRENT_TIMESTAMP)
+                ''',
+                (self.account['id'],)
+            )
+            db.commit()
+            self.assertTrue(web_outlook_app.set_setting(
+                'normal_mail_local_retention_enabled',
+                'true',
+            ))
+
+        with patch.object(web_outlook_app, 'get_email_detail_graph_result') as graph_mock, \
+             patch.object(web_outlook_app, 'get_email_detail_imap_result') as imap_mock:
+            response = self.client.get(
+                '/api/email/retained@example.com/shared-graph-1'
+                '?prefer_local=1&method=graph&folder=graph:folder-1&id_mode=graph'
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['source'], 'local_retention')
+        self.assertEqual(payload['email']['body'], '<p>Cached junk body</p>')
+        graph_mock.assert_not_called()
+        imap_mock.assert_not_called()
+
     def test_retain_bodies_api_rejects_disabled_retention_without_fetching_detail(self):
         items = [
             {'id': 'retain-disabled-1', 'folder': 'inbox', 'id_mode': 'graph', 'method': 'graph'},

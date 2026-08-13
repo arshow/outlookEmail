@@ -92,11 +92,11 @@ class EmailDetailErrorTests(unittest.TestCase):
         self.assertIsInstance(payload['error'], dict)
         self.assertTrue(payload['error'].get('message'))
         self.assertIn('graph', payload.get('details') or {})
-        self.assertIn('imap_new', payload.get('details') or {})
+        self.assertNotIn('imap_new', payload.get('details') or {})
         self.assertEqual(payload['details']['graph']['code'], 'GRAPH_TOKEN_FAILED')
-        self.assertEqual(payload['details']['imap_new']['message'], 'IMAP fallback failed')
+        self.assertEqual(payload['error']['code'], 'GRAPH_TOKEN_FAILED')
         token_mock.assert_called()
-        imap_mock.assert_called()
+        imap_mock.assert_not_called()
 
     def test_graph_detail_http_failure_returns_structured_error_without_silent_none(self):
         class FakeResponse:
@@ -187,7 +187,7 @@ class EmailDetailErrorTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertFalse(payload['success'])
-        self.assertEqual(payload['error']['message'], 'IMAP timeout')
+        self.assertEqual(payload['error']['message'], 'Graph denied')
         self.assertEqual(payload['details']['graph']['message'], 'Graph denied')
         self.assertEqual(payload['details']['imap_new']['message'], 'IMAP timeout')
         self.assertEqual(set(payload.get('attempted') or []), {'graph', 'imap_new'})
@@ -247,6 +247,29 @@ class EmailDetailErrorTests(unittest.TestCase):
         self.assertEqual(payload['details']['graph']['message'], 'Graph denied')
         graph_mock.assert_called_once()
         imap_mock.assert_called_once()
+
+    def test_graph_id_mode_does_not_fall_back_to_imap(self):
+        with patch.object(
+            web_outlook_app,
+            'get_email_detail_graph_result',
+            return_value={'success': False, 'error': self._graph_error('Graph denied')},
+        ) as graph_mock, patch.object(
+            web_outlook_app,
+            'get_email_detail_imap_result',
+        ) as imap_mock:
+            response = self.client.get(
+                '/api/email/detail-error@example.com/AAMk-graph-id'
+                '?method=graph&folder=graph:folder-1&id_mode=graph'
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertFalse(payload['success'])
+        self.assertEqual(payload['error']['message'], 'Graph denied')
+        self.assertEqual(payload['error']['type'], 'GraphAPIError')
+        self.assertNotIn('imap_new', payload.get('details') or {})
+        graph_mock.assert_called_once()
+        imap_mock.assert_not_called()
 
     def test_non_microsoft_account_uses_imap_only(self):
         with self.app.app_context():

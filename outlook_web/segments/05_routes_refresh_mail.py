@@ -4771,16 +4771,41 @@ def is_microsoft_mailbox_account(account: Any) -> bool:
     return account_type == 'outlook' or provider in {'outlook', 'microsoft', 'hotmail', 'live'}
 
 
+def should_try_oauth_imap_detail(folder: str, id_mode: str) -> bool:
+    folder_name = normalize_folder_name(folder)
+    if folder_name.startswith('graph:'):
+        return False
+    return str(id_mode or '').strip().lower() != 'graph'
+
+
 def fetch_local_retained_email_detail(account, folder, message_id, id_mode=''):
     if not is_normal_mail_local_retention_enabled():
         return None
-    retained_detail = fetch_retained_normal_mail_detail(account, folder, message_id, id_mode)
-    if retained_detail and not retained_detail_has_incomplete_attachment_metadata(retained_detail):
-        return retained_detail
-    if str(id_mode or '').strip():
-        retained_detail = fetch_retained_normal_mail_detail(account, folder, message_id, '')
-        if retained_detail and not retained_detail_has_incomplete_attachment_metadata(retained_detail):
-            return retained_detail
+
+    folder_name = normalize_folder_name(folder)
+    folder_candidates = []
+    if folder_name and folder_name != 'all':
+        folder_candidates.append(folder_name)
+    folder_candidates.append('all')
+
+    id_mode_candidates = []
+    requested_id_mode = str(id_mode or '').strip().lower()
+    if requested_id_mode:
+        id_mode_candidates.append(requested_id_mode)
+    id_mode_candidates.append('')
+
+    seen = set()
+    for folder_candidate in folder_candidates:
+        for id_mode_candidate in id_mode_candidates:
+            lookup_key = (folder_candidate, id_mode_candidate)
+            if lookup_key in seen:
+                continue
+            seen.add(lookup_key)
+            retained_detail = fetch_retained_normal_mail_detail(
+                account, folder_candidate, message_id, id_mode_candidate
+            )
+            if retained_detail and not retained_detail_has_incomplete_attachment_metadata(retained_detail):
+                return retained_detail
     return None
 
 
@@ -4826,6 +4851,9 @@ def fetch_email_detail_for_account(account, message_id, method='graph', folder='
                 last_method_label = graph_result.get('method') or 'Graph API'
             continue
 
+        if not should_try_oauth_imap_detail(folder, id_mode):
+            continue
+
         imap_result = fetch_oauth_imap_detail_response(
             account, folder, message_id, method, id_mode, proxy_url, fallback_proxy_urls
         )
@@ -4839,7 +4867,10 @@ def fetch_email_detail_for_account(account, message_id, method='graph', folder='
     if retained_detail:
         return retained_detail
 
-    primary_error = attempts.get('imap_new') or attempts.get('graph')
+    if is_microsoft_mailbox_account(account):
+        primary_error = attempts.get('graph') or attempts.get('imap_new')
+    else:
+        primary_error = attempts.get('imap_new') or attempts.get('graph')
     return {
         'success': False,
         'error': normalize_email_detail_error(primary_error),
