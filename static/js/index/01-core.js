@@ -1,4 +1,4 @@
-        /* global applyPendingNewMailSync, clearEmailStatusFilterOverride, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, hydrateEmailStatusFilterIfNeeded, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchInput, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailKeywordSearch, initEmailListScroll, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, normalizeEmailListItems, renderEmailList, saveAccountSearchQueryPreference, scheduleEmailListLoadCheck, searchAccounts, syncInboxDiscoveryEventSource */
+        /* global applyPendingNewMailSync, beginMailboxViewChange, clearEmailStatusFilterOverride, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, hydrateEmailStatusFilterIfNeeded, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchInput, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailKeywordSearch, initEmailListScroll, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, normalizeEmailListItems, renderEmailList, saveAccountSearchQueryPreference, scheduleEmailListLoadCheck, searchAccounts, syncInboxDiscoveryEventSource */
 
         // 全局状态
         let csrfToken = null;
@@ -1786,6 +1786,9 @@
         function switchFolder(folder) {
             if (currentFolder === folder) return;
 
+            if (typeof beginMailboxViewChange === 'function') {
+                beginMailboxViewChange();
+            }
             currentFolder = folder;
             currentEmailId = null;
             currentEmailDetail = null;

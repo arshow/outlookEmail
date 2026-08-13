@@ -131,7 +131,34 @@
         }
 
         function isCurrentMailboxContext(context) {
-            return currentAccount === context.account && currentFolder === context.folder;
+            if (!context) {
+                return false;
+            }
+            const contextFolder = String(context.folder || '').trim() || 'all';
+            const currentViewFolder = String(currentFolder || '').trim() || 'all';
+            if (contextFolder !== currentViewFolder) {
+                return false;
+            }
+            if (context.aggregated === true || context.account === AGGREGATED_INBOX_ACCOUNT_KEY) {
+                return isAggregatedInboxMode();
+            }
+            return !isAggregatedInboxMode() && currentAccount === context.account;
+        }
+
+        function getCurrentMailboxContext() {
+            return {
+                account: isAggregatedInboxMode() ? AGGREGATED_INBOX_ACCOUNT_KEY : currentAccount,
+                folder: currentFolder,
+                aggregated: isAggregatedInboxMode()
+            };
+        }
+
+        function beginMailboxViewChange() {
+            mailboxViewSeq += 1;
+            isFetchingAllEmails = false;
+            if (typeof setMailSyncStatus === 'function') {
+                setMailSyncStatus('');
+            }
         }
 
         function coerceMailReadState(value) {
@@ -229,6 +256,7 @@
         const EMAIL_FETCH_ALL_PAGE_SIZE = 50;
         const EMAIL_FETCH_ALL_MAX = 500;
         let isFetchingAllEmails = false;
+        let mailboxViewSeq = 0;
 
         function getEmailSearchKeyword() {
             return String(currentEmailKeyword || '').trim().toLowerCase();
@@ -970,6 +998,11 @@
         async function loadEmails(email, forceRefresh = false) {
             const container = document.getElementById('emailList');
             const aggregated = isAggregatedInboxMode() || email === AGGREGATED_INBOX_ACCOUNT_KEY;
+            const context = {
+                account: aggregated ? AGGREGATED_INBOX_ACCOUNT_KEY : email,
+                folder: currentFolder,
+                aggregated
+            };
             const cacheAccountKey = aggregated
                 ? getAggregatedInboxCacheAccountKey()
                 : email;
@@ -1004,8 +1037,12 @@
                                 top: 20,
                                 source: 'local',
                                 method: 'aggregated',
-                                methodLabel: 'Local Retention'
+                                methodLabel: 'Local Retention',
+                                context
                             });
+                            if (!isCurrentMailboxContext(context)) {
+                                return;
+                            }
                             if (!localData || !localData.success || !(localData.emails || []).length) {
                                 currentEmails = [];
                                 currentMethod = 'aggregated';
@@ -1070,9 +1107,13 @@
                     aggregated,
                     skip: 0,
                     top: 20,
-                    method: aggregated ? 'aggregated' : undefined
+                    method: aggregated ? 'aggregated' : undefined,
+                    context
                 });
             } catch (error) {
+                if (!isCurrentMailboxContext(context)) {
+                    return;
+                }
                 const browserError = buildBrowserMailFetchError(error);
                 const errorMessage = getFetchErrorMessage(error);
                 setMailSyncStatus('');
@@ -1082,7 +1123,9 @@
                     actionTitle: '刷新邮件列表'
                 });
             } finally {
-                setEmailListLoadingState(false);
+                if (isCurrentMailboxContext(context)) {
+                    setEmailListLoadingState(false);
+                }
             }
         }
 
@@ -3379,7 +3422,12 @@
                         mergeWithCurrentList: true,
                         keepSyncStatus: true,
                         method: isAggregatedInboxMode() ? 'aggregated' : 'local',
-                        methodLabel: 'Local Retention'
+                        methodLabel: 'Local Retention',
+                        context: {
+                            account: isAggregatedInboxMode() ? AGGREGATED_INBOX_ACCOUNT_KEY : account,
+                            folder,
+                            aggregated: isAggregatedInboxMode()
+                        }
                     }
                 );
                 return Boolean(data && data.success);
@@ -3428,21 +3476,27 @@
                 return;
             }
 
+            const runSeq = mailboxViewSeq;
+            const context = getCurrentMailboxContext();
+            const stillSameView = () => runSeq === mailboxViewSeq && isCurrentMailboxContext(context);
             isFetchingAllEmails = true;
             setEmailListLoadingState(true);
             setMailSyncStatus('正在获取全部邮件…');
-            const aggregated = isAggregatedInboxMode();
-            const account = aggregated ? AGGREGATED_INBOX_ACCOUNT_KEY : currentAccount;
-            const cacheAccountKey = aggregated ? getAggregatedInboxCacheAccountKey() : currentAccount;
-            const cacheKey = `${cacheAccountKey}_${currentFolder}`;
+            const aggregated = context.aggregated === true;
+            const account = aggregated ? AGGREGATED_INBOX_ACCOUNT_KEY : context.account;
+            const cacheAccountKey = aggregated ? getAggregatedInboxCacheAccountKey() : context.account;
+            const cacheKey = `${cacheAccountKey}_${context.folder}`;
             if (typeof invalidateEmailListCache === 'function') {
-                invalidateEmailListCache(cacheAccountKey, currentFolder);
+                invalidateEmailListCache(cacheAccountKey, context.folder);
             }
 
             try {
                 let skip = 0;
                 let pageIndex = 0;
                 while (skip < EMAIL_FETCH_ALL_MAX) {
+                    if (!stillSameView()) {
+                        return;
+                    }
                     const data = await fetchRemoteEmails(account, cacheKey, {
                         aggregated,
                         skip,
@@ -3450,8 +3504,12 @@
                         keyword: '',
                         mergeWithCurrentList: pageIndex > 0,
                         keepSyncStatus: true,
-                        method: aggregated ? 'aggregated' : undefined
+                        method: aggregated ? 'aggregated' : undefined,
+                        context
                     });
+                    if (!stillSameView()) {
+                        return;
+                    }
                     if (!data || data.success !== true) {
                         break;
                     }
@@ -3462,6 +3520,9 @@
                         break;
                     }
                 }
+                if (!stillSameView()) {
+                    return;
+                }
                 const reachedCap = currentEmails.length >= EMAIL_FETCH_ALL_MAX && hasMoreEmails;
                 const message = reachedCap
                     ? `已获取 ${currentEmails.length} 封（已达 ${EMAIL_FETCH_ALL_MAX} 封上限）`
@@ -3469,10 +3530,14 @@
                 setMailSyncStatus(message);
                 showToast(message);
             } catch (error) {
-                showToast(isTimeoutAbortError(error) ? '获取全部邮件超时' : '获取全部邮件失败', 'error');
+                if (stillSameView()) {
+                    showToast(isTimeoutAbortError(error) ? '获取全部邮件超时' : '获取全部邮件失败', 'error');
+                }
             } finally {
-                isFetchingAllEmails = false;
-                setEmailListLoadingState(false);
+                if (runSeq === mailboxViewSeq) {
+                    isFetchingAllEmails = false;
+                    setEmailListLoadingState(false);
+                }
             }
         }
 
