@@ -592,9 +592,42 @@
             return { reset, stop };
         }
 
-        function getFolderDisplayName(folder) {
+        function getCanonicalMailFolder(folder) {
             const value = String(folder || '').trim();
             const lower = value.toLowerCase();
+            if (['all', 'inbox', 'junkemail', 'deleteditems'].includes(lower)) {
+                return lower;
+            }
+            const nodes = typeof getMailFolderTreeNodes === 'function' ? getMailFolderTreeNodes() : [];
+            const findNode = (matcher) => nodes.find(node => matcher(node));
+            if (lower.startsWith('graph:')) {
+                const folderId = value.slice(6);
+                const node = findNode(item => (
+                    String(item?.folder_id || '') === folderId || String(item?.id || '') === folderId
+                ));
+                const wellKnown = String(node?.well_known || '').trim().toLowerCase();
+                if (['inbox', 'junkemail', 'deleteditems'].includes(wellKnown)) {
+                    return wellKnown;
+                }
+                return value;
+            }
+            if (lower.startsWith('imap:')) {
+                const mailbox = value.slice(5);
+                const node = findNode(item => (
+                    String(item?.mailbox || '') === mailbox || String(item?.id || '') === mailbox
+                ));
+                const wellKnown = String(node?.well_known || '').trim().toLowerCase();
+                if (['inbox', 'junkemail', 'deleteditems'].includes(wellKnown)) {
+                    return wellKnown;
+                }
+                return value;
+            }
+            return value;
+        }
+
+        function getFolderDisplayName(folder) {
+            const canonical = getCanonicalMailFolder(folder);
+            const lower = String(canonical || '').toLowerCase();
             const names = {
                 all: '全部邮件',
                 inbox: '收件箱',
@@ -604,11 +637,22 @@
             if (names[lower]) {
                 return names[lower];
             }
+            const nodes = typeof getMailFolderTreeNodes === 'function' ? getMailFolderTreeNodes() : [];
             if (lower.startsWith('graph:')) {
-                return '自定义文件夹';
+                const folderId = String(canonical).slice(6);
+                const node = nodes.find(item => (
+                    String(item?.folder_id || '') === folderId || String(item?.id || '') === folderId
+                ));
+                return String(node?.display_name || node?.name || '').trim() || '自定义文件夹';
             }
             if (lower.startsWith('imap:')) {
-                const mailbox = value.slice(5);
+                const mailbox = String(canonical).slice(5);
+                const node = nodes.find(item => (
+                    String(item?.mailbox || '') === mailbox || String(item?.id || '') === mailbox
+                ));
+                if (node?.display_name || node?.name) {
+                    return String(node.display_name || node.name).trim();
+                }
                 const parts = mailbox.split(/[./\\]/);
                 return parts[parts.length - 1] || mailbox || '自定义文件夹';
             }

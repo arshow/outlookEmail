@@ -1287,6 +1287,45 @@ class NormalMailRetentionTests(unittest.TestCase):
         self.assertEqual(visible_provider_ids.count('mixed-provider-1'), 1)
         self.assertEqual(payload['count'], 1)
 
+    def test_local_all_list_dedupes_well_known_and_graph_folder_copies(self):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.executemany(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode,
+                    subject, sender, recipients, received_at,
+                    received_at_sort, is_read, body_preview,
+                    list_cached, body_cached
+                )
+                VALUES (?, ?, 'dup-graph-1', 'graph',
+                        'Same mail', 'sender@example.com',
+                        'reader@example.com', '2026-08-04T00:11:00Z',
+                        100.0, 0, ?, 1, ?)
+                ''',
+                [
+                    (self.account['id'], 'graph:fid-inbox', '', 0),
+                    (self.account['id'], 'inbox', 'Inbox preview', 1),
+                ]
+            )
+            self.assertTrue(web_outlook_app.set_setting(
+                'normal_mail_local_retention_enabled',
+                'true',
+            ))
+            db.commit()
+
+        response = self.client.get(
+            '/api/emails/retained@example.com?source=local&folder=all&skip=0&top=20'
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['count'], 1)
+        self.assertEqual(len(payload['emails']), 1)
+        self.assertEqual(payload['emails'][0]['id'], 'dup-graph-1')
+        self.assertEqual(payload['emails'][0]['folder'], 'inbox')
+        self.assertEqual(payload['emails'][0]['body_preview'], 'Inbox preview')
+
     def test_local_retention_list_can_page_beyond_first_twenty_rows(self):
         items = []
         for index in range(25):

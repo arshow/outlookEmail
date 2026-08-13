@@ -70,6 +70,32 @@ class MailFolderTreeTests(unittest.TestCase):
         self.assertEqual(by_id['INBOX/Projects']['parent_id'], 'INBOX')
         self.assertFalse(by_id['Archive']['selectable'])
 
+    def test_canonical_storage_key_maps_well_known_graph_folder(self):
+        with self.app.app_context():
+            web_outlook_app._store_mail_folder_cache(self.account['id'], {
+                'success': True,
+                'folders': [{
+                    'id': 'fid-inbox',
+                    'folder_id': 'fid-inbox',
+                    'display_name': '收件箱',
+                    'well_known': 'inbox',
+                    'provider': 'graph',
+                }],
+                'provider': 'graph',
+            })
+            self.assertEqual(
+                web_outlook_app.canonical_mail_folder_storage_key(
+                    self.account, 'graph:fid-inbox', folder_id='fid-inbox'
+                ),
+                'inbox',
+            )
+            self.assertEqual(
+                web_outlook_app.canonical_mail_folder_storage_key(
+                    self.account, 'graph:fid-custom', folder_id='fid-custom'
+                ),
+                'graph:fid-custom',
+            )
+
     def test_normalize_custom_folder_keys(self):
         self.assertEqual(
             web_outlook_app.normalize_folder_name('graph:AAMk123'),
@@ -167,6 +193,8 @@ class MailFolderTreeTests(unittest.TestCase):
         ).read_text(encoding='utf-8')
         self.assertIn('loadMailFolderTree', folders_js)
         self.assertIn('buildMailFolderListParams', folders_js)
+        self.assertIn("if (['inbox', 'junkemail', 'deleteditems'].includes(wellKnown))", folders_js)
+        self.assertIn('getMailFolderTreeNodes', folders_js)
         self.assertIn('mailFolderTreeCacheByAccount', folders_js)
         self.assertIn('toggleMailFolderTreePanel', folders_js)
         self.assertIn('mailFolderTreePanelCollapsed = loadMailFolderTreePanelCollapsed()', folders_js)

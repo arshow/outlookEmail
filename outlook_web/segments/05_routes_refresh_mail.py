@@ -2666,23 +2666,27 @@ def coerce_retained_mail_bool(value: Any) -> int:
     return 1 if bool(value) else 0
 
 
-def retained_mail_storage_folder(item: Dict[str, Any], request_folder: str) -> str:
+def retained_mail_storage_folder(item: Dict[str, Any], request_folder: str,
+                                 account: Optional[Dict[str, Any]] = None) -> str:
     folder_name = normalize_folder_name(request_folder)
     if is_custom_mail_folder_storage_key(folder_name):
-        return folder_name
-    if folder_name == 'all':
-        return normalize_folder_name((item or {}).get('folder', 'inbox'))
-    return folder_name
+        storage = folder_name
+    elif folder_name == 'all':
+        storage = normalize_folder_name((item or {}).get('folder', 'inbox'))
+    else:
+        storage = folder_name
+    return canonical_mail_folder_storage_key(account, storage)
 
 
 def build_retained_normal_mail_list_row(account_id: int, item: Dict[str, Any],
-                                        request_folder: str) -> Optional[Dict[str, Any]]:
+                                        request_folder: str,
+                                        account: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     source = dict(item or {})
     provider_message_id = str(source.get('id') or '').strip()
     if not provider_message_id:
         return None
 
-    storage_folder = retained_mail_storage_folder(source, request_folder)
+    storage_folder = retained_mail_storage_folder(source, request_folder, account)
     if not source.get('from') and source.get('sender'):
         source['from'] = source.get('sender')
     if not source.get('to') and source.get('recipients'):
@@ -2803,7 +2807,7 @@ def find_new_retained_normal_mail_identifiers(account: Dict[str, Any], folder: s
     unique_rows = []
     seen_keys = set()
     for item in items or []:
-        row = build_retained_normal_mail_list_row(account_id, item, folder)
+        row = build_retained_normal_mail_list_row(account_id, item, folder, account)
         if row is None:
             continue
         key = retained_normal_mail_key(row)
@@ -2828,7 +2832,7 @@ def upsert_retained_normal_mail_list_items(account: Dict[str, Any], folder: str,
 
     rows = [
         row for row in (
-            build_retained_normal_mail_list_row(account_id, item, folder)
+            build_retained_normal_mail_list_row(account_id, item, folder, account)
             for item in (items or [])
         )
         if row is not None
@@ -3572,13 +3576,24 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
     status_name = normalize_mail_status_filter(status)
     status_filter = build_retained_mail_status_sql(status_name)
 
-    dedupe_partition = 'account_id, folder, provider_message_id'
-    dedupe_order = '''
-        CASE WHEN body_cached = 1 THEN 0 ELSE 1 END,
-        received_at_sort DESC,
-        updated_at DESC,
-        id DESC
-    '''
+    if folder_name == 'all':
+        dedupe_partition = 'account_id, provider_message_id, id_mode'
+        dedupe_order = '''
+            CASE WHEN folder IN ('inbox', 'junkemail', 'deleteditems') THEN 0 ELSE 1 END,
+            CASE WHEN body_cached = 1 THEN 0 ELSE 1 END,
+            CASE WHEN TRIM(COALESCE(body_preview, '')) != '' THEN 0 ELSE 1 END,
+            received_at_sort DESC,
+            updated_at DESC,
+            id DESC
+        '''
+    else:
+        dedupe_partition = 'account_id, folder, provider_message_id'
+        dedupe_order = '''
+            CASE WHEN body_cached = 1 THEN 0 ELSE 1 END,
+            received_at_sort DESC,
+            updated_at DESC,
+            id DESC
+        '''
     db = get_db()
     if keyword:
         register_retained_mail_sql_functions(db)
@@ -3860,6 +3875,13 @@ def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int,
                     'error': f'folder 参数无效，支持: {", ".join(sorted(VALID_MAIL_FOLDERS))}'
                 }
             storage_folder = folder_name
+
+    storage_folder = canonical_mail_folder_storage_key(
+        account,
+        storage_folder,
+        folder_id=explicit_folder_id,
+        mailbox=explicit_mailbox,
+    )
 
     if account.get('account_type') == 'imap':
         if explicit_folder_id:

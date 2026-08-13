@@ -52,6 +52,10 @@
             syncMailFolderTreePanelCollapsed();
         }
 
+        function getMailFolderTreeNodes() {
+            return Array.isArray(mailFolderTreeNodes) ? mailFolderTreeNodes : [];
+        }
+
         function isCustomMailFolderKey(folder) {
             const value = String(folder || '').trim().toLowerCase();
             return value.startsWith('graph:') || value.startsWith('imap:');
@@ -59,6 +63,10 @@
 
         function buildMailFolderStorageKey(node) {
             if (!node) return '';
+            const wellKnown = String(node.well_known || '').trim().toLowerCase();
+            if (['inbox', 'junkemail', 'deleteditems'].includes(wellKnown)) {
+                return wellKnown;
+            }
             if (node.provider === 'graph' || node.folder_id) {
                 return `graph:${node.folder_id || node.id}`;
             }

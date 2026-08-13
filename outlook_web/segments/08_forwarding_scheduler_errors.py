@@ -1727,6 +1727,12 @@ def handle_remote_email_list_request(account: Dict[str, Any], requested_email: s
         storage_folder = build_graph_folder_storage_key(folder_id)
     elif mailbox:
         storage_folder = build_imap_folder_storage_key(mailbox)
+    storage_folder = canonical_mail_folder_storage_key(
+        account,
+        storage_folder,
+        folder_id=folder_id,
+        mailbox=mailbox,
+    )
     result = fetch_account_emails(
         account,
         folder,
@@ -1790,7 +1796,12 @@ def api_get_emails_v2(email_addr):
         return handle_local_retention_list_request(
             account,
             requested_email,
-            folder_request.get('storage_folder') or folder,
+            canonical_mail_folder_storage_key(
+                account,
+                folder_request.get('storage_folder') or folder,
+                folder_id=folder_id,
+                mailbox=mailbox,
+            ),
             subject_contains,
             from_contains,
             keyword,

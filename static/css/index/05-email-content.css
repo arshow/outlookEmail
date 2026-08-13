@@ -1014,6 +1014,13 @@
             border-color: #fed7aa;
         }
 
+        .email-folder-badge--custom,
+        .email-folder-badge--other {
+            color: #334155;
+            background: #f8fafc;
+            border-color: #e2e8f0;
+        }
+
         .email-subject {
             font-size: 14px;
             color: #111827;

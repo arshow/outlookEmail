@@ -13,6 +13,28 @@ from flask import jsonify, request
 
 MAIL_FOLDER_CACHE_TTL_SECONDS = 600
 MAIL_FOLDER_CACHE_MAX_ENTRIES = 200
+CANONICAL_MAIL_FOLDERS = {'inbox', 'junkemail', 'deleteditems'}
+GRAPH_WELL_KNOWN_FOLDER_NAMES = ('inbox', 'junkemail', 'deleteditems')
+MAIL_FOLDER_WELL_KNOWN_BY_NAME = {
+    'inbox': 'inbox',
+    '收件箱': 'inbox',
+    'junk': 'junkemail',
+    'junkemail': 'junkemail',
+    'junk email': 'junkemail',
+    'junk e-mail': 'junkemail',
+    'spam': 'junkemail',
+    '垃圾邮件': 'junkemail',
+    'deleted': 'deleteditems',
+    'deleted items': 'deleteditems',
+    'deleteditems': 'deleteditems',
+    'trash': 'deleteditems',
+    '已删除邮件': 'deleteditems',
+    'sent': 'sentitems',
+    'sent items': 'sentitems',
+    'sentitems': 'sentitems',
+    'drafts': 'drafts',
+    'archive': 'archive',
+}
 
 _mail_folder_cache_lock = threading.Lock()
 _mail_folder_cache: Dict[int, Dict[str, Any]] = {}
@@ -56,18 +78,7 @@ def _get_mail_folder_cache(account_id: int) -> Optional[Dict[str, Any]]:
 def build_imap_folder_tree_nodes(entries: List[Dict[str, Any]], provider: str = 'imap') -> List[Dict[str, Any]]:
     """将扁平 IMAP LIST 结果组装为带 parent_id 的节点列表。"""
     nodes_by_id: Dict[str, Dict[str, Any]] = {}
-    well_known_by_name = {
-        'inbox': 'inbox',
-        'junk': 'junkemail',
-        'junkemail': 'junkemail',
-        'spam': 'junkemail',
-        'deleted': 'deleteditems',
-        'deleted items': 'deleteditems',
-        'trash': 'deleteditems',
-        'sent': 'sentitems',
-        'sent items': 'sentitems',
-        'drafts': 'drafts',
-    }
+    well_known_by_name = MAIL_FOLDER_WELL_KNOWN_BY_NAME
 
     for entry in entries or []:
         mailbox = str(entry.get('name') or '').strip()
@@ -122,6 +133,75 @@ def build_imap_folder_tree_nodes(entries: List[Dict[str, Any]], provider: str = 
             str(item.get('id') or ''),
         ),
     )
+
+
+def _resolve_graph_well_known_folder_ids(access_token: str, proxy_url: str = '',
+                                         fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    for name in GRAPH_WELL_KNOWN_FOLDER_NAMES:
+        try:
+            url = f'https://graph.microsoft.com/v1.0/me/mailFolders/{name}?$select=id'
+            res = get_with_proxy_fallback(
+                url,
+                headers={'Authorization': f'Bearer {access_token}'},
+                timeout=HTTP_REQUEST_TIMEOUT,
+                proxy_url=proxy_url,
+                fallback_proxy_urls=fallback_proxy_urls,
+            )
+            if res.status_code != 200:
+                continue
+            folder_id = str((res.json() or {}).get('id') or '').strip()
+            if folder_id:
+                mapping[folder_id] = name
+        except Exception:
+            continue
+    return mapping
+
+
+def lookup_cached_mail_folder_node(account: Dict[str, Any], folder_id: str = '',
+                                   mailbox: str = '') -> Optional[Dict[str, Any]]:
+    account_id = int((account or {}).get('id') or 0)
+    if not account_id:
+        return None
+    cached = _get_mail_folder_cache(account_id)
+    if not cached:
+        return None
+    wanted_folder_id = str(folder_id or '').strip()
+    wanted_mailbox = str(mailbox or '').strip()
+    for node in cached.get('folders') or []:
+        if not isinstance(node, dict):
+            continue
+        if wanted_folder_id and wanted_folder_id in {
+            str(node.get('folder_id') or '').strip(),
+            str(node.get('id') or '').strip(),
+        }:
+            return node
+        if wanted_mailbox and wanted_mailbox in {
+            str(node.get('mailbox') or '').strip(),
+            str(node.get('id') or '').strip(),
+        }:
+            return node
+    return None
+
+
+def canonical_mail_folder_storage_key(account: Optional[Dict[str, Any]] = None,
+                                      storage_folder: str = '',
+                                      folder_id: str = '',
+                                      mailbox: str = '') -> str:
+    normalized = normalize_folder_name(storage_folder)
+    if normalized in CANONICAL_MAIL_FOLDERS:
+        return normalized
+    resolved_folder_id = str(folder_id or '').strip()
+    resolved_mailbox = str(mailbox or '').strip()
+    if not resolved_folder_id and normalized.startswith('graph:'):
+        resolved_folder_id = normalized[6:]
+    if not resolved_mailbox and normalized.startswith('imap:'):
+        resolved_mailbox = normalized[5:]
+    node = lookup_cached_mail_folder_node(account or {}, resolved_folder_id, resolved_mailbox)
+    well_known = str((node or {}).get('well_known') or '').strip().lower()
+    if well_known in CANONICAL_MAIL_FOLDERS:
+        return well_known
+    return normalized or 'inbox'
 
 
 def _graph_folder_page(access_token: str, url: str, proxy_url: str = '',
@@ -221,14 +301,9 @@ def list_graph_mail_folder_nodes(account: Dict[str, Any]) -> Dict[str, Any]:
         for item in folders
         if str(item.get('id') or '').strip()
     }
-    well_known_names = {
-        'inbox': 'inbox',
-        'junkemail': 'junkemail',
-        'deleteditems': 'deleteditems',
-        'sentitems': 'sentitems',
-        'drafts': 'drafts',
-        'archive': 'archive',
-    }
+    well_known_ids = _resolve_graph_well_known_folder_ids(
+        access_token, proxy_url, fallback_proxy_urls
+    )
     nodes = []
     for item in folders:
         folder_id = str(item.get('id') or '').strip()
@@ -246,7 +321,7 @@ def list_graph_mail_folder_nodes(account: Dict[str, Any]) -> Dict[str, Any]:
             'parent_id': parent_id,
             'has_children': int(item.get('childFolderCount') or 0) > 0,
             'selectable': True,
-            'well_known': well_known_names.get(normalized_name),
+            'well_known': well_known_ids.get(folder_id) or MAIL_FOLDER_WELL_KNOWN_BY_NAME.get(normalized_name),
             'provider': 'graph',
             'folder_id': folder_id,
         })
@@ -431,22 +506,24 @@ def parse_mail_folder_request_args(args=None) -> Dict[str, Any]:
         }
 
     if folder_id:
+        storage_folder = build_graph_folder_storage_key(folder_id)
         return {
             'ok': True,
             'kind': 'graph',
-            'folder': build_graph_folder_storage_key(folder_id),
+            'folder': storage_folder,
             'folder_id': folder_id,
             'mailbox': '',
-            'storage_folder': build_graph_folder_storage_key(folder_id),
+            'storage_folder': storage_folder,
         }
     if mailbox:
+        storage_folder = build_imap_folder_storage_key(mailbox)
         return {
             'ok': True,
             'kind': 'imap',
-            'folder': build_imap_folder_storage_key(mailbox),
+            'folder': storage_folder,
             'folder_id': '',
             'mailbox': mailbox,
-            'storage_folder': build_imap_folder_storage_key(mailbox),
+            'storage_folder': storage_folder,
         }
     if folder not in VALID_MAIL_FOLDERS:
         return {

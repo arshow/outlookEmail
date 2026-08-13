@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, accountsCache, adjustAccountUnreadCount, adjustIframeHeight, aggregatedInboxGroupId, applyAccountUnreadCountsMap, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderColoredRemarkMarkup, renderEmptyStateMarkup, scheduleEmailListLoadCheck, showEmailFetchErrorModal, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, accountsCache, adjustAccountUnreadCount, adjustIframeHeight, aggregatedInboxGroupId, applyAccountUnreadCountsMap, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getAggregatedInboxCacheAccountKey, getCanonicalMailFolder, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderColoredRemarkMarkup, renderEmptyStateMarkup, scheduleEmailListLoadCheck, showEmailFetchErrorModal, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
 
         // ==================== 邮件相关 ====================
 
@@ -521,9 +521,15 @@
                 return '';
             }
 
-            const folder = String(emailItem?.folder || fallbackFolder || '').trim().toLowerCase();
             const idMode = String(emailItem?.id_mode || emailItem?.idMode || '').trim().toLowerCase();
-            return `${folder}::${idMode}::${id}`;
+            const viewFolder = String(fallbackFolder || currentFolder || '').trim().toLowerCase();
+            if (viewFolder === 'all') {
+                return `${idMode}::${id}`;
+            }
+            const folder = typeof getCanonicalMailFolder === 'function'
+                ? getCanonicalMailFolder(emailItem?.folder || fallbackFolder)
+                : String(emailItem?.folder || fallbackFolder || '').trim();
+            return `${String(folder || '').trim().toLowerCase()}::${idMode}::${id}`;
         }
 
         function buildAggregatedEmailsUrl({ skip = 0, top = 20, folder = currentFolder, source = '', status = '', keyword = '' } = {}) {
@@ -1458,6 +1464,20 @@
             return `to: ${toValue}`;
         }
 
+        function getEmailFolderBadgeClass(emailItem) {
+            const canonical = typeof getCanonicalMailFolder === 'function'
+                ? getCanonicalMailFolder(emailItem?.folder)
+                : String(emailItem?.folder || '').trim();
+            const lower = String(canonical || '').toLowerCase();
+            if (['inbox', 'junkemail', 'deleteditems'].includes(lower)) {
+                return lower;
+            }
+            if (lower.startsWith('graph:') || lower.startsWith('imap:')) {
+                return 'custom';
+            }
+            return 'other';
+        }
+
         function getEmailSourceLabel(emailItem) {
             if (currentMethod === 'cloudflare-admin') {
                 return 'Cloudflare';
@@ -1703,7 +1723,7 @@
                                     ${recipientDisplayLabel ? `<div class="email-recipient" title="${escapeHtml(recipientDisplayLabel)}">${escapeHtml(recipientDisplayLabel)}</div>` : ''}
                                 </div>
                                 ${hasAttachments ? '<span class="email-attachment-indicator" title="含附件" aria-label="含附件">📎</span>' : ''}
-                                ${sourceLabel ? `<span class="email-folder-badge email-folder-badge--${escapeHtml(String(email.folder || '').toLowerCase())}">${escapeHtml(sourceLabel)}</span>` : ''}
+                                ${sourceLabel ? `<span class="email-folder-badge email-folder-badge--${escapeHtml(getEmailFolderBadgeClass(email))}">${escapeHtml(sourceLabel)}</span>` : ''}
                             </div>
                             <div style="display:flex;align-items:center;gap:8px;">
                                 ${!isTempEmailGroup ? `<button type="button" class="email-flag-btn ${isFlagged ? 'is-flagged' : ''}" data-email-flag-toggle="true" data-email-index="${sourceIndex}" title="${isFlagged ? '取消 Flag' : '标记 Flag'}" aria-label="${isFlagged ? '取消 Flag' : '标记 Flag'}">${isFlagged ? '★' : '☆'}</button>` : ''}
