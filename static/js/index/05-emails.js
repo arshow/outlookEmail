@@ -256,10 +256,10 @@
         let currentEmailKeyword = '';
         let currentEmailTotalCount = 0;
         const EMAIL_FETCH_PAGE_SIZE = 50;
-        const EMAIL_FETCH_TOP_DEFAULT = 500;
+        const EMAIL_FETCH_TOP_DEFAULT = 50;
         const EMAIL_FETCH_TOP_MIN = 1;
         const EMAIL_FETCH_TOP_MAX = 2000;
-        const EMAIL_FETCH_TOP_STORAGE_KEY = 'emailFetchTop';
+        const EMAIL_FETCH_TOP_STORAGE_KEY = 'emailFetchRecentTop';
         let isFetchingRecentEmails = false;
         let mailboxViewSeq = 0;
 
@@ -854,7 +854,7 @@
                         source: 'local',
                         folder: currentFolder,
                         skip: 0,
-                        top: 20,
+                        top: getEmailFetchTop(),
                         keyword: resolveEmailListKeyword()
                     }),
                     {
@@ -1088,7 +1088,7 @@
                             const localData = await fetchRemoteEmails(email, cacheKey, {
                                 aggregated: true,
                                 skip: 0,
-                                top: 20,
+                                top: getEmailFetchTop(),
                                 source: 'local',
                                 method: 'aggregated',
                                 methodLabel: 'Local Retention',
@@ -1160,7 +1160,7 @@
                 await fetchRemoteEmails(email, cacheKey, {
                     aggregated,
                     skip: 0,
-                    top: 20,
+                    top: getEmailFetchTop(),
                     method: aggregated ? 'aggregated' : undefined,
                     context
                 });

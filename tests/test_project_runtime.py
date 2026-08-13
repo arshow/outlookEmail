@@ -2364,7 +2364,7 @@ class FrontendEmailListSecurityTests(unittest.TestCase):
         self.assertIn('emailCountEl.textContent = `(${listed}/${total})`', self.emails_js)
         self.assertIn('function setEmailKeyword(keyword, options = {})', self.emails_js)
         self.assertIn('function emailMatchesKeyword(email, keyword = getEmailSearchKeyword())', self.emails_js)
-        self.assertIn('EMAIL_FETCH_TOP_DEFAULT = 500', self.emails_js)
+        self.assertIn('EMAIL_FETCH_TOP_DEFAULT = 50', self.emails_js)
         self.assertIn('hydrateEmailSearchFromLocal()', self.emails_js)
         self.assertIn('function beginMailboxViewChange()', self.emails_js)
         self.assertIn('function getCurrentMailboxContext()', self.emails_js)
