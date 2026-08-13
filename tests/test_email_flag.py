@@ -220,6 +220,24 @@ class EmailFlagTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row['is_read'], 0)
 
+    def test_local_retention_list_can_filter_flagged_status(self):
+        self._seed_graph_retained_row('flagged-visible', is_flagged=1)
+        self._seed_graph_retained_row('plain-visible', is_flagged=0)
+        with self.app.app_context():
+            web_outlook_app.set_setting('normal_mail_local_retention_enabled', 'true')
+            if hasattr(web_outlook_app, 'clear_normal_mail_local_retention_enabled_cache'):
+                web_outlook_app.clear_normal_mail_local_retention_enabled_cache()
+
+        response = self.client.get(
+            '/api/emails/flagged@example.com?source=local&folder=all&skip=0&top=10&status=flagged'
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['status'], 'flagged')
+        self.assertEqual([item['id'] for item in payload['emails']], ['flagged-visible'])
+        self.assertTrue(payload['emails'][0]['is_flagged'] is True)
+
     def test_batch_action_bar_includes_unread_and_flag_controls(self):
         layout_path = os.path.join(ROOT_DIR, 'templates', 'partials', 'index', 'layout.html')
         emails_js_path = os.path.join(ROOT_DIR, 'static', 'js', 'index', '05-emails.js')

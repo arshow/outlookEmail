@@ -968,6 +968,39 @@ class NormalMailRetentionTests(unittest.TestCase):
         self.assertTrue(enabled_payload['local_retention'])
         self.assertEqual([item['id'] for item in enabled_payload['emails']], ['disabled-local-row'])
 
+    def test_normalize_email_list_item_coerces_string_and_numeric_read_state(self):
+        with self.app.app_context():
+            unread_from_string = web_outlook_app.normalize_email_list_item(
+                {'id': '1', 'is_read': 'false'},
+                'inbox',
+            )
+            unread_from_zero = web_outlook_app.normalize_email_list_item(
+                {'id': '2', 'is_read': 0},
+                'inbox',
+            )
+            unread_from_graph = web_outlook_app.normalize_email_list_item(
+                {'id': '3', 'isRead': False},
+                'inbox',
+            )
+            read_from_string = web_outlook_app.normalize_email_list_item(
+                {'id': '4', 'is_read': 'true'},
+                'inbox',
+            )
+            flagged_from_graph = web_outlook_app.normalize_email_list_item(
+                {'id': '5', 'flag': {'flagStatus': 'flagged'}},
+                'inbox',
+            )
+            flagged_from_one = web_outlook_app.normalize_email_list_item(
+                {'id': '6', 'is_flagged': 1},
+                'inbox',
+            )
+        self.assertFalse(unread_from_string['is_read'])
+        self.assertFalse(unread_from_zero['is_read'])
+        self.assertFalse(unread_from_graph['is_read'])
+        self.assertTrue(read_from_string['is_read'])
+        self.assertTrue(flagged_from_graph['is_flagged'])
+        self.assertTrue(flagged_from_one['is_flagged'])
+
     def test_get_emails_can_return_local_retention_list_with_pagination(self):
         with self.app.app_context():
             db = web_outlook_app.get_db()
@@ -1046,6 +1079,19 @@ class NormalMailRetentionTests(unittest.TestCase):
         self.assertEqual(item['body_preview'], 'Middle preview')
         self.assertEqual(item['folder'], 'inbox')
         self.assertEqual(item['id_mode'], 'uid')
+
+        unread_response = self.client.get(
+            '/api/emails/retained@example.com?source=local&folder=all&skip=0&top=5&status=unread'
+        )
+        unread_payload = unread_response.get_json()
+        self.assertTrue(unread_payload['success'])
+        self.assertEqual(unread_payload['status'], 'unread')
+        self.assertEqual(unread_payload['count'], 2)
+        self.assertEqual(
+            [item['id'] for item in unread_payload['emails']],
+            ['junk-new', 'inbox-mid']
+        )
+        self.assertTrue(all(item['is_read'] is False for item in unread_payload['emails']))
 
         inbox_response = self.client.get(
             '/api/emails/retained@example.com?source=local&folder=inbox&skip=0&top=5'

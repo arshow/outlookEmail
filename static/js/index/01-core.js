@@ -1,4 +1,4 @@
-        /* global applyPendingNewMailSync, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchInput, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailListScroll, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, renderEmailList, saveAccountSearchQueryPreference, scheduleEmailListLoadCheck, searchAccounts, syncInboxDiscoveryEventSource */
+        /* global applyPendingNewMailSync, clearEmailStatusFilterOverride, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, hydrateEmailStatusFilterIfNeeded, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchInput, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailListScroll, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, normalizeEmailListItems, renderEmailList, saveAccountSearchQueryPreference, scheduleEmailListLoadCheck, searchAccounts, syncInboxDiscoveryEventSource */
 
         // 全局状态
         let csrfToken = null;
@@ -396,7 +396,10 @@
         }
 
         function applyEmailListCache(cache, { scheduleLoadCheck = true } = {}) {
-            currentEmails = Array.isArray(cache?.emails) ? cache.emails : [];
+            const cachedEmails = Array.isArray(cache?.emails) ? cache.emails : [];
+            currentEmails = typeof normalizeEmailListItems === 'function'
+                ? normalizeEmailListItems(cachedEmails)
+                : cachedEmails;
             hasMoreEmails = cache?.has_more === true;
             currentSkip = getNextEmailSkipFromCache(cache);
             currentMethod = cache?.method || 'graph';
@@ -1775,6 +1778,9 @@
             currentFolder = folder;
             currentEmailId = null;
             currentEmailDetail = null;
+            if (typeof clearEmailStatusFilterOverride === 'function') {
+                clearEmailStatusFilterOverride();
+            }
 
             // 更新按钮状态
             document.querySelectorAll('.folder-tab').forEach(tab => {
@@ -1821,12 +1827,18 @@
             if (currentAccount && !isTempEmailGroup && !cache) {
                 loadEmails(currentAccount);
             }
+            if (currentEmailStatusFilter !== 'all' && typeof hydrateEmailStatusFilterIfNeeded === 'function') {
+                void hydrateEmailStatusFilterIfNeeded();
+            }
         }
 
         function switchEmailStatusFilter(filter) {
             const normalized = String(filter || 'all').trim().toLowerCase();
             const allowed = ['all', 'unread', 'read', 'flagged'];
             currentEmailStatusFilter = allowed.includes(normalized) ? normalized : 'all';
+            if (typeof clearEmailStatusFilterOverride === 'function') {
+                clearEmailStatusFilterOverride();
+            }
             document.querySelectorAll('.email-status-filter').forEach(tab => {
                 tab.classList.toggle('active', tab.dataset.statusFilter === currentEmailStatusFilter);
             });
@@ -1839,6 +1851,9 @@
                     ? getVisibleEmailsForCurrentFilter(currentEmails).length
                     : currentEmails.length;
                 emailCount.textContent = `(${visibleCount})`;
+            }
+            if (currentEmailStatusFilter !== 'all' && typeof hydrateEmailStatusFilterIfNeeded === 'function') {
+                void hydrateEmailStatusFilterIfNeeded();
             }
         }
 

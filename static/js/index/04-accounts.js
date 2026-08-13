@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, applyEmailListCache, closeMobilePanels, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, hideModal, isAggregatedInbox, isAggregatedInboxMode, isTempEmailGroup, loadAccountsByGroup, loadEmails, loadGroups, refreshVisibleAccountList, renderEmailList, scheduleEmailListLoadCheck, showConfirmModal, showEmailList, showModal, showToast, updateMobileContext */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, applyEmailListCache, clearEmailStatusFilterOverride, closeMobilePanels, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, hideModal, isAggregatedInbox, isAggregatedInboxMode, isTempEmailGroup, loadAccountsByGroup, loadEmails, loadGroups, refreshVisibleAccountList, renderEmailList, scheduleEmailListLoadCheck, showConfirmModal, showEmailList, showModal, showToast, updateMobileContext */
 
         // ==================== 账号相关 ====================
 
@@ -50,6 +50,9 @@
                 tab.classList.toggle('active', tab.dataset.folder === 'all');
             });
             currentEmailStatusFilter = 'all';
+            if (typeof clearEmailStatusFilterOverride === 'function') {
+                clearEmailStatusFilterOverride();
+            }
             if (typeof syncEmailStatusFilterUI === 'function') {
                 syncEmailStatusFilterUI(true);
             }
@@ -137,6 +140,9 @@
                 syncMailFolderTreeSelection();
             }
             currentEmailStatusFilter = 'all';
+            if (typeof clearEmailStatusFilterOverride === 'function') {
+                clearEmailStatusFilterOverride();
+            }
             if (typeof syncEmailStatusFilterUI === 'function') {
                 syncEmailStatusFilterUI(true);
             }

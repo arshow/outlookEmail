@@ -130,19 +130,177 @@
             return currentAccount === context.account && currentFolder === context.folder;
         }
 
+        function coerceMailReadState(value) {
+            if (value === false || value === 0 || value === '0') {
+                return false;
+            }
+            if (typeof value === 'string') {
+                const normalized = value.trim().toLowerCase();
+                if (['false', 'no', 'off', 'unread', ''].includes(normalized)) {
+                    return false;
+                }
+                if (['true', 'yes', 'on', '1', 'read'].includes(normalized)) {
+                    return true;
+                }
+                return false;
+            }
+            if (value == null) {
+                return null;
+            }
+            return Boolean(value);
+        }
+
+        function isEmailUnread(email) {
+            if (!email || typeof email !== 'object') {
+                return false;
+            }
+            const raw = Object.prototype.hasOwnProperty.call(email, 'is_read')
+                ? email.is_read
+                : email.isRead;
+            return coerceMailReadState(raw) === false;
+        }
+
+        function coerceMailFlagState(value) {
+            if (value && typeof value === 'object') {
+                const status = String(value.flagStatus || value.flag_status || '').trim().toLowerCase();
+                return status === 'flagged';
+            }
+            if (value === true || value === 1 || value === '1') {
+                return true;
+            }
+            if (typeof value === 'string') {
+                const normalized = value.trim().toLowerCase();
+                return ['true', 'yes', 'on', 'flagged', 'flag'].includes(normalized);
+            }
+            return false;
+        }
+
+        function isEmailFlagged(email) {
+            if (!email || typeof email !== 'object') {
+                return false;
+            }
+            if (Object.prototype.hasOwnProperty.call(email, 'is_flagged')) {
+                return coerceMailFlagState(email.is_flagged);
+            }
+            if (Object.prototype.hasOwnProperty.call(email, 'isFlagged')) {
+                return coerceMailFlagState(email.isFlagged);
+            }
+            if (email.flag != null) {
+                return coerceMailFlagState(email.flag);
+            }
+            return false;
+        }
+
+        function normalizeEmailListItems(emails) {
+            return (Array.isArray(emails) ? emails : []).map(email => {
+                if (!email || typeof email !== 'object') {
+                    return email;
+                }
+                const rawRead = Object.prototype.hasOwnProperty.call(email, 'is_read')
+                    ? email.is_read
+                    : email.isRead;
+                if (rawRead !== undefined) {
+                    email.is_read = coerceMailReadState(rawRead) === true;
+                }
+                const rawFlag = Object.prototype.hasOwnProperty.call(email, 'is_flagged')
+                    ? email.is_flagged
+                    : (Object.prototype.hasOwnProperty.call(email, 'isFlagged')
+                        ? email.isFlagged
+                        : email.flag);
+                if (rawFlag !== undefined) {
+                    email.is_flagged = coerceMailFlagState(rawFlag);
+                }
+                return email;
+            });
+        }
+
+        let statusFilterOverrideEmails = null;
+        let statusFilterHydrateSeq = 0;
+
+        function clearEmailStatusFilterOverride() {
+            statusFilterOverrideEmails = null;
+        }
+
         function getVisibleEmailsForCurrentFilter(emails = currentEmails) {
-            const list = Array.isArray(emails) ? emails : [];
+            const list = normalizeEmailListItems(Array.isArray(emails) ? emails : []);
             const filter = String(currentEmailStatusFilter || 'all').trim().toLowerCase();
             if (filter === 'unread') {
-                return list.filter(email => email?.is_read === false);
+                return list.filter(email => isEmailUnread(email));
             }
             if (filter === 'read') {
-                return list.filter(email => email?.is_read !== false);
+                return list.filter(email => !isEmailUnread(email));
             }
             if (filter === 'flagged') {
-                return list.filter(email => email?.is_flagged === true);
+                return list.filter(email => isEmailFlagged(email));
             }
             return list;
+        }
+
+        async function hydrateEmailStatusFilterIfNeeded() {
+            const filter = String(currentEmailStatusFilter || 'all').trim().toLowerCase();
+            if (filter === 'all' || isTempEmailGroup || currentMethod === 'cloudflare-admin') {
+                statusFilterOverrideEmails = null;
+                return false;
+            }
+            if (getVisibleEmailsForCurrentFilter(currentEmails).length > 0) {
+                statusFilterOverrideEmails = null;
+                return false;
+            }
+            if (typeof isNormalMailLocalRetentionEnabled !== 'function' || !isNormalMailLocalRetentionEnabled()) {
+                return false;
+            }
+            if (!isAggregatedInboxMode() && !currentAccount) {
+                return false;
+            }
+
+            const seq = ++statusFilterHydrateSeq;
+            const account = currentAccount;
+            const folder = currentFolder;
+            try {
+                const url = isAggregatedInboxMode()
+                    ? buildAggregatedEmailsUrl({
+                        source: 'local',
+                        folder,
+                        skip: 0,
+                        top: 100,
+                        status: filter
+                    })
+                    : buildEmailListRequestUrl(account, {
+                        source: 'local',
+                        folder,
+                        skip: 0,
+                        top: 100,
+                        status: filter
+                    });
+                const response = await fetchWithTimeout(url, {
+                    timeoutMs: EMAIL_LIST_REQUEST_TIMEOUT_MS,
+                    timeoutMessage: '读取本地筛选邮件超时'
+                });
+                const data = await response.json();
+                if (seq !== statusFilterHydrateSeq) {
+                    return false;
+                }
+                if (
+                    currentEmailStatusFilter !== filter
+                    || currentAccount !== account
+                    || currentFolder !== folder
+                ) {
+                    return false;
+                }
+                const emails = normalizeEmailListItems(data.emails);
+                if (!data.success || !emails.length) {
+                    return false;
+                }
+                statusFilterOverrideEmails = emails;
+                renderEmailList(currentEmails);
+                const emailCount = document.getElementById('emailCount');
+                if (emailCount) {
+                    emailCount.textContent = `(${getVisibleEmailsForCurrentFilter(emails).length})`;
+                }
+                return true;
+            } catch (error) {
+                return false;
+            }
         }
 
         function updateEmailListHeader(methodLabel, emailCount) {
@@ -205,7 +363,7 @@
             return `${folder}::${idMode}::${id}`;
         }
 
-        function buildAggregatedEmailsUrl({ skip = 0, top = 20, folder = currentFolder, source = '' } = {}) {
+        function buildAggregatedEmailsUrl({ skip = 0, top = 20, folder = currentFolder, source = '', status = '' } = {}) {
             const safeFolder = ['all', 'inbox', 'junkemail'].includes(String(folder || '').toLowerCase())
                 ? String(folder || 'all')
                 : 'all';
@@ -217,6 +375,10 @@
             });
             if (source) {
                 query.set('source', String(source));
+            }
+            const statusName = String(status || '').trim().toLowerCase();
+            if (statusName && statusName !== 'all') {
+                query.set('status', statusName);
             }
             return `/api/emails/aggregated?${query.toString()}`;
         }
@@ -303,7 +465,7 @@
         }
 
         function applyEmailListResponse(cacheKey, data, options = {}) {
-            const emails = Array.isArray(data.emails) ? data.emails : [];
+            const emails = normalizeEmailListItems(data.emails);
             const { method, remoteMethod, methodLabel, disableLoadMore } = getEmailListMethodMetadata(data, options);
 
             currentEmails = emails;
@@ -1257,7 +1419,9 @@
 
         function renderEmailList(emails) {
             const container = document.getElementById('emailList');
-            const sourceEmails = Array.isArray(emails) ? emails : [];
+            const sourceEmails = Array.isArray(statusFilterOverrideEmails)
+                ? normalizeEmailListItems(statusFilterOverrideEmails)
+                : normalizeEmailListItems(emails);
             const visibleEmails = isTempEmailGroup || currentMethod === 'cloudflare-admin'
                 ? sourceEmails
                 : getVisibleEmailsForCurrentFilter(sourceEmails);
@@ -1298,10 +1462,10 @@
                     ? String(email.account_remark || email.accountRemark || '').trim()
                     : '';
                 const hasAttachments = Boolean(email.has_attachments);
-                const isFlagged = email.is_flagged === true;
+                const isFlagged = isEmailFlagged(email);
                 const isNewlySynced = highlightedNewEmailKeys.has(getEmailMessageStableKey(email));
                 return `
-                <div class="email-item ${email.is_read === false ? 'unread' : ''} ${isActive ? 'active' : ''} ${isNewlySynced ? 'newly-synced' : ''}"
+                <div class="email-item ${isEmailUnread(email) ? 'unread' : ''} ${isActive ? 'active' : ''} ${isNewlySynced ? 'newly-synced' : ''}"
                      data-email-id="${escapeHtml(String(email.id || ''))}"
                      data-email-selection-key="${escapeHtml(selectionKey)}"
                      data-email-index="${sourceIndex}">
@@ -1311,7 +1475,7 @@
                     <div class="email-body">
                         <div class="email-top-row">
                             <div class="email-top-main">
-                                ${email.is_read === false ? '<span class="email-unread-dot" title="未读" aria-label="未读"></span>' : ''}
+                                ${isEmailUnread(email) ? '<span class="email-unread-dot" title="未读" aria-label="未读"></span>' : ''}
                                 <div class="email-sender-block">
                                     <div class="email-from" title="${escapeHtml(email.from || '未知发件人')}">${escapeHtml(email.from || '未知发件人')}</div>
                                     ${recipientDisplayLabel ? `<div class="email-recipient" title="${escapeHtml(recipientDisplayLabel)}">${escapeHtml(recipientDisplayLabel)}</div>` : ''}
@@ -1482,7 +1646,7 @@
                 if (!Number.isFinite(accountId) || accountId <= 0) {
                     return;
                 }
-                const wasUnread = email.is_read === false;
+                const wasUnread = isEmailUnread(email);
                 const willBeUnread = isRead === false;
                 if (wasUnread === willBeUnread) {
                     return;
@@ -1860,7 +2024,7 @@
                 return;
             }
 
-            const nextFlagged = emailItem.is_flagged !== true;
+            const nextFlagged = !isEmailFlagged(emailItem);
             await requestMarkEmailsFlag([{
                 id: String(emailItem.id),
                 folder: emailItem.folder || currentFolder || 'inbox',
@@ -1905,10 +2069,10 @@
             const unmarkFlagBtn = document.getElementById('batchUnmarkFlagBtn');
             const panel = document.getElementById('emailListPanel');
             const selectedEmails = getSelectedEmailItems();
-            const unreadSelectedCount = selectedEmails.filter(email => email.is_read === false).length;
-            const readSelectedCount = selectedEmails.filter(email => email.is_read !== false).length;
-            const unflaggedSelectedCount = selectedEmails.filter(email => email.is_flagged !== true).length;
-            const flaggedSelectedCount = selectedEmails.filter(email => email.is_flagged === true).length;
+            const unreadSelectedCount = selectedEmails.filter(email => isEmailUnread(email)).length;
+            const readSelectedCount = selectedEmails.filter(email => !isEmailUnread(email)).length;
+            const unflaggedSelectedCount = selectedEmails.filter(email => !isEmailFlagged(email)).length;
+            const flaggedSelectedCount = selectedEmails.filter(email => isEmailFlagged(email)).length;
             if (isTempEmailGroup) {
                 bar.style.display = 'none';
                 panel?.classList.remove('batch-toolbar-active');
@@ -2015,7 +2179,7 @@
             const btn = document.getElementById('batchMarkReadBtn');
             if (!btn || btn.disabled) return;
 
-            const unreadItems = buildSelectedEmailActionItems(email => email.is_read === false);
+            const unreadItems = buildSelectedEmailActionItems(email => isEmailUnread(email));
             if (!unreadItems.length) {
                 showToast('所选邮件已全部为已读');
                 return;
@@ -2037,7 +2201,7 @@
             const btn = document.getElementById('batchMarkUnreadBtn');
             if (!btn || btn.disabled) return;
 
-            const readItems = buildSelectedEmailActionItems(email => email.is_read !== false);
+            const readItems = buildSelectedEmailActionItems(email => !isEmailUnread(email));
             if (!readItems.length) {
                 showToast('所选邮件已全部为未读');
                 return;
@@ -2061,7 +2225,7 @@
             if (!btn || btn.disabled) return;
 
             const items = buildSelectedEmailActionItems(email => (
-                targetFlagged ? email.is_flagged !== true : email.is_flagged === true
+                targetFlagged ? !isEmailFlagged(email) : isEmailFlagged(email)
             ));
             if (!items.length) {
                 showToast(targetFlagged ? '所选邮件已全部标记 Flag' : '所选邮件均未标记 Flag');
@@ -2364,7 +2528,7 @@
                         account_email: accountEmail
                     };
                     renderEmailDetail(currentEmailDetail);
-                    if (selectedEmail?.is_read === false) {
+                    if (isEmailUnread(selectedEmail)) {
                         void requestMarkEmailsAsRead([{
                             id: messageId,
                             folder: requestFolder,

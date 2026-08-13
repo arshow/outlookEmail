@@ -2338,6 +2338,19 @@ class FrontendEmailListSecurityTests(unittest.TestCase):
         self.assertIn('getVisibleEmailsForCurrentFilter(currentEmails)', toggle_source)
         self.assertIn('visibleKeys.every(key => selectedEmailIds.has(key))', toggle_source)
 
+    def test_unread_filter_accepts_numeric_and_camelcase_read_state(self):
+        self.assertIn('function isEmailUnread(email)', self.emails_js)
+        self.assertIn('function coerceMailReadState(value)', self.emails_js)
+        self.assertIn('function isEmailFlagged(email)', self.emails_js)
+        self.assertIn('function coerceMailFlagState(value)', self.emails_js)
+        self.assertIn('function hydrateEmailStatusFilterIfNeeded()', self.emails_js)
+        self.assertIn('return list.filter(email => isEmailUnread(email));', self.emails_js)
+        self.assertIn('return list.filter(email => isEmailFlagged(email));', self.emails_js)
+        self.assertIn("query.set('status', statusName);", self.emails_js)
+        core_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '01-core.js').read_text(encoding='utf-8')
+        self.assertIn('hydrateEmailStatusFilterIfNeeded()', core_js)
+        self.assertIn('clearEmailStatusFilterOverride()', core_js)
+
     def test_email_checkbox_uses_delegated_click_without_inline_toggle(self):
         self.assertNotIn("toggleEmailSelection('${email.id}')", self.emails_js)
         self.assertIn('event.stopPropagation();', self.emails_js)

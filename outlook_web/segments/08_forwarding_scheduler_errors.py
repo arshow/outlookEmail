@@ -1709,6 +1709,7 @@ def handle_local_retention_list_request(account: Dict[str, Any], requested_email
         subject_contains=subject_contains,
         from_contains=from_contains,
         keyword=keyword,
+        status=normalize_mail_status_filter(request.args.get('status', 'all')),
     )
     if result.get('success'):
         add_resolved_account_metadata(result, requested_email, account)

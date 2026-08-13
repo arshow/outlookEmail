@@ -2559,17 +2559,63 @@ def delete_oauth_imap_items(account: Dict[str, Any], items: List[Dict[str, str]]
     return result
 
 
+def coerce_mail_is_read(value: Any) -> bool:
+    """把 Graph/IMAP/SQLite 里各种已读标记收成布尔值。"""
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {'0', 'false', 'no', 'off', 'unread', ''}:
+            return False
+        if normalized in {'1', 'true', 'yes', 'on', 'read'}:
+            return True
+        return False
+    if value is None:
+        return False
+    return bool(value)
+
+
+def coerce_mail_is_flagged(value: Any) -> bool:
+    """把 Graph flag 对象 / IMAP / SQLite 里的星标收成布尔值。"""
+    if isinstance(value, dict):
+        status = str(value.get('flagStatus') or value.get('flag_status') or '').strip().lower()
+        return status == 'flagged'
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        return normalized in {'1', 'true', 'yes', 'on', 'flagged', 'flag'}
+    if value is None:
+        return False
+    return bool(value)
+
+
+def normalize_mail_status_filter(status: Any) -> str:
+    normalized = str(status or 'all').strip().lower()
+    return normalized if normalized in {'all', 'unread', 'read', 'flagged'} else 'all'
+
+
+def build_retained_mail_status_sql(status: str) -> str:
+    if status == 'unread':
+        return 'AND COALESCE(is_read, 0) = 0'
+    if status == 'read':
+        return 'AND COALESCE(is_read, 0) != 0'
+    if status == 'flagged':
+        return 'AND COALESCE(is_flagged, 0) = 1'
+    return ''
+
+
 def normalize_email_list_item(item: Dict[str, Any], folder: str) -> Dict[str, Any]:
     row = dict(item or {})
     row['subject'] = row.get('subject', '无主题')
     row['from'] = row.get('from', '未知')
     row['to'] = str(row.get('to', '') or '')
     row['date'] = row.get('date', '')
-    row['is_read'] = bool(row.get('is_read', False))
+    if 'is_read' not in row and row.get('isRead') is not None:
+        row['is_read'] = row.get('isRead')
+    row['is_read'] = coerce_mail_is_read(row.get('is_read', False))
     if 'is_flagged' not in row and row.get('flag') is not None:
-        row['is_flagged'] = coerce_graph_is_flagged(row.get('flag'))
+        row['is_flagged'] = coerce_mail_is_flagged(row.get('flag'))
+    elif 'is_flagged' not in row and row.get('isFlagged') is not None:
+        row['is_flagged'] = coerce_mail_is_flagged(row.get('isFlagged'))
     else:
-        row['is_flagged'] = bool(row.get('is_flagged', False))
+        row['is_flagged'] = coerce_mail_is_flagged(row.get('is_flagged', False))
     row['has_attachments'] = bool(row.get('has_attachments', False))
     row['body_preview'] = row.get('body_preview', '')
     row['folder'] = row.get('folder') or folder
@@ -3166,8 +3212,8 @@ def retained_mail_row_to_list_item(row) -> Dict[str, Any]:
         'from': row['sender'] or '未知',
         'to': row['recipients'] or '',
         'date': row['received_at'] or '',
-        'is_read': bool(row['is_read']),
-        'is_flagged': bool(row['is_flagged']) if 'is_flagged' in row.keys() else False,
+        'is_read': coerce_mail_is_read(row['is_read']),
+        'is_flagged': coerce_mail_is_flagged(row['is_flagged']) if 'is_flagged' in row.keys() else False,
         'has_attachments': bool(row['has_attachments']),
         'body_preview': row['body_preview'] or '',
         'folder': row['folder'] or 'inbox',
@@ -3455,7 +3501,8 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
                                     include_body: bool = False,
                                     subject_contains: str = '',
                                     from_contains: str = '',
-                                    keyword: str = '') -> Dict[str, Any]:
+                                    keyword: str = '',
+                                    status: str = 'all') -> Dict[str, Any]:
     folder_name = normalize_folder_name(folder)
     if folder_name not in VALID_MAIL_FOLDERS and not is_custom_mail_folder_storage_key(folder_name):
         return {
@@ -3468,6 +3515,8 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
     if folder_name != 'all':
         folder_filter = 'AND folder = ?'
         params.append(folder_name)
+    status_name = normalize_mail_status_filter(status)
+    status_filter = build_retained_mail_status_sql(status_name)
 
     dedupe_partition = 'account_id, folder, provider_message_id'
     dedupe_order = '''
@@ -3485,14 +3534,14 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
     cte_sql = f'''
         WITH ranked_retained AS (
             SELECT provider_message_id, subject, sender, recipients, received_at,
-                   is_read, has_attachments, body_preview, body, folder, id_mode,
+                   is_read, is_flagged, has_attachments, body_preview, body, folder, id_mode,
                    received_at_sort, id,
                    ROW_NUMBER() OVER (
                        PARTITION BY {dedupe_partition}
                        ORDER BY {dedupe_order}
                    ) AS retained_rank
             FROM retained_normal_mail_messages
-            WHERE account_id = ? AND list_cached = 1 {folder_filter}
+            WHERE account_id = ? AND list_cached = 1 {folder_filter} {status_filter}
         ),
         filtered_retained AS (
             SELECT *
@@ -3513,7 +3562,7 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
     rows = db.execute(
         cte_sql + f'''
         SELECT provider_message_id, subject, sender, recipients, received_at,
-               is_read, has_attachments, body_preview{body_column}, folder, id_mode
+               is_read, is_flagged, has_attachments, body_preview{body_column}, folder, id_mode
         FROM filtered_retained
         ORDER BY received_at_sort DESC, id DESC
         LIMIT ? OFFSET ?
@@ -3532,6 +3581,7 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
         'request_method': 'local',
         'local_retention': True,
         'folder': folder_name,
+        'status': status_name,
     }
 
 
@@ -4091,7 +4141,7 @@ def merge_aggregated_account_results(
 
 
 def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: int, top: int,
-                                    source: str = 'remote') -> Dict[str, Any]:
+                                    source: str = 'remote', status: str = 'all') -> Dict[str, Any]:
     account_id = account.get('id')
     account_email = account.get('email')
     use_local = str(source or '').strip().lower() in {'local', 'retained', 'cache'}
@@ -4099,7 +4149,9 @@ def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: 
     with app.app_context():
         try:
             if use_local:
-                result = fetch_retained_normal_mail_list(account, folder, skip, top)
+                result = fetch_retained_normal_mail_list(
+                    account, folder, skip, top, status=status
+                )
             else:
                 result = fetch_account_emails(account, folder, skip, top)
         except Exception as exc:
@@ -4211,6 +4263,7 @@ def api_get_aggregated_emails():
 
     skip = parse_non_negative_int(request.args.get('skip', 0), 0)
     top = parse_non_negative_int(request.args.get('top', 20), 20, max_value=50)
+    status_name = normalize_mail_status_filter(request.args.get('status', 'all'))
     source_raw = str(request.args.get('source') or '').strip().lower()
     local_only = str(request.args.get('local_only') or '').strip().lower() in {
         '1', 'true', 'yes', 'on'
@@ -4270,6 +4323,7 @@ def api_get_aggregated_emails():
                 skip,
                 top,
                 fetch_source,
+                status_name,
             ): account
             for account in selected_accounts
         }
@@ -4371,7 +4425,10 @@ def api_get_emails(email_addr):
     if local_retention_request:
         skip = parse_non_negative_int(request.args.get('skip', 0), 0)
         top = parse_non_negative_int(request.args.get('top', 20), 20)
-        return jsonify(fetch_retained_normal_mail_list(account, folder, skip, top))
+        status_name = normalize_mail_status_filter(request.args.get('status', 'all'))
+        return jsonify(fetch_retained_normal_mail_list(
+            account, folder, skip, top, status=status_name
+        ))
     skip = parse_non_negative_int(request.args.get('skip', 0), 0)
     top = parse_non_negative_int(request.args.get('top', 20), 20, 50)
     result = fetch_account_emails(account, folder, skip, top)
