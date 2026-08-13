@@ -116,6 +116,8 @@ class AggregatedInboxTests(unittest.TestCase):
         self.assertEqual(payload['emails'][1]['account_id'], self.account_alpha['id'])
         self.assertEqual(payload['emails'][0]['account_remark'], 'Beta 备注')
         self.assertEqual(payload['emails'][1]['account_remark'], 'Alpha 备注')
+        self.assertEqual(payload['emails'][0]['account_type'], 'outlook')
+        self.assertEqual(payload['emails'][1]['account_type'], 'outlook')
 
     def test_aggregated_inbox_partial_failure(self):
         def fake_fetch(account, folder, skip, top):

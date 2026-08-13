@@ -78,7 +78,10 @@
         }
 
         function getNormalMailboxRemoteMethod() {
-            const cacheMethod = getEmailListCacheEntry(currentAccount, currentFolder)?.remote_method;
+            const cacheAccountKey = isAggregatedInboxMode()
+                ? getAggregatedInboxCacheAccountKey()
+                : currentAccount;
+            const cacheMethod = getEmailListCacheEntry(cacheAccountKey, currentFolder)?.remote_method;
             return cacheMethod || currentMethod;
         }
 
@@ -87,15 +90,54 @@
             return ['graph', 'imap'].includes(method) ? method : 'graph';
         }
 
+        function resolveMailboxAccountMeta(emailItem = {}) {
+            const fromItem = {
+                account_type: emailItem?.account_type || emailItem?.accountType || '',
+                provider: emailItem?.provider || ''
+            };
+            if (fromItem.account_type || fromItem.provider) {
+                return fromItem;
+            }
+            const email = String(
+                getEmailAccountAddress(emailItem) || (!isAggregatedInboxMode() ? currentAccount : '')
+            ).trim().toLowerCase();
+            if (!email || typeof accountsCache !== 'object' || !accountsCache) {
+                return fromItem;
+            }
+            for (const value of Object.values(accountsCache)) {
+                const accounts = Array.isArray(value) ? value : [];
+                const found = accounts.find(account => String(account?.email || '').trim().toLowerCase() === email);
+                if (found) {
+                    return {
+                        account_type: found.account_type || '',
+                        provider: found.provider || ''
+                    };
+                }
+            }
+            return fromItem;
+        }
+
+        function isMicrosoftMailboxAccount(emailItem = {}) {
+            const meta = resolveMailboxAccountMeta(emailItem);
+            const accountType = String(meta.account_type || '').trim().toLowerCase();
+            const provider = String(meta.provider || '').trim().toLowerCase();
+            if (accountType === 'imap') {
+                return false;
+            }
+            return accountType === 'outlook'
+                || ['outlook', 'microsoft', 'hotmail', 'live'].includes(provider)
+                || (!accountType && !provider);
+        }
+
         function getCurrentEmailRemoteActionMethod(emailItem = {}) {
+            if (isMicrosoftMailboxAccount(emailItem)) {
+                return 'graph';
+            }
             const idMode = String(emailItem?.id_mode || emailItem?.idMode || '').trim().toLowerCase();
             if (idMode === 'graph') {
                 return 'graph';
             }
-            if (idMode === 'uid' || idMode === 'sequence') {
-                return 'imap';
-            }
-            return getRemoteMailboxMethodFallback();
+            return 'imap';
         }
 
         function buildEmailListRequestUrl(email, params = {}) {
@@ -1295,7 +1337,8 @@
                     id: String(emailItem?.id || '').trim(),
                     folder: String(emailItem?.folder || fallbackFolder || 'inbox'),
                     id_mode: String(emailItem?.id_mode || '').trim(),
-                    method
+                    method,
+                    account_email: getEmailAccountAddress(emailItem)
                 }))
                 .filter(item => item.id);
         }
@@ -1311,7 +1354,10 @@
 
         function requestBodyRetentionForNewRows(rows, fallbackFolder = currentFolder) {
             const items = getUnrequestedBodyRetentionItems(rows, fallbackFolder);
-            if (!items.length || !currentAccount || isTempEmailGroup || !isNormalMailLocalRetentionEnabled()) {
+            if (!items.length || isTempEmailGroup || !isNormalMailLocalRetentionEnabled()) {
+                return;
+            }
+            if (!isAggregatedInboxMode() && !currentAccount) {
                 return;
             }
 
@@ -1320,27 +1366,50 @@
                 .filter(Boolean);
             requestedKeys.forEach(key => requestedBodyRetentionKeys.add(key));
 
-            fetch('/api/emails/retain-bodies', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    email: currentAccount,
-                    folder: fallbackFolder,
-                    method: getRemoteMailboxMethodFallback(),
-                    items
-                })
-            }).then(response => {
-                if (!response.ok) {
-                    throw new Error(`Retained body request failed with status ${response.status}`);
+            const groupedItems = new Map();
+            items.forEach(item => {
+                const accountEmail = String(item.account_email || (!isAggregatedInboxMode() ? currentAccount : '')).trim();
+                if (!accountEmail) {
+                    return;
                 }
-                return response.json().catch(() => ({ success: true }));
-            }).then(data => {
-                if (data && data.success === false) {
-                    throw new Error(data.error || 'Retained body request failed');
+                if (!groupedItems.has(accountEmail)) {
+                    groupedItems.set(accountEmail, []);
                 }
-            }).catch(error => {
+                groupedItems.get(accountEmail).push(item);
+            });
+            if (!groupedItems.size) {
                 requestedKeys.forEach(key => requestedBodyRetentionKeys.delete(key));
-                console.warn('Retained mail body background fetch failed:', error);
+                return;
+            }
+
+            groupedItems.forEach((accountItems, accountEmail) => {
+                fetch('/api/emails/retain-bodies', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: accountEmail,
+                        folder: fallbackFolder,
+                        method: getRemoteMailboxMethodFallback(),
+                        items: accountItems
+                    })
+                }).then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Retained body request failed with status ${response.status}`);
+                    }
+                    return response.json().catch(() => ({ success: true }));
+                }).then(data => {
+                    if (data && data.success === false) {
+                        throw new Error(data.error || 'Retained body request failed');
+                    }
+                }).catch(error => {
+                    accountItems.forEach(item => {
+                        const key = getEmailMessageStableKey(item, fallbackFolder);
+                        if (key) {
+                            requestedBodyRetentionKeys.delete(key);
+                        }
+                    });
+                    console.warn('Retained mail body background fetch failed:', error);
+                });
             });
         }
 
@@ -1351,7 +1420,12 @@
                 method: getCurrentEmailRemoteActionMethod(selectedEmail),
                 folder
             });
-            if (isNormalMailboxListRequest() && isNormalMailLocalRetentionEnabled()) {
+            if (
+                !isTempEmailGroup
+                && currentMethod !== 'cloudflare-admin'
+                && typeof isNormalMailLocalRetentionEnabled === 'function'
+                && isNormalMailLocalRetentionEnabled()
+            ) {
                 query.set('prefer_local', '1');
             }
             appendEmailIdModeParam(query, selectedEmail);

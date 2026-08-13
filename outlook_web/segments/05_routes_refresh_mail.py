@@ -4046,6 +4046,8 @@ def annotate_aggregated_email_item(email_item: Dict[str, Any], account: Dict[str
     annotated = dict(email_item or {})
     annotated['account_id'] = account.get('id')
     annotated['account_email'] = account.get('email')
+    annotated['account_type'] = account.get('account_type') or 'outlook'
+    annotated['provider'] = account.get('provider') or ''
     annotated['account_remark'] = str(account.get('remark') or '').strip()
     return annotated
 
@@ -4699,14 +4701,37 @@ def normalize_email_detail_error(error: Any, fallback_message: str = '获取邮�
     )
 
 
+def is_microsoft_mailbox_account(account: Any) -> bool:
+    if not account:
+        return False
+    account_type = str(account.get('account_type') or 'outlook').strip().lower()
+    provider = str(account.get('provider') or '').strip().lower()
+    if account_type == 'imap':
+        return False
+    return account_type == 'outlook' or provider in {'outlook', 'microsoft', 'hotmail', 'live'}
+
+
+def fetch_local_retained_email_detail(account, folder, message_id, id_mode=''):
+    if not is_normal_mail_local_retention_enabled():
+        return None
+    retained_detail = fetch_retained_normal_mail_detail(account, folder, message_id, id_mode)
+    if retained_detail and not retained_detail_has_incomplete_attachment_metadata(retained_detail):
+        return retained_detail
+    if str(id_mode or '').strip():
+        retained_detail = fetch_retained_normal_mail_detail(account, folder, message_id, '')
+        if retained_detail and not retained_detail_has_incomplete_attachment_metadata(retained_detail):
+            return retained_detail
+    return None
+
+
 def fetch_email_detail_for_account(account, message_id, method='graph', folder='inbox',
                                    id_mode='', prefer_local=False):
     proxy_url = get_account_proxy_url(account)
     fallback_proxy_urls = get_account_proxy_failover_urls(account)
 
-    if prefer_local and is_normal_mail_local_retention_enabled():
-        retained_detail = fetch_retained_normal_mail_detail(account, folder, message_id, id_mode)
-        if retained_detail and not retained_detail_has_incomplete_attachment_metadata(retained_detail):
+    if prefer_local:
+        retained_detail = fetch_local_retained_email_detail(account, folder, message_id, id_mode)
+        if retained_detail:
             return retained_detail
 
     if account.get('account_type') == 'imap':
@@ -4715,6 +4740,9 @@ def fetch_email_detail_for_account(account, message_id, method='graph', folder='
         )
         if result.get('success'):
             return result
+        retained_detail = fetch_local_retained_email_detail(account, folder, message_id, id_mode)
+        if retained_detail:
+            return retained_detail
         return {
             'success': False,
             'error': normalize_email_detail_error(result.get('error')),
@@ -4723,30 +4751,39 @@ def fetch_email_detail_for_account(account, message_id, method='graph', folder='
         }
 
     attempts: Dict[str, Any] = {}
-    if method == 'graph':
-        graph_result = fetch_graph_detail_response(
+    protocol_order = ['graph', 'imap'] if is_microsoft_mailbox_account(account) else ['imap', 'graph']
+    last_method_label = ''
+
+    for protocol in protocol_order:
+        if protocol == 'graph':
+            graph_result = fetch_graph_detail_response(
+                account, folder, message_id, method, id_mode, proxy_url, fallback_proxy_urls
+            )
+            if graph_result.get('success'):
+                return graph_result
+            if graph_result.get('error') is not None:
+                attempts['graph'] = graph_result.get('error')
+                last_method_label = graph_result.get('method') or 'Graph API'
+            continue
+
+        imap_result = fetch_oauth_imap_detail_response(
             account, folder, message_id, method, id_mode, proxy_url, fallback_proxy_urls
         )
-        if graph_result.get('success'):
-            return graph_result
-        if graph_result.get('error') is not None:
-            attempts['graph'] = graph_result.get('error')
+        if imap_result.get('success'):
+            return imap_result
+        if imap_result.get('error') is not None:
+            attempts['imap_new'] = imap_result.get('error')
+            last_method_label = imap_result.get('method') or 'IMAP (New)'
 
-    imap_result = fetch_oauth_imap_detail_response(
-        account, folder, message_id, method, id_mode, proxy_url, fallback_proxy_urls
-    )
-    if imap_result.get('success'):
-        return imap_result
-    if imap_result.get('error') is not None:
-        attempts['imap_new'] = imap_result.get('error')
+    retained_detail = fetch_local_retained_email_detail(account, folder, message_id, id_mode)
+    if retained_detail:
+        return retained_detail
 
     primary_error = attempts.get('imap_new') or attempts.get('graph')
     return {
         'success': False,
         'error': normalize_email_detail_error(primary_error),
-        'method': imap_result.get('method') if attempts.get('imap_new') is not None else (
-            'Graph API' if attempts.get('graph') is not None else ''
-        ),
+        'method': last_method_label,
         'details': attempts,
         'attempted': list(attempts.keys()),
     }

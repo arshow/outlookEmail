@@ -2379,6 +2379,11 @@ class FrontendEmailListSecurityTests(unittest.TestCase):
         self.assertIn('initEmailKeywordSearch()', core_js)
         self.assertIn('initEmailFetchTopInput()', core_js)
         self.assertIn("query.set('keyword', keyword);", core_js)
+        detail_url_start = self.emails_js.index('function buildEmailDetailRequestUrl(')
+        detail_url_source = self.emails_js[detail_url_start:self.emails_js.index('function getRecipientDisplayLabel(', detail_url_start)]
+        self.assertIn("query.set('prefer_local', '1')", detail_url_source)
+        self.assertNotIn('isNormalMailboxListRequest()', detail_url_source)
+        self.assertIn('isNormalMailLocalRetentionEnabled()', detail_url_source)
 
     def test_email_checkbox_uses_delegated_click_without_inline_toggle(self):
         self.assertNotIn("toggleEmailSelection('${email.id}')", self.emails_js)
@@ -2707,8 +2712,10 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
         emails_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '05-emails.js').read_text(encoding='utf-8')
 
         self.assertIn('function getCurrentEmailRemoteActionMethod(emailItem = {})', emails_js)
+        self.assertIn('function isMicrosoftMailboxAccount(emailItem = {})', emails_js)
+        self.assertIn("if (isMicrosoftMailboxAccount(emailItem)) {", emails_js)
+        self.assertIn("return 'graph';", emails_js)
         self.assertIn("if (idMode === 'graph')", emails_js)
-        self.assertIn("if (idMode === 'uid' || idMode === 'sequence')", emails_js)
         self.assertIn('method: getCurrentEmailRemoteActionMethod(selectedEmail)', emails_js)
         self.assertIn('appendEmailIdModeParam(query, selectedEmail);', emails_js)
         self.assertIn("query.set('method', getCurrentEmailRemoteActionMethod(email));", emails_js)

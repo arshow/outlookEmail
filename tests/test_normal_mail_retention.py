@@ -1720,6 +1720,37 @@ class NormalMailRetentionTests(unittest.TestCase):
         oauth_imap_mock.assert_not_called()
         generic_imap_mock.assert_not_called()
 
+    def test_remote_detail_failure_falls_back_to_cached_body(self):
+        attachments = self._seed_cached_detail_retained_row()
+        with self.app.app_context():
+            self.assertTrue(web_outlook_app.set_setting(
+                'normal_mail_local_retention_enabled',
+                'true',
+            ))
+
+        with patch.object(
+            web_outlook_app,
+            'get_email_detail_graph_result',
+            return_value={'success': False, 'error': {'message': 'Graph denied'}},
+        ) as graph_mock, patch.object(
+            web_outlook_app,
+            'get_email_detail_imap_result',
+            return_value={'success': False, 'error': {'message': 'IMAP failed', 'type': 'IMAPFetchError'}},
+        ) as imap_mock:
+            response = self.client.get(
+                '/api/email/retained@example.com/cached-detail-1'
+                '?method=imap&folder=inbox&id_mode=uid'
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['source'], 'local_retention')
+        self.assertEqual(payload['email']['body'], '<p>Cached body</p>')
+        self.assertEqual(payload['email']['attachments'], attachments)
+        graph_mock.assert_called_once()
+        imap_mock.assert_called_once()
+
     def test_retain_bodies_api_rejects_disabled_retention_without_fetching_detail(self):
         items = [
             {'id': 'retain-disabled-1', 'folder': 'inbox', 'id_mode': 'graph', 'method': 'graph'},
