@@ -115,8 +115,12 @@
                 refreshBtn.classList.toggle('spinning', isLoading);
                 refreshBtn.title = isLoading
                     ? (isBackgroundSync ? '本地保留邮件已显示，正在后台同步远程邮件' : '正在获取邮件...')
-                    : '获取邮件';
+                    : '获取最近 20 封';
                 refreshBtn.toggleAttribute('aria-busy', isLoading);
+            }
+            const fetchAllBtn = document.getElementById('fetchAllEmailsBtn');
+            if (fetchAllBtn) {
+                fetchAllBtn.disabled = isLoading && !isBackgroundSync;
             }
             folderTabs.forEach(tab => {
                 tab.disabled = isLoading && !isBackgroundSync;
@@ -221,17 +225,51 @@
             statusFilterOverrideEmails = null;
         }
 
+        let currentEmailKeyword = '';
+        const EMAIL_FETCH_ALL_PAGE_SIZE = 50;
+        const EMAIL_FETCH_ALL_MAX = 500;
+        let isFetchingAllEmails = false;
+
+        function getEmailSearchKeyword() {
+            return String(currentEmailKeyword || '').trim().toLowerCase();
+        }
+
+        function emailMatchesKeyword(email, keyword = getEmailSearchKeyword()) {
+            const needle = String(keyword || '').trim().toLowerCase();
+            if (!needle) {
+                return true;
+            }
+            const haystack = [
+                email?.subject,
+                email?.from,
+                email?.to,
+                email?.body_preview,
+                email?.account_email,
+                email?.accountEmail
+            ].map(value => String(value || '').toLowerCase()).join('\n');
+            return haystack.includes(needle);
+        }
+
+        function resolveEmailListKeyword(options = {}) {
+            if (Object.prototype.hasOwnProperty.call(options, 'keyword')) {
+                return String(options.keyword || '').trim();
+            }
+            return getEmailSearchKeyword();
+        }
+
         function getVisibleEmailsForCurrentFilter(emails = currentEmails) {
-            const list = normalizeEmailListItems(Array.isArray(emails) ? emails : []);
+            let list = normalizeEmailListItems(Array.isArray(emails) ? emails : []);
             const filter = String(currentEmailStatusFilter || 'all').trim().toLowerCase();
             if (filter === 'unread') {
-                return list.filter(email => isEmailUnread(email));
+                list = list.filter(email => isEmailUnread(email));
+            } else if (filter === 'read') {
+                list = list.filter(email => !isEmailUnread(email));
+            } else if (filter === 'flagged') {
+                list = list.filter(email => isEmailFlagged(email));
             }
-            if (filter === 'read') {
-                return list.filter(email => !isEmailUnread(email));
-            }
-            if (filter === 'flagged') {
-                return list.filter(email => isEmailFlagged(email));
+            const keyword = getEmailSearchKeyword();
+            if (keyword) {
+                list = list.filter(email => emailMatchesKeyword(email, keyword));
             }
             return list;
         }
@@ -263,14 +301,16 @@
                         folder,
                         skip: 0,
                         top: 100,
-                        status: filter
+                        status: filter,
+                        keyword: getEmailSearchKeyword()
                     })
                     : buildEmailListRequestUrl(account, {
                         source: 'local',
                         folder,
                         skip: 0,
                         top: 100,
-                        status: filter
+                        status: filter,
+                        keyword: getEmailSearchKeyword()
                     });
                 const response = await fetchWithTimeout(url, {
                     timeoutMs: EMAIL_LIST_REQUEST_TIMEOUT_MS,
@@ -363,7 +403,7 @@
             return `${folder}::${idMode}::${id}`;
         }
 
-        function buildAggregatedEmailsUrl({ skip = 0, top = 20, folder = currentFolder, source = '', status = '' } = {}) {
+        function buildAggregatedEmailsUrl({ skip = 0, top = 20, folder = currentFolder, source = '', status = '', keyword = '' } = {}) {
             const safeFolder = ['all', 'inbox', 'junkemail'].includes(String(folder || '').toLowerCase())
                 ? String(folder || 'all')
                 : 'all';
@@ -379,6 +419,10 @@
             const statusName = String(status || '').trim().toLowerCase();
             if (statusName && statusName !== 'all') {
                 query.set('status', statusName);
+            }
+            const keywordValue = String(keyword || '').trim();
+            if (keywordValue) {
+                query.set('keyword', keywordValue);
             }
             return `/api/emails/aggregated?${query.toString()}`;
         }
@@ -728,7 +772,8 @@
                         source: 'local',
                         folder: currentFolder,
                         skip: 0,
-                        top: 20
+                        top: 20,
+                        keyword: resolveEmailListKeyword()
                     }),
                     {
                         timeoutMs: EMAIL_LIST_REQUEST_TIMEOUT_MS,
@@ -795,6 +840,7 @@
             const requestFolder = options.folder || currentFolder;
             const requestSkip = Number.isFinite(Number(options.skip)) ? Number(options.skip) : 0;
             const requestTop = Number.isFinite(Number(options.top)) ? Number(options.top) : 20;
+            const requestKeyword = resolveEmailListKeyword(options);
             const aggregated = options.aggregated === true || isAggregatedInboxMode();
             const response = await fetchWithTimeout(
                 aggregated
@@ -802,13 +848,15 @@
                         skip: requestSkip,
                         top: requestTop,
                         folder: requestFolder,
-                        source: options.source || ''
+                        source: options.source || '',
+                        keyword: requestKeyword
                     })
                     : buildEmailListRequestUrl(email, {
                         method: options.method || getRemoteMailboxMethodFallback(),
                         folder: requestFolder,
                         skip: requestSkip,
-                        top: requestTop
+                        top: requestTop,
+                        keyword: requestKeyword
                     }),
                 {
                     timeoutMs: EMAIL_LIST_REQUEST_TIMEOUT_MS,
@@ -819,7 +867,9 @@
 
             if (data.success) {
                 if (!options.context || isCurrentMailboxContext(options.context)) {
-                    setMailSyncStatus('');
+                    if (options.keepSyncStatus !== true) {
+                        setMailSyncStatus('');
+                    }
                     if (options.mergeWithCurrentList === true) {
                         applyMergedRemoteEmailSync(cacheKey, data, options);
                     } else {
@@ -3270,6 +3320,159 @@
             updateMobileContext();
             if (scheduleLoadCheck) {
                 scheduleEmailListLoadCheck(0);
+            }
+        }
+
+        function syncEmailSearchClearButton() {
+            const clearBtn = document.getElementById('emailSearchClearBtn');
+            if (clearBtn) {
+                clearBtn.hidden = !getEmailSearchKeyword();
+            }
+        }
+
+        function setEmailKeyword(keyword, options = {}) {
+            currentEmailKeyword = String(keyword || '').trim();
+            const input = document.getElementById('emailKeywordInput');
+            if (input && input.value !== currentEmailKeyword) {
+                input.value = currentEmailKeyword;
+            }
+            syncEmailSearchClearButton();
+            if (options.search === false) {
+                return;
+            }
+            if (typeof renderEmailList === 'function') {
+                renderEmailList(currentEmails);
+            }
+            const emailCount = document.getElementById('emailCount');
+            if (emailCount && Array.isArray(currentEmails)) {
+                emailCount.textContent = `(${getVisibleEmailsForCurrentFilter(currentEmails).length})`;
+            }
+            if (currentEmailKeyword) {
+                void hydrateEmailSearchFromLocal();
+            }
+        }
+
+        async function hydrateEmailSearchFromLocal() {
+            const keyword = getEmailSearchKeyword();
+            if (!keyword || isTempEmailGroup) {
+                return false;
+            }
+            if (typeof isNormalMailLocalRetentionEnabled !== 'function' || !isNormalMailLocalRetentionEnabled()) {
+                return false;
+            }
+            if (!isAggregatedInboxMode() && !currentAccount) {
+                return false;
+            }
+            const account = currentAccount;
+            const folder = currentFolder;
+            try {
+                const data = await fetchRemoteEmails(
+                    isAggregatedInboxMode() ? AGGREGATED_INBOX_ACCOUNT_KEY : account,
+                    `${isAggregatedInboxMode() ? getAggregatedInboxCacheAccountKey() : account}_${folder}`,
+                    {
+                        aggregated: isAggregatedInboxMode(),
+                        source: 'local',
+                        folder,
+                        skip: 0,
+                        top: 200,
+                        keyword,
+                        mergeWithCurrentList: true,
+                        keepSyncStatus: true,
+                        method: isAggregatedInboxMode() ? 'aggregated' : 'local',
+                        methodLabel: 'Local Retention'
+                    }
+                );
+                return Boolean(data && data.success);
+            } catch (error) {
+                return false;
+            }
+        }
+
+        function initEmailKeywordSearch() {
+            const input = document.getElementById('emailKeywordInput');
+            if (!input || input.dataset.bound === 'true') {
+                return;
+            }
+            input.dataset.bound = 'true';
+            const applySearch = typeof debounce === 'function'
+                ? debounce(() => setEmailKeyword(input.value), 280)
+                : () => setEmailKeyword(input.value);
+            input.addEventListener('input', applySearch);
+            input.addEventListener('keydown', event => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    setEmailKeyword(input.value);
+                }
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    setEmailKeyword('');
+                }
+            });
+            const clearBtn = document.getElementById('emailSearchClearBtn');
+            if (clearBtn) {
+                clearBtn.addEventListener('click', () => setEmailKeyword(''));
+            }
+            syncEmailSearchClearButton();
+        }
+
+        async function fetchAllEmails() {
+            if (isFetchingAllEmails) {
+                return;
+            }
+            if (isTempEmailGroup) {
+                showToast('临时邮箱请使用普通刷新', 'warning');
+                return;
+            }
+            if (!currentAccount && !isAggregatedInboxMode()) {
+                showToast('请先选择一个邮箱账号', 'error');
+                return;
+            }
+
+            isFetchingAllEmails = true;
+            setEmailListLoadingState(true);
+            setMailSyncStatus('正在获取全部邮件…');
+            const aggregated = isAggregatedInboxMode();
+            const account = aggregated ? AGGREGATED_INBOX_ACCOUNT_KEY : currentAccount;
+            const cacheAccountKey = aggregated ? getAggregatedInboxCacheAccountKey() : currentAccount;
+            const cacheKey = `${cacheAccountKey}_${currentFolder}`;
+            if (typeof invalidateEmailListCache === 'function') {
+                invalidateEmailListCache(cacheAccountKey, currentFolder);
+            }
+
+            try {
+                let skip = 0;
+                let pageIndex = 0;
+                while (skip < EMAIL_FETCH_ALL_MAX) {
+                    const data = await fetchRemoteEmails(account, cacheKey, {
+                        aggregated,
+                        skip,
+                        top: EMAIL_FETCH_ALL_PAGE_SIZE,
+                        keyword: '',
+                        mergeWithCurrentList: pageIndex > 0,
+                        keepSyncStatus: true,
+                        method: aggregated ? 'aggregated' : undefined
+                    });
+                    if (!data || data.success !== true) {
+                        break;
+                    }
+                    pageIndex += 1;
+                    skip += EMAIL_FETCH_ALL_PAGE_SIZE;
+                    setMailSyncStatus(`正在获取全部邮件…已 ${currentEmails.length} 封`);
+                    if (data.has_more !== true || currentEmails.length >= EMAIL_FETCH_ALL_MAX) {
+                        break;
+                    }
+                }
+                const reachedCap = currentEmails.length >= EMAIL_FETCH_ALL_MAX && hasMoreEmails;
+                const message = reachedCap
+                    ? `已获取 ${currentEmails.length} 封（已达 ${EMAIL_FETCH_ALL_MAX} 封上限）`
+                    : `已获取 ${currentEmails.length} 封邮件`;
+                setMailSyncStatus(message);
+                showToast(message);
+            } catch (error) {
+                showToast(isTimeoutAbortError(error) ? '获取全部邮件超时' : '获取全部邮件失败', 'error');
+            } finally {
+                isFetchingAllEmails = false;
+                setEmailListLoadingState(false);
             }
         }
 

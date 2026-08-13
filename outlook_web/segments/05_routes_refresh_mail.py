@@ -4141,7 +4141,8 @@ def merge_aggregated_account_results(
 
 
 def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: int, top: int,
-                                    source: str = 'remote', status: str = 'all') -> Dict[str, Any]:
+                                    source: str = 'remote', status: str = 'all',
+                                    keyword: str = '') -> Dict[str, Any]:
     account_id = account.get('id')
     account_email = account.get('email')
     use_local = str(source or '').strip().lower() in {'local', 'retained', 'cache'}
@@ -4150,7 +4151,7 @@ def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: 
         try:
             if use_local:
                 result = fetch_retained_normal_mail_list(
-                    account, folder, skip, top, status=status
+                    account, folder, skip, top, status=status, keyword=keyword
                 )
             else:
                 result = fetch_account_emails(account, folder, skip, top)
@@ -4264,6 +4265,7 @@ def api_get_aggregated_emails():
     skip = parse_non_negative_int(request.args.get('skip', 0), 0)
     top = parse_non_negative_int(request.args.get('top', 20), 20, max_value=50)
     status_name = normalize_mail_status_filter(request.args.get('status', 'all'))
+    keyword = str(request.args.get('keyword') or '').strip().lower()
     source_raw = str(request.args.get('source') or '').strip().lower()
     local_only = str(request.args.get('local_only') or '').strip().lower() in {
         '1', 'true', 'yes', 'on'
@@ -4324,6 +4326,7 @@ def api_get_aggregated_emails():
                 top,
                 fetch_source,
                 status_name,
+                keyword,
             ): account
             for account in selected_accounts
         }

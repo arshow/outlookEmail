@@ -1,4 +1,4 @@
-        /* global applyPendingNewMailSync, clearEmailStatusFilterOverride, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, hydrateEmailStatusFilterIfNeeded, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchInput, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailListScroll, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, normalizeEmailListItems, renderEmailList, saveAccountSearchQueryPreference, scheduleEmailListLoadCheck, searchAccounts, syncInboxDiscoveryEventSource */
+        /* global applyPendingNewMailSync, clearEmailStatusFilterOverride, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, hydrateEmailStatusFilterIfNeeded, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchInput, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailKeywordSearch, initEmailListScroll, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, normalizeEmailListItems, renderEmailList, saveAccountSearchQueryPreference, scheduleEmailListLoadCheck, searchAccounts, syncInboxDiscoveryEventSource */
 
         // 全局状态
         let csrfToken = null;
@@ -1259,6 +1259,9 @@
             }
             initColorPicker();
             initEmailListScroll();
+            if (typeof initEmailKeywordSearch === 'function') {
+                initEmailKeywordSearch();
+            }
             initAccountListScroll();
             initAccountPageSizeSelect();
             initAccountSearchScopeSelect();
@@ -1609,6 +1612,10 @@
                     skip: String(nextSkip),
                     top: '20'
                 });
+                const keyword = typeof getEmailSearchKeyword === 'function' ? getEmailSearchKeyword() : '';
+                if (keyword) {
+                    query.set('keyword', keyword);
+                }
                 if (
                     currentMethod === 'local'
                     || cache?.local_retention === true
@@ -1627,6 +1634,10 @@
                 skip: String(nextSkip),
                 top: '20'
             };
+            const keyword = typeof getEmailSearchKeyword === 'function' ? getEmailSearchKeyword() : '';
+            if (keyword) {
+                baseParams.keyword = keyword;
+            }
             if (currentMethod === 'local' || cache?.local_retention === true) {
                 baseParams.source = 'local';
             }
@@ -1859,10 +1870,13 @@
 
         function syncEmailStatusFilterUI(visible = true) {
             const filters = document.getElementById('emailStatusFilters');
-            if (!filters) {
-                return;
+            if (filters) {
+                filters.style.display = visible ? 'flex' : 'none';
             }
-            filters.style.display = visible ? 'flex' : 'none';
+            const searchBar = document.getElementById('emailSearchBar');
+            if (searchBar) {
+                searchBar.hidden = !visible;
+            }
             document.querySelectorAll('.email-status-filter').forEach(tab => {
                 tab.classList.toggle('active', tab.dataset.statusFilter === currentEmailStatusFilter);
             });
