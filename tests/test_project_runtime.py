@@ -2330,7 +2330,11 @@ class FrontendEmailListSecurityTests(unittest.TestCase):
         select_source = self.emails_js[select_start:select_end]
         self.assertIn("item.dataset.emailSelectionKey", select_source)
         self.assertNotIn('i === index', select_source)
+        self.assertIn('findEmailForListAction(messageId, index)', select_source)
         self.assertIn('requestMarkEmailsAsRead([', select_source)
+        self.assertIn('function findEmailForListAction(messageId, index)', self.emails_js)
+        self.assertIn('applyToEmailList(statusFilterOverrideEmails)', self.emails_js)
+        self.assertNotIn('applyEmailReadState(normalizedItems, !targetIsRead)', self.emails_js)
 
     def test_select_all_emails_uses_visible_filter_list(self):
         toggle_start = self.emails_js.index('function toggleSelectAllEmails()')

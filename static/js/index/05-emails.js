@@ -332,6 +332,35 @@
             return getEmailSearchKeyword();
         }
 
+        function findEmailForListAction(messageId, index) {
+            const id = String(messageId || '').trim();
+            const lists = [];
+            if (Array.isArray(statusFilterOverrideEmails) && statusFilterOverrideEmails.length) {
+                lists.push(statusFilterOverrideEmails);
+            }
+            if (Array.isArray(currentEmails) && currentEmails.length) {
+                lists.push(currentEmails);
+            }
+            if (id) {
+                for (const list of lists) {
+                    const found = list.find(email => (
+                        String(email?.id || '') === id
+                        || getEmailSelectionKey(email) === id
+                    ));
+                    if (found) {
+                        return found;
+                    }
+                }
+            }
+            if (Number.isInteger(index) && index >= 0 && currentEmails[index]) {
+                const fallback = currentEmails[index];
+                if (!id || String(fallback.id || '') === id) {
+                    return fallback;
+                }
+            }
+            return null;
+        }
+
         function getVisibleEmailsForCurrentFilter(emails = currentEmails) {
             let list = normalizeEmailListItems(Array.isArray(emails) ? emails : []);
             const filter = String(currentEmailStatusFilter || 'all').trim().toLowerCase();
@@ -1779,8 +1808,9 @@
             if (flagBtn) {
                 event.stopPropagation();
                 const index = Number(flagBtn.dataset.emailIndex);
-                if (Number.isInteger(index) && currentEmails[index]) {
-                    void toggleEmailFlag(currentEmails[index]);
+                const flaggedEmail = findEmailForListAction(flagBtn.closest('.email-item')?.dataset?.emailId, index);
+                if (flaggedEmail) {
+                    void toggleEmailFlag(flaggedEmail);
                 }
                 return;
             }
@@ -1917,6 +1947,16 @@
             };
 
             applyToEmailList(currentEmails, true);
+            applyToEmailList(statusFilterOverrideEmails);
+            if (
+                String(currentEmailStatusFilter || '').trim().toLowerCase() === 'unread'
+                && Array.isArray(statusFilterOverrideEmails)
+            ) {
+                statusFilterOverrideEmails = statusFilterOverrideEmails.filter(email => isEmailUnread(email));
+                if (!statusFilterOverrideEmails.length) {
+                    statusFilterOverrideEmails = null;
+                }
+            }
             if (typeof adjustAccountUnreadCount === 'function') {
                 unreadDeltasByAccountId.forEach((delta, accountId) => {
                     adjustAccountUnreadCount(accountId, delta);
@@ -2070,10 +2110,8 @@
 
                 return combined;
             } catch (error) {
-                applyEmailReadState(normalizedItems, !targetIsRead);
-                renderEmailList(currentEmails);
                 if (!silent) {
-                    showToast(`设为${actionLabel}失败，请检查网络后重试`, 'error');
+                    showToast(`远程同步${actionLabel}失败，本地已更新`, 'warning');
                 }
                 return {
                     success: false,
@@ -2718,9 +2756,7 @@
 
         // 选择邮件
         async function selectEmail(messageId, index) {
-            const selectedEmail = Number.isInteger(index) && currentEmails[index]
-                ? currentEmails[index]
-                : currentEmails.find(email => String(email.id) === String(messageId));
+            const selectedEmail = findEmailForListAction(messageId, index);
             const selectionKey = selectedEmail ? getEmailSelectionKey(selectedEmail) : String(messageId || '');
             currentEmailId = selectionKey || messageId;
             const requestFolder = currentFolder === 'all'
@@ -2758,14 +2794,20 @@
             if (deleteBtn) deleteBtn.style.display = '';
             showMobileEmailDetail();
 
-            if (isEmailUnread(selectedEmail)) {
-                void requestMarkEmailsAsRead([{
-                    id: messageId,
-                    folder: requestFolder,
-                    id_mode: selectedEmail.id_mode || '',
-                    account_id: selectedEmail.account_id,
-                    account_email: accountEmail
-                }], { silent: true });
+            const clickedRowUnread = Array.from(document.querySelectorAll('.email-item')).some(item => (
+                item.classList.contains('unread')
+                && (
+                    String(item.dataset.emailId || '') === String(messageId || '')
+                    || String(item.dataset.emailSelectionKey || '') === String(currentEmailId || '')
+                )
+            ));
+            const markReadTarget = selectedEmail || {
+                id: messageId,
+                folder: requestFolder,
+                account_email: accountEmail
+            };
+            if (isEmailUnread(selectedEmail) || clickedRowUnread || !selectedEmail) {
+                void requestMarkEmailsAsRead([markReadTarget], { silent: true });
             }
 
             // 加载邮件详情
