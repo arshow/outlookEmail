@@ -1,4 +1,4 @@
-        /* global applyPendingNewMailSync, beginMailboxViewChange, clearEmailStatusFilterOverride, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, hydrateEmailStatusFilterIfNeeded, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchInput, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailFetchTopInput, initEmailKeywordSearch, initEmailListScroll, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, normalizeEmailListItems, renderEmailList, saveAccountSearchQueryPreference, scheduleEmailListLoadCheck, searchAccounts, syncInboxDiscoveryEventSource */
+        /* global applyPendingNewMailSync, beginMailboxViewChange, clearEmailStatusFilterOverride, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, hydrateEmailStatusFilterIfNeeded, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchInput, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailFetchTopInput, initEmailKeywordSearch, initEmailListScroll, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, normalizeEmailListItems, renderEmailList, saveAccountSearchQueryPreference, scheduleEmailListLoadCheck, searchAccounts, syncInboxDiscoveryEventSource, updateEmailCountDisplay */
 
         // 全局状态
         let csrfToken = null;
@@ -410,12 +410,11 @@
                 methodTag.style.display = 'inline';
             }
 
-            const emailCount = document.getElementById('emailCount');
-            if (emailCount) {
-                const visibleCount = typeof getVisibleEmailsForCurrentFilter === 'function'
-                    ? getVisibleEmailsForCurrentFilter(currentEmails).length
-                    : currentEmails.length;
-                emailCount.textContent = `(${visibleCount})`;
+            if (typeof updateEmailCountDisplay === 'function') {
+                updateEmailCountDisplay({
+                    total: cache?.local_retention_count,
+                    merge: false
+                });
             }
 
             renderEmailList(currentEmails);
@@ -472,9 +471,13 @@
                 if (methodTag) {
                     methodTag.style.display = 'none';
                 }
-                const emailCount = document.getElementById('emailCount');
-                if (emailCount) {
-                    emailCount.textContent = '';
+                if (typeof updateEmailCountDisplay === 'function') {
+                    updateEmailCountDisplay({ clear: true });
+                } else {
+                    const emailCount = document.getElementById('emailCount');
+                    if (emailCount) {
+                        emailCount.textContent = '';
+                    }
                 }
             }
         }
@@ -1711,10 +1714,10 @@
                     if (loadingEl) loadingEl.remove();
 
                     // 重新渲染邮件列表
+                    if (typeof updateEmailCountDisplay === 'function' && Object.prototype.hasOwnProperty.call(data, 'count')) {
+                        updateEmailCountDisplay({ total: data.count, merge: false });
+                    }
                     renderEmailList(currentEmails);
-
-                    // 更新邮件数量
-                    document.getElementById('emailCount').textContent = `(${currentEmails.length})`;
 
                     // 更新缓存
                     const cacheAccountKey = isAggregatedInboxMode()
@@ -1823,7 +1826,11 @@
                         <div class="empty-state-text">正在自动刷新${getFolderDisplayName(folder)}...</div>
                     </div>
                 `;
-                document.getElementById('emailCount').textContent = '';
+                if (typeof updateEmailCountDisplay === 'function') {
+                    updateEmailCountDisplay({ clear: true });
+                } else {
+                    document.getElementById('emailCount').textContent = '';
+                }
                 document.getElementById('methodTag').style.display = 'none';
 
                 // 重置分页状态
@@ -1861,13 +1868,8 @@
             });
             if (typeof renderEmailList === 'function') {
                 renderEmailList(currentEmails);
-            }
-            const emailCount = document.getElementById('emailCount');
-            if (emailCount && Array.isArray(currentEmails)) {
-                const visibleCount = typeof getVisibleEmailsForCurrentFilter === 'function'
-                    ? getVisibleEmailsForCurrentFilter(currentEmails).length
-                    : currentEmails.length;
-                emailCount.textContent = `(${visibleCount})`;
+            } else if (typeof updateEmailCountDisplay === 'function') {
+                updateEmailCountDisplay();
             }
             if (currentEmailStatusFilter !== 'all' && typeof hydrateEmailStatusFilterIfNeeded === 'function') {
                 void hydrateEmailStatusFilterIfNeeded();

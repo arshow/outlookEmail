@@ -4089,6 +4089,8 @@ def merge_aggregated_account_results(
     has_more = False
     account_errors = []
     account_summaries = []
+    total_count = 0
+    has_total_count = False
 
     for item in account_results:
         summary = {
@@ -4098,6 +4100,10 @@ def merge_aggregated_account_results(
             'fetched_count': len(item.get('emails', [])) if item.get('success') else 0,
             'has_more': bool(item.get('has_more')) if item.get('success') else False,
         }
+        if item.get('count') is not None:
+            summary['count'] = int(item.get('count') or 0)
+            has_total_count = True
+            total_count += int(item.get('count') or 0)
         if item.get('method'):
             summary['method'] = item.get('method')
         if not item.get('success'):
@@ -4134,6 +4140,8 @@ def merge_aggregated_account_results(
         'has_more': has_more,
         'account_summaries': account_summaries,
     }
+    if has_total_count:
+        response['count'] = total_count
     if account_errors:
         response['partial'] = True
         response['account_errors'] = account_errors
@@ -4209,6 +4217,8 @@ def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: 
             'folder_summaries': result.get('folder_summaries'),
             'source': 'local' if use_local else 'remote',
         }
+        if result.get('count') is not None:
+            response['count'] = int(result.get('count') or 0)
         if new_message_ids:
             response['new_count'] = len(new_message_ids)
             response['new_message_ids'] = new_message_ids

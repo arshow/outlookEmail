@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, applyEmailListCache, beginMailboxViewChange, clearEmailStatusFilterOverride, closeMobilePanels, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, hideModal, isAggregatedInbox, isAggregatedInboxMode, isTempEmailGroup, loadAccountsByGroup, loadEmails, loadGroups, refreshVisibleAccountList, renderEmailList, scheduleEmailListLoadCheck, setEmailKeyword, showConfirmModal, showEmailList, showModal, showToast, updateMobileContext */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, applyEmailListCache, beginMailboxViewChange, clearEmailStatusFilterOverride, closeMobilePanels, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, getAggregatedInboxCacheAccountKey, getEmailListCacheEntry, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, hideModal, isAggregatedInbox, isAggregatedInboxMode, isTempEmailGroup, loadAccountsByGroup, loadEmails, loadGroups, refreshVisibleAccountList, renderEmailList, scheduleEmailListLoadCheck, setEmailKeyword, showConfirmModal, showEmailList, showModal, showToast, updateEmailCountDisplay, updateMobileContext */
 
         // ==================== 账号相关 ====================
 
@@ -80,7 +80,11 @@
                         <div class="empty-state-text">${loadingText}</div>
                     </div>
                 `;
-                document.getElementById('emailCount').textContent = '';
+                if (typeof updateEmailCountDisplay === 'function') {
+                    updateEmailCountDisplay({ clear: true });
+                } else {
+                    document.getElementById('emailCount').textContent = '';
+                }
                 const methodTag = document.getElementById('methodTag');
                 if (methodTag) {
                     methodTag.textContent = '聚合';
@@ -176,7 +180,11 @@
                         }</div>
                     </div>
                 `;
-                document.getElementById('emailCount').textContent = '';
+                if (typeof updateEmailCountDisplay === 'function') {
+                    updateEmailCountDisplay({ clear: true });
+                } else {
+                    document.getElementById('emailCount').textContent = '';
+                }
                 document.getElementById('methodTag').style.display = 'none';
                 currentEmails = [];
             }

@@ -156,6 +156,7 @@
         function beginMailboxViewChange() {
             mailboxViewSeq += 1;
             isFetchingRecentEmails = false;
+            currentEmailTotalCount = 0;
             if (typeof setMailSyncStatus === 'function') {
                 setMailSyncStatus('');
             }
@@ -253,6 +254,7 @@
         }
 
         let currentEmailKeyword = '';
+        let currentEmailTotalCount = 0;
         const EMAIL_FETCH_PAGE_SIZE = 50;
         const EMAIL_FETCH_TOP_DEFAULT = 500;
         const EMAIL_FETCH_TOP_MIN = 1;
@@ -364,30 +366,78 @@
                 }
                 statusFilterOverrideEmails = emails;
                 renderEmailList(currentEmails);
-                const emailCount = document.getElementById('emailCount');
-                if (emailCount) {
-                    emailCount.textContent = `(${getVisibleEmailsForCurrentFilter(emails).length})`;
-                }
                 return true;
             } catch (error) {
                 return false;
             }
         }
 
-        function updateEmailListHeader(methodLabel, emailCount) {
+        function setEmailTotalCount(value, options = {}) {
+            const total = Number(value);
+            if (!Number.isFinite(total) || total < 0) {
+                return currentEmailTotalCount;
+            }
+            currentEmailTotalCount = options.merge === false
+                ? total
+                : Math.max(currentEmailTotalCount || 0, total);
+            return currentEmailTotalCount;
+        }
+
+        function rememberEmailTotalFromPayload(payload) {
+            if (!payload || typeof payload !== 'object') {
+                return currentEmailTotalCount;
+            }
+            if (!Object.prototype.hasOwnProperty.call(payload, 'count')) {
+                return currentEmailTotalCount;
+            }
+            return setEmailTotalCount(payload.count, { merge: true });
+        }
+
+        function getDisplayedEmailCount() {
+            const source = Array.isArray(statusFilterOverrideEmails)
+                ? statusFilterOverrideEmails
+                : currentEmails;
+            if (isTempEmailGroup || currentMethod === 'cloudflare-admin') {
+                return Array.isArray(source) ? source.length : 0;
+            }
+            if (typeof getVisibleEmailsForCurrentFilter === 'function') {
+                return getVisibleEmailsForCurrentFilter(source).length;
+            }
+            return Array.isArray(source) ? source.length : 0;
+        }
+
+        function getEmailListTotalCount(listedCount = 0) {
+            const loadedCount = Array.isArray(currentEmails) ? currentEmails.length : 0;
+            return Math.max(currentEmailTotalCount || 0, loadedCount, Number(listedCount) || 0);
+        }
+
+        function updateEmailCountDisplay(options = {}) {
+            const emailCountEl = document.getElementById('emailCount');
+            if (!emailCountEl) {
+                return;
+            }
+            if (options.clear === true) {
+                currentEmailTotalCount = 0;
+                emailCountEl.textContent = '';
+                emailCountEl.removeAttribute('title');
+                return;
+            }
+            if (Object.prototype.hasOwnProperty.call(options, 'total')) {
+                setEmailTotalCount(options.total, { merge: options.merge !== false });
+            }
+            const listed = getDisplayedEmailCount();
+            const total = getEmailListTotalCount(listed);
+            emailCountEl.textContent = `(${listed}/${total})`;
+            emailCountEl.title = `当前列表 ${listed} 封，共 ${total} 封`;
+        }
+
+        function updateEmailListHeader(methodLabel) {
             const methodTag = document.getElementById('methodTag');
             if (methodTag) {
                 methodTag.textContent = methodLabel;
                 methodTag.style.display = 'inline';
             }
-
-            const emailCountEl = document.getElementById('emailCount');
-            if (emailCountEl) {
-                const visibleCount = Array.isArray(currentEmails)
-                    ? getVisibleEmailsForCurrentFilter(currentEmails).length
-                    : Number(emailCount) || 0;
-                emailCountEl.textContent = `(${visibleCount})`;
-            }
+            updateEmailCountDisplay();
         }
 
         function setMailSyncStatus(message = '') {
@@ -533,6 +583,7 @@
                     ? normalizeFolderSummaries(folderSummaries)
                     : undefined
             };
+            rememberEmailTotalFromPayload(data);
 
             if (options.remoteMethod) {
                 emailListCache[cacheKey].remote_method = options.remoteMethod;
@@ -1538,6 +1589,7 @@
                 selectedEmailIds.clear();
                 currentEmailId = null;
                 updateEmailBatchActionBar();
+                updateEmailCountDisplay();
                 return;
             }
 
@@ -1595,6 +1647,7 @@
             `}).join('');
 
             updateEmailBatchActionBar();
+            updateEmailCountDisplay();
         }
 
         function findEmailItemBySelectionKey(selectionKey) {
@@ -2513,6 +2566,17 @@
                             && !deletedIds.has(String(email.id));
                     });
                     removeDeletedEmailsFromCachedLists(deletedItems);
+                    const cacheAccountKey = isAggregatedInboxMode()
+                        ? getAggregatedInboxCacheAccountKey()
+                        : currentAccount;
+                    const cache = cacheAccountKey
+                        ? emailListCache[`${cacheAccountKey}_${currentFolder}`]
+                        : null;
+                    if (cache && typeof cache.local_retention_count === 'number') {
+                        setEmailTotalCount(cache.local_retention_count, { merge: false });
+                    } else {
+                        setEmailTotalCount(currentEmails.length, { merge: false });
+                    }
                     selectedEmailIds.clear();
                     const currentSelectionKey = currentEmailDetail
                         ? getEmailSelectionKey(currentEmailDetail)
@@ -3388,10 +3452,8 @@
             }
             if (typeof renderEmailList === 'function') {
                 renderEmailList(currentEmails);
-            }
-            const emailCount = document.getElementById('emailCount');
-            if (emailCount && Array.isArray(currentEmails)) {
-                emailCount.textContent = `(${getVisibleEmailsForCurrentFilter(currentEmails).length})`;
+            } else {
+                updateEmailCountDisplay();
             }
             if (currentEmailKeyword) {
                 void hydrateEmailSearchFromLocal();

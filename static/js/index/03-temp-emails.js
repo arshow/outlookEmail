@@ -1,4 +1,4 @@
-        /* global accountsCache, allTags, closeMobilePanels, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentEmails, currentGroupId, currentMethod, currentSkip, escapeHtml, escapeJs, formatDate, groups, handleAccountSelectionCheckboxClick, handleApiError, hasMoreEmails, isLoadingMore, loadGroups, loadTags, loadTempEmails, matchesSelectedTagFilters, refreshEmails, renderAccountTagSummary, renderEmailDetail, renderEmailList, renderEmptyStateMarkup, scheduleEmailListLoadCheck, selectedTagFilters, setEmailListLoadingState, showEmailList, showMobileEmailDetail, showToast, updateBatchActionBar, updateMobileContext, updateCurrentGroupHeader */
+        /* global accountsCache, allTags, closeMobilePanels, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentEmails, currentGroupId, currentMethod, currentSkip, escapeHtml, escapeJs, formatDate, groups, handleAccountSelectionCheckboxClick, handleApiError, hasMoreEmails, isLoadingMore, loadGroups, loadTags, loadTempEmails, matchesSelectedTagFilters, refreshEmails, renderAccountTagSummary, renderEmailDetail, renderEmailList, renderEmptyStateMarkup, scheduleEmailListLoadCheck, selectedTagFilters, setEmailListLoadingState, showEmailList, showMobileEmailDetail, showToast, updateBatchActionBar, updateEmailCountDisplay, updateMobileContext, updateCurrentGroupHeader */
 
         // ==================== 临时邮箱相关 ====================
 
@@ -746,7 +746,11 @@
                 </div>
             `;
             document.getElementById('emailDetailToolbar').style.display = 'none';
-            document.getElementById('emailCount').textContent = '';
+            if (typeof updateEmailCountDisplay === 'function') {
+                updateEmailCountDisplay({ clear: true });
+            } else {
+                document.getElementById('emailCount').textContent = '';
+            }
             document.getElementById('methodTag').style.display = 'none';
         }
 
@@ -823,7 +827,11 @@
                 </div>
             `;
             document.getElementById('emailDetailToolbar').style.display = 'none';
-            document.getElementById('emailCount').textContent = '';
+            if (typeof updateEmailCountDisplay === 'function') {
+                updateEmailCountDisplay({ clear: true });
+            } else {
+                document.getElementById('emailCount').textContent = '';
+            }
             const methodTag = document.getElementById('methodTag');
             methodTag.textContent = `Cloudflare 全部 · ${currentCloudflareGlobalChannelName || currentCloudflareGlobalChannelId}`;
             methodTag.style.display = 'inline';
@@ -904,7 +912,9 @@
                     currentEmails = data.emails || [];
                     hasMoreEmails = data.has_more === true;
                     currentSkip = hasMoreEmails ? getCloudflareGlobalNextOffset(data, 0) : currentEmails.length;
-                    document.getElementById('emailCount').textContent = `(${currentEmails.length})`;
+                    if (typeof updateEmailCountDisplay === 'function' && Object.prototype.hasOwnProperty.call(data, 'count')) {
+                        updateEmailCountDisplay({ total: data.count, merge: false });
+                    }
                     updateCloudflareGlobalMethodTag(data);
 
                     renderEmailList(currentEmails);
@@ -966,7 +976,9 @@
                     const loadingEl = document.getElementById('loadingMore');
                     if (loadingEl) loadingEl.remove();
 
-                    document.getElementById('emailCount').textContent = `(${currentEmails.length})`;
+                    if (typeof updateEmailCountDisplay === 'function' && Object.prototype.hasOwnProperty.call(data, 'count')) {
+                        updateEmailCountDisplay({ total: data.count, merge: false });
+                    }
                     updateCloudflareGlobalMethodTag(data);
                     renderEmailList(currentEmails);
                     scheduleEmailListLoadCheck(80);
@@ -1036,7 +1048,11 @@
                     // 如果当前选中的就是这个邮箱，清空邮件列表
                     if (currentAccount === email) {
                         currentEmails = [];
-                        document.getElementById('emailCount').textContent = '(0)';
+                        if (typeof updateEmailCountDisplay === 'function') {
+                            updateEmailCountDisplay({ total: 0, merge: false });
+                        } else {
+                            document.getElementById('emailCount').textContent = '(0/0)';
+                        }
                         document.getElementById('emailList').innerHTML = `
                             <div class="empty-state">
                                 <div class="empty-state-icon">📭</div>
@@ -1137,8 +1153,9 @@
                         : (data.method === 'Cloudflare' ? '#f48120' : '#00bcf2');
                     methodTag.style.color = 'white';
 
-                    document.getElementById('emailCount').textContent = `(${data.count})`;
-
+                    if (typeof updateEmailCountDisplay === 'function') {
+                        updateEmailCountDisplay({ total: data.count, merge: false });
+                    }
                     renderEmailList(data.emails);
                 } else {
                     handleApiError(data, '加载临时邮件失败');
