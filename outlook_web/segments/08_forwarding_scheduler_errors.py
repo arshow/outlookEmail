@@ -1521,6 +1521,16 @@ def api_update_account_v2(account_id):
     refresh_token = (data.get('refresh_token', '') or '').strip()
     account_type = (data.get('account_type', 'outlook') or 'outlook').strip().lower()
     provider = (data.get('provider', 'outlook') or 'outlook').strip().lower()
+    if 'authorization_type' in data:
+        try:
+            authorization_type = normalize_outlook_authorization_type(
+                data.get('authorization_type'),
+                strict=True,
+            )
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)})
+    else:
+        authorization_type = get_account_authorization_type(current_account)
     imap_host = (data.get('imap_host', '') or '').strip()
     imap_password = data['imap_password'] if 'imap_password' in data else current_account.get('imap_password', '')
     group_id = data.get('group_id', 1)
@@ -1618,6 +1628,7 @@ def api_update_account_v2(account_id):
         fallback_proxy_url_2,
         inbox_poll_enabled=inbox_poll_enabled,
         aggregated_inbox_enabled=aggregated_inbox_enabled,
+        authorization_type=authorization_type,
     ):
         cleaned_aliases = get_account_aliases(account_id)
         db = get_db()

@@ -675,49 +675,54 @@ def log_forwarding_result(account_id: int, account_email: str, message_id: str, 
 
 
 def test_refresh_token(client_id: str, refresh_token: str, proxy_url: str = None,
-                       fallback_proxy_urls: List[str] = None) -> tuple[bool, Optional[str], str]:
-    """测试 refresh token 是否有效，返回 (是否成功, 错误信息, 新 refresh_token)"""
-    try:
-        graph_res = request_graph_token_response(
-            client_id,
-            refresh_token,
-            proxy_url=proxy_url,
-            fallback_proxy_urls=fallback_proxy_urls,
-            include_original_scope_fallback=True,
-        )
-    except Exception as e:
-        return False, f"Graph 刷新请求异常: {str(e)}", ''
+                       fallback_proxy_urls: List[str] = None,
+                       authorization_type: str = '') -> tuple:
+    """测试 refresh token，返回 (成功, 错误, 新 token, 实际通道)。"""
+    preferred = normalize_outlook_authorization_type(authorization_type)
+    channel_order = ('imap', 'graph') if preferred == 'imap' else ('graph', 'imap')
+    errors = []
 
-    if graph_res.status_code == 200:
-        payload = {}
+    for channel in channel_order:
+        if channel == 'graph':
+            try:
+                response = request_graph_token_response(
+                    client_id,
+                    refresh_token,
+                    proxy_url=proxy_url,
+                    fallback_proxy_urls=fallback_proxy_urls,
+                    include_original_scope_fallback=True,
+                )
+            except Exception as exc:
+                errors.append(f'Graph 刷新请求异常: {str(exc)}')
+                continue
+            if response.status_code == 200:
+                try:
+                    payload = response.json()
+                except Exception:
+                    payload = {}
+                return True, None, str(payload.get('refresh_token') or '').strip(), 'graph'
+            errors.append(f'Graph 刷新失败: {extract_token_response_error(response)}')
+            continue
+
         try:
-            payload = graph_res.json()
-        except Exception:
-            payload = {}
-        return True, None, str(payload.get('refresh_token') or '').strip()
+            response = request_imap_token_response(
+                client_id,
+                refresh_token,
+                proxy_url=proxy_url,
+                fallback_proxy_urls=fallback_proxy_urls,
+            )
+        except Exception as exc:
+            errors.append(f'IMAP 刷新请求异常: {str(exc)}')
+            continue
+        if response.status_code == 200:
+            try:
+                payload = response.json()
+            except Exception:
+                payload = {}
+            return True, None, str(payload.get('refresh_token') or '').strip(), 'imap'
+        errors.append(f'IMAP 刷新失败: {extract_token_response_error(response)}')
 
-    graph_error_msg = extract_token_response_error(graph_res)
-
-    try:
-        imap_res = request_imap_token_response(
-            client_id,
-            refresh_token,
-            proxy_url=proxy_url,
-            fallback_proxy_urls=fallback_proxy_urls,
-        )
-    except Exception as e:
-        return False, f"Graph 刷新失败: {graph_error_msg}; IMAP 刷新请求异常: {str(e)}", ''
-
-    if imap_res.status_code == 200:
-        payload = {}
-        try:
-            payload = imap_res.json()
-        except Exception:
-            payload = {}
-        return True, None, str(payload.get('refresh_token') or '').strip()
-
-    imap_error_msg = extract_token_response_error(imap_res)
-    return False, f"Graph 刷新失败: {graph_error_msg}; IMAP 刷新失败: {imap_error_msg}", ''
+    return False, '; '.join(errors) or 'Graph/IMAP 刷新失败', '', ''
 
 
 def refresh_outlook_account_token(account: sqlite3.Row, refresh_type: str = 'manual',
@@ -767,16 +772,28 @@ def refresh_outlook_account_token(account: sqlite3.Row, refresh_type: str = 'man
             )
         }
 
-    success, error_msg, rotated_refresh_token = test_refresh_token(
+    refresh_result = test_refresh_token(
         client_id,
         refresh_token,
         proxy_url,
         fallback_proxy_urls,
+        authorization_type=get_account_authorization_type(account),
     )
+    try:
+        success, error_msg, rotated_refresh_token, actual_channel = refresh_result
+    except (TypeError, ValueError):
+        success, error_msg, rotated_refresh_token = refresh_result
+        actual_channel = ''
+    actual_channel = normalize_outlook_authorization_type(actual_channel)
     sanitized_error = sanitize_error_details(error_msg) if error_msg else ''
 
     if success and rotated_refresh_token and rotated_refresh_token != refresh_token:
         persist_rotated_refresh_token(account_id, rotated_refresh_token, db_conn)
+    if success and actual_channel:
+        try:
+            update_account_authorization_type(account_id, actual_channel, db=db_conn)
+        except Exception:
+            pass
 
     # 记录刷新结果
     log_refresh_result(
@@ -789,11 +806,16 @@ def refresh_outlook_account_token(account: sqlite3.Row, refresh_type: str = 'man
     )
 
     if success:
-        return {'success': True, 'message': 'Token 刷新成功'}
+        return {
+            'success': True,
+            'message': 'Token 刷新成功',
+            'authorization_type': actual_channel,
+        }
 
     return {
         'success': False,
         'error_message': sanitized_error or '未知错误',
+        'authorization_type': actual_channel,
         'error_payload': build_error_payload(
             "TOKEN_REFRESH_FAILED",
             "Token 刷新失败",
@@ -810,7 +832,7 @@ def api_refresh_account(account_id):
     """刷新单个账号的 token"""
     db = get_db()
     cursor = db.execute(
-        'SELECT id, email, client_id, refresh_token, group_id, account_type, provider, '
+        'SELECT id, email, client_id, refresh_token, group_id, account_type, provider, authorization_type, '
         'proxy_url, fallback_proxy_url_1, fallback_proxy_url_2 '
         'FROM accounts WHERE id = ?',
         (account_id,),
@@ -866,7 +888,7 @@ def api_refresh_selected_accounts():
     db = get_db()
     placeholders = ','.join('?' * len(account_ids))
     cursor = db.execute(f'''
-        SELECT id, email, client_id, refresh_token, group_id, account_type, provider,
+        SELECT id, email, client_id, refresh_token, group_id, account_type, provider, authorization_type,
                proxy_url, fallback_proxy_url_1, fallback_proxy_url_2
         FROM accounts
         WHERE id IN ({placeholders})
@@ -936,7 +958,7 @@ def api_refresh_selected_accounts():
 def load_active_outlook_accounts_for_refresh(db_conn) -> List[sqlite3.Row]:
     cursor = db_conn.execute(
         '''
-        SELECT id, email, client_id, refresh_token, group_id, status, account_type, provider,
+        SELECT id, email, client_id, refresh_token, group_id, status, account_type, provider, authorization_type,
                proxy_url, fallback_proxy_url_1, fallback_proxy_url_2
         FROM accounts
         WHERE status = 'active'
@@ -954,7 +976,7 @@ def load_selected_outlook_accounts_for_refresh(db_conn, account_ids: List[int]) 
     placeholders = ','.join('?' * len(account_ids))
     rows = db_conn.execute(
         f'''
-        SELECT id, email, client_id, refresh_token, group_id, status, account_type, provider,
+        SELECT id, email, client_id, refresh_token, group_id, status, account_type, provider, authorization_type,
                proxy_url, fallback_proxy_url_1, fallback_proxy_url_2
         FROM accounts
         WHERE id IN ({placeholders})
@@ -971,7 +993,7 @@ def load_selected_outlook_accounts_for_refresh(db_conn, account_ids: List[int]) 
 def load_failed_outlook_accounts_for_refresh(db_conn) -> List[sqlite3.Row]:
     cursor = db_conn.execute(
         '''
-        SELECT id, email, client_id, refresh_token, group_id, status, account_type, provider,
+        SELECT id, email, client_id, refresh_token, group_id, status, account_type, provider, authorization_type,
                proxy_url, fallback_proxy_url_1, fallback_proxy_url_2
         FROM accounts
         WHERE status = 'active'
@@ -3892,6 +3914,21 @@ def merge_folder_results(results: Dict[str, Dict[str, Any]], skip: int, top: int
     return response
 
 
+def get_outlook_mail_channel_order(account: Dict[str, Any]) -> tuple[str, ...]:
+    """返回 Outlook OAuth 邮件获取的首选/回退通道顺序。"""
+    return ('imap', 'graph') if get_account_authorization_type(account) == 'imap' else ('graph', 'imap')
+
+
+def record_outlook_mail_channel(account: Dict[str, Any], channel: str) -> None:
+    """记录实际成功的 Outlook OAuth 邮件通道；写库失败不影响取信结果。"""
+    if account.get('_disable_authorization_type_record'):
+        return
+    try:
+        record_account_authorization_type(account, channel)
+    except Exception:
+        pass
+
+
 def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int, top: int,
                                 proxy_url: str = '', fallback_proxy_urls: List[str] = None,
                                 folder_id: str = None, mailbox: str = None) -> Dict[str, Any]:
@@ -3975,7 +4012,16 @@ def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int,
         }
 
     all_errors = {}
-    if not explicit_mailbox:
+    channel_order = get_outlook_mail_channel_order(account)
+    if explicit_mailbox:
+        channel_order = ('imap',)
+    elif explicit_folder_id:
+        channel_order = ('graph',)
+
+    def try_graph() -> Optional[Dict[str, Any]]:
+        if explicit_mailbox:
+            all_errors['graph'] = 'mailbox 参数仅走 IMAP 路径'
+            return None
         graph_result = get_emails_graph(
             account['client_id'],
             account['refresh_token'],
@@ -3987,6 +4033,7 @@ def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int,
             folder_id=explicit_folder_id or None,
         )
         if graph_result.get('success'):
+            record_outlook_mail_channel(account, 'graph')
             emails = [
                 format_graph_email_item(item, storage_folder)
                 for item in graph_result.get('emails', [])
@@ -4015,69 +4062,54 @@ def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int,
             )
             return {
                 'success': False,
+                '_stop_fallback': True,
                 'error': connection_error_message,
-                'details': all_errors
+                'details': all_errors,
             }
-    else:
-        all_errors['graph'] = 'mailbox 参数仅走 IMAP 路径'
+        return None
 
-    imap_new_result = get_emails_imap_with_server(
-        account['email'],
-        account['client_id'],
-        account['refresh_token'],
-        folder_name,
-        skip,
-        top,
-        IMAP_SERVER_NEW,
-        proxy_url,
-        fallback_proxy_urls,
-        mailbox=explicit_mailbox or None,
-    )
-    if imap_new_result.get('success'):
-        emails = format_email_items(imap_new_result.get('emails', []), storage_folder)
-        for item in emails:
-            item['folder'] = storage_folder
-            if explicit_mailbox:
-                item['mailbox'] = explicit_mailbox
-        return {
-            'success': True,
-            'emails': emails,
-            'method': 'IMAP (New)',
-            'has_more': bool(imap_new_result.get('has_more')),
-            'request_method': 'imap',
-            'folder': storage_folder,
-            'mailbox': explicit_mailbox or None,
-        }
-    all_errors['imap_new'] = imap_new_result.get('error')
+    def try_imap() -> Optional[Dict[str, Any]]:
+        if explicit_folder_id:
+            all_errors['imap'] = 'folder_id 参数仅走 Graph 路径'
+            return None
+        for server, label in ((IMAP_SERVER_NEW, 'IMAP (New)'), (IMAP_SERVER_OLD, 'IMAP (Old)')):
+            imap_result = get_emails_imap_with_server(
+                account['email'],
+                account['client_id'],
+                account['refresh_token'],
+                folder_name,
+                skip,
+                top,
+                server,
+                proxy_url,
+                fallback_proxy_urls,
+                mailbox=explicit_mailbox or None,
+            )
+            if imap_result.get('success'):
+                record_outlook_mail_channel(account, 'imap')
+                emails = format_email_items(imap_result.get('emails', []), storage_folder)
+                for item in emails:
+                    item['folder'] = storage_folder
+                    if explicit_mailbox:
+                        item['mailbox'] = explicit_mailbox
+                return {
+                    'success': True,
+                    'emails': emails,
+                    'method': label,
+                    'has_more': bool(imap_result.get('has_more')),
+                    'request_method': 'imap',
+                    'folder': storage_folder,
+                    'mailbox': explicit_mailbox or None,
+                }
+            all_errors['imap_new' if server == IMAP_SERVER_NEW else 'imap_old'] = imap_result.get('error')
+        return None
 
-    imap_old_result = get_emails_imap_with_server(
-        account['email'],
-        account['client_id'],
-        account['refresh_token'],
-        folder_name,
-        skip,
-        top,
-        IMAP_SERVER_OLD,
-        proxy_url,
-        fallback_proxy_urls,
-        mailbox=explicit_mailbox or None,
-    )
-    if imap_old_result.get('success'):
-        emails = format_email_items(imap_old_result.get('emails', []), storage_folder)
-        for item in emails:
-            item['folder'] = storage_folder
-            if explicit_mailbox:
-                item['mailbox'] = explicit_mailbox
-        return {
-            'success': True,
-            'emails': emails,
-            'method': 'IMAP (Old)',
-            'has_more': bool(imap_old_result.get('has_more')),
-            'request_method': 'imap',
-            'folder': storage_folder,
-            'mailbox': explicit_mailbox or None,
-        }
-    all_errors['imap_old'] = imap_old_result.get('error')
+    for channel in channel_order:
+        result = try_graph() if channel == 'graph' else try_imap()
+        if result:
+            if result.pop('_stop_fallback', False):
+                return result
+            return result
 
     return {
         'success': False,
@@ -4116,6 +4148,7 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
         folder_jobs = ('inbox', 'junkemail')
         results = {}
         executor = ThreadPoolExecutor(max_workers=len(folder_jobs), thread_name_prefix='mail-folder-fetch')
+        account['_disable_authorization_type_record'] = True
         future_map = {
             folder_job: executor.submit(
                 fetch_account_folder_emails,
@@ -4159,7 +4192,21 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
                     )
                 }
         finally:
+            account.pop('_disable_authorization_type_record', None)
             executor.shutdown(wait=False, cancel_futures=True)
+
+        successful = [result for result in results.values() if result.get('success')]
+        channels = {
+            str(result.get('request_method') or '').strip().lower()
+            for result in successful
+            if str(result.get('request_method') or '').strip().lower() in {'graph', 'imap'}
+        }
+        if (
+            account.get('account_type') != 'imap'
+            and len(successful) == len(folder_jobs)
+            and len(channels) == 1
+        ):
+            record_outlook_mail_channel(account, next(iter(channels)))
 
         return merge_folder_results(
             results,
@@ -4915,15 +4962,26 @@ def fetch_email_detail_for_account(account, message_id, method='graph', folder='
         }
 
     attempts: Dict[str, Any] = {}
-    protocol_order = ['graph', 'imap'] if is_microsoft_mailbox_account(account) else ['imap', 'graph']
+    stored_channel = get_account_authorization_type(account)
+    method_name = str(method or 'graph').strip().lower()
+    if stored_channel:
+        channel_order = get_outlook_mail_channel_order(account)
+    elif method_name == 'imap':
+        # 显式的 IMAP ID 可能是 UID/sequence，不能误传给 Graph。
+        channel_order = ('imap',)
+    elif is_microsoft_mailbox_account(account):
+        channel_order = ('graph', 'imap')
+    else:
+        channel_order = ('imap', 'graph')
     last_method_label = ''
 
-    for protocol in protocol_order:
-        if protocol == 'graph':
+    for channel in channel_order:
+        if channel == 'graph':
             graph_result = fetch_graph_detail_response(
-                account, folder, message_id, method, id_mode, proxy_url, fallback_proxy_urls
+                account, folder, message_id, 'graph', id_mode, proxy_url, fallback_proxy_urls
             )
             if graph_result.get('success'):
+                record_outlook_mail_channel(account, 'graph')
                 return graph_result
             if graph_result.get('error') is not None:
                 attempts['graph'] = graph_result.get('error')
@@ -4934,9 +4992,10 @@ def fetch_email_detail_for_account(account, message_id, method='graph', folder='
             continue
 
         imap_result = fetch_oauth_imap_detail_response(
-            account, folder, message_id, method, id_mode, proxy_url, fallback_proxy_urls
+            account, folder, message_id, 'imap', id_mode, proxy_url, fallback_proxy_urls
         )
         if imap_result.get('success'):
+            record_outlook_mail_channel(account, 'imap')
             return imap_result
         if imap_result.get('error') is not None:
             attempts['imap_new'] = imap_result.get('error')

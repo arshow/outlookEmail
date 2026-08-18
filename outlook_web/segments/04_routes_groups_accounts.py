@@ -1370,6 +1370,7 @@ def api_get_account(account_id):
             'refresh_token': account['refresh_token'],
             'account_type': account.get('account_type', 'outlook'),
             'provider': account.get('provider', 'outlook'),
+            'authorization_type': get_account_authorization_type(account),
             'imap_host': account.get('imap_host', ''),
             'imap_port': account.get('imap_port', 993),
             'has_imap_password': bool(account.get('imap_password')),
@@ -1555,6 +1556,16 @@ def api_update_account(account_id):
     refresh_token = data.get('refresh_token', '')
     account_type = data.get('account_type', 'outlook')
     provider = data.get('provider', 'outlook')
+    if 'authorization_type' in data:
+        try:
+            authorization_type = normalize_outlook_authorization_type(
+                data.get('authorization_type'),
+                strict=True,
+            )
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)})
+    else:
+        authorization_type = get_account_authorization_type(current_account)
     imap_host = (data.get('imap_host', '') or '').strip()
     imap_port = data.get('imap_port', 993)
     imap_password = data['imap_password'] if 'imap_password' in data else current_account.get('imap_password', '')
@@ -1637,6 +1648,7 @@ def api_update_account(account_id):
         smtp_host, smtp_port, smtp_use_tls, smtp_use_ssl,
         inbox_poll_enabled=inbox_poll_enabled,
         aggregated_inbox_enabled=aggregated_inbox_enabled,
+        authorization_type=authorization_type,
     ):
         cleaned_aliases = get_account_aliases(account_id)
         db = get_db()

@@ -6,14 +6,19 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
-### Changed
-- 聚合收件箱改为账号 opt-in：默认不加入；需在编辑账号开启「加入聚合收件箱」，或批量「加入聚合 / 移出聚合」。
-
 ### Added
+- Outlook OAuth 账号新增 `authorization_type`（`graph` / `imap`，空值表示未设置）：记录首选或最近成功的邮件授权通道。
+- 编辑账号弹窗可查看和修改授权类型；未设置时取信与 Token 刷新默认 Graph 优先。
+- 拉信、邮件详情和 Token 刷新按记录通道优先尝试，失败后自动回退到另一通道，并写回实际成功通道。
 - Web 登录态支持以账号身份发送新邮件、回复、全部回复与转发邮件，并可上传附件（单文件/总计 25MB）。
 - 新增内部接口 `POST /api/emails/send|reply|forward`（Session + CSRF）；Outlook 走 Graph `Mail.Send`，标准 IMAP 走账号 SMTP。
 - OAuth Graph 权限增加 `Mail.Send`；自定义 IMAP 账号可配置 SMTP 主机/端口/TLS。
 - 邮件列表增加「写邮件」，详情工具栏增加回复 / 全部回复 / 转发入口。
+
+### Changed
+- 将账号改为普通 IMAP 时会清空 `authorization_type`。
+- 启动时自动为 `accounts` 表补列 `authorization_type`（默认空字符串）；已有账号不会根据旧凭证回填。
+- 聚合收件箱改为账号 opt-in：默认不加入；需在编辑账号开启「加入聚合收件箱」，或批量「加入聚合 / 移出聚合」。
 
 ### Important
 - 已有 Outlook 账号需重新授权以获取 `Mail.Send` 后才能发信。
