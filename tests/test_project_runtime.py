@@ -2215,6 +2215,8 @@ class FrontendAccountUnreadBadgeTests(unittest.TestCase):
         self.assertIn('function syncCachesAfterAggregatedFetch(data, options = {})', emails_js)
         self.assertIn('syncCachesAfterAggregatedFetch(data,', emails_js)
         self.assertIn('invalidateEmailListCache(accountEmail, folder)', emails_js)
+        self.assertNotIn('if (isRemote && Array.isArray(data.account_summaries))', emails_js)
+        self.assertIn('shouldHydrateEmailListFromLocalRetention(cache)', emails_js)
         self.assertIn('.account-unread-badge', css)
 
     def test_account_list_renders_inbox_poll_status_marker(self):
@@ -2682,8 +2684,16 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
 
         self.assertIn('function invalidateNormalMailRetentionCaches(options = {})', core_js)
         self.assertIn('isNormalMailRetentionCache(cacheValue)', core_js)
+        self.assertIn('function shouldHydrateEmailListFromLocalRetention(cache)', core_js)
         self.assertIn("invalidateNormalMailRetentionCaches({ resetCurrentView: true });", settings_js)
         self.assertIn('wasRetentionEnabled && !normalMailLocalRetentionEnabled', settings_js)
+
+        emails_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '05-emails.js').read_text(encoding='utf-8')
+        accounts_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '04-accounts.js').read_text(encoding='utf-8')
+        self.assertIn('shouldHydrateEmailListFromLocalRetention(cache)', emails_js)
+        self.assertIn('mergeWithCurrentList: true', emails_js)
+        self.assertIn('有远端缓存也走 loadEmails', accounts_js)
+        self.assertNotIn('if (!cache) {\n                loadEmails(email);\n            }', accounts_js)
 
     def test_new_mail_notice_stages_rows_until_user_accepts(self):
         emails_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '05-emails.js').read_text(encoding='utf-8')

@@ -452,6 +452,16 @@
                 || methodLabel === 'local retention';
         }
 
+        function shouldHydrateEmailListFromLocalRetention(cache) {
+            if (!cache) {
+                return false;
+            }
+            if (typeof isNormalMailLocalRetentionEnabled !== 'function' || !isNormalMailLocalRetentionEnabled()) {
+                return false;
+            }
+            return !isNormalMailRetentionCache(cache);
+        }
+
         function invalidateNormalMailRetentionCaches(options = {}) {
             Object.entries(emailListCache).forEach(([cacheKey, cacheValue]) => {
                 if (isNormalMailRetentionCache(cacheValue)) {

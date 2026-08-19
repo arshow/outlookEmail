@@ -210,6 +210,7 @@ class InboxDiscoveryTests(unittest.TestCase):
         self.assertIn('startInboxDiscoveryEventSource', emails_js)
         self.assertIn('handleInboxDiscoveryNewMailEvent', emails_js)
         self.assertIn('queuePendingNewMailSync', emails_js)
+        self.assertIn("invalidateEmailListCache(accountEmail, 'all')", emails_js)
         self.assertIn('inboxPollSchedulerEnabled', settings_html)
         self.assertIn('inboxPollConcurrency', settings_html)
         self.assertIn('editInboxPollEnabled', primary_html)

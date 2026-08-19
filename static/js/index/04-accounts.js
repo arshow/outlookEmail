@@ -197,10 +197,8 @@
             `;
             document.getElementById('emailDetailToolbar').style.display = 'none';
 
-            // 首次进入未命中前端列表缓存时才自动加载（本地保留开启时仅读本地）
-            if (!cache) {
-                loadEmails(email);
-            }
+            // 有远端缓存也走 loadEmails：本地保留开启时会补齐收件箱发现写入的新信
+            loadEmails(email);
         }
 
         // 隐藏添加账号模态框

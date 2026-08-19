@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, accountsCache, adjustAccountUnreadCount, adjustIframeHeight, aggregatedInboxGroupId, applyAccountUnreadCountsMap, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getAggregatedInboxCacheAccountKey, getCanonicalMailFolder, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderColoredRemarkMarkup, renderEmptyStateMarkup, scheduleEmailListLoadCheck, showEmailFetchErrorModal, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, accountsCache, adjustAccountUnreadCount, adjustIframeHeight, aggregatedInboxGroupId, applyAccountUnreadCountsMap, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getAggregatedInboxCacheAccountKey, getCanonicalMailFolder, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderColoredRemarkMarkup, renderEmptyStateMarkup, scheduleEmailListLoadCheck, shouldHydrateEmailListFromLocalRetention, showEmailFetchErrorModal, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
 
         // ==================== 邮件相关 ====================
 
@@ -8,11 +8,9 @@
             }
 
             const folder = String(options.folder || currentFolder || 'all').trim().toLowerCase() || 'all';
-            const source = String(options.source || data.source || '').trim().toLowerCase();
-            const isRemote = !['local', 'retained', 'cache'].includes(source);
 
-            // 远程聚合刷新后失效各账号列表缓存，避免点进单账号仍读旧数据
-            if (isRemote && Array.isArray(data.account_summaries)) {
+            // 聚合（本地或远程）刷新后失效各账号列表缓存，避免点进单账号仍读旧的 Graph/IMAP 快照
+            if (Array.isArray(data.account_summaries)) {
                 data.account_summaries.forEach(summary => {
                     if (!summary || summary.success === false) {
                         return;
@@ -767,6 +765,14 @@
 
             const accountEmail = String(event.account_email || '').trim();
             const folder = String(event.folder || currentFolder || 'inbox').toLowerCase() || 'inbox';
+            if (
+                accountEmail
+                && typeof invalidateEmailListCache === 'function'
+                && String(currentAccount || '').trim().toLowerCase() !== accountEmail.toLowerCase()
+            ) {
+                invalidateEmailListCache(accountEmail, 'all');
+                invalidateEmailListCache(accountEmail, folder);
+            }
             const viewAccount = isAggregatedInboxMode()
                 ? getAggregatedInboxCacheAccountKey()
                 : currentAccount;
@@ -920,18 +926,21 @@
             return mergedResult;
         }
 
-        async function tryRenderLocalRetainedEmails(email, cacheKey) {
+        async function tryRenderLocalRetainedEmails(email, cacheKey, options = {}) {
             if (!isNormalMailLocalRetentionEnabled()) {
                 setMailSyncStatus('本地存储未启用');
                 return false;
             }
             try {
+                const top = Number.isFinite(Number(options.top))
+                    ? Math.max(1, Number(options.top))
+                    : getEmailFetchTop();
                 const response = await fetchWithTimeout(
                     buildEmailListRequestUrl(email, {
                         source: 'local',
                         folder: currentFolder,
                         skip: 0,
-                        top: getEmailFetchTop(),
+                        top,
                         keyword: resolveEmailListKeyword()
                     }),
                     {
@@ -943,6 +952,15 @@
                 const retainedEmails = Array.isArray(data.emails) ? data.emails : [];
                 if (!data.success || retainedEmails.length === 0) {
                     return false;
+                }
+
+                if (options.mergeWithCurrentList === true) {
+                    applyMergedRemoteEmailSync(cacheKey, data, {
+                        method: 'local',
+                        methodLabel: data.method || 'Local Retention',
+                        folder: currentFolder
+                    });
+                    return true;
                 }
 
                 applyEmailListResponse(cacheKey, data, {
@@ -1149,6 +1167,19 @@
             const cache = !forceRefresh ? getEmailListCacheEntry(cacheAccountKey, currentFolder) : null;
             if (cache) {
                 applyEmailListCache(cache, { scheduleLoadCheck: false });
+                if (
+                    !aggregated
+                    && typeof shouldHydrateEmailListFromLocalRetention === 'function'
+                    && shouldHydrateEmailListFromLocalRetention(cache)
+                ) {
+                    await tryRenderLocalRetainedEmails(email, cacheKey, {
+                        mergeWithCurrentList: true,
+                        top: Math.max(
+                            getEmailFetchTop(),
+                            Array.isArray(currentEmails) ? currentEmails.length : 0
+                        )
+                    });
+                }
                 return;
             }
 
