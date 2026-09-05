@@ -2030,6 +2030,7 @@
                     id: String(item.id),
                     folder: String(item.folder || currentFolder || 'inbox'),
                     id_mode: String(item.id_mode || ''),
+                    from: String(item.from || item.sender || '').trim(),
                     account_id: item.account_id,
                     account_email: accountEmail
                 });
@@ -2358,6 +2359,7 @@
                 { id: 'batchMarkUnreadBtn', label: '未读', title: '设为未读' },
                 { id: 'batchMarkFlagBtn', label: 'Flag', title: '标记 Flag' },
                 { id: 'batchUnmarkFlagBtn', label: '取消', title: '取消 Flag' },
+                { id: 'batchMoveTrustBtn', label: '移到收件箱并信任', title: '移到收件箱并信任发件人' },
             ];
             configs.forEach(({ id, label, title }) => {
                 const btn = document.getElementById(id);
@@ -2371,6 +2373,10 @@
             });
         }
 
+        function isJunkEmailItem(email) {
+            return String(email?.folder || '').trim().toLowerCase() === 'junkemail';
+        }
+
         function updateEmailBatchActionBar() {
             const bar = document.getElementById('emailBatchActionBar');
             const selectAllBtn = document.getElementById('emailSelectAllBtn');
@@ -2378,12 +2384,14 @@
             const markUnreadBtn = document.getElementById('batchMarkUnreadBtn');
             const markFlagBtn = document.getElementById('batchMarkFlagBtn');
             const unmarkFlagBtn = document.getElementById('batchUnmarkFlagBtn');
+            const moveTrustBtn = document.getElementById('batchMoveTrustBtn');
             const panel = document.getElementById('emailListPanel');
             const selectedEmails = getSelectedEmailItems();
             const unreadSelectedCount = selectedEmails.filter(email => isEmailUnread(email)).length;
             const readSelectedCount = selectedEmails.filter(email => !isEmailUnread(email)).length;
             const unflaggedSelectedCount = selectedEmails.filter(email => !isEmailFlagged(email)).length;
             const flaggedSelectedCount = selectedEmails.filter(email => isEmailFlagged(email)).length;
+            const junkSelectedCount = selectedEmails.filter(email => isJunkEmailItem(email)).length;
             if (isTempEmailGroup) {
                 bar.style.display = 'none';
                 panel?.classList.remove('batch-toolbar-active');
@@ -2443,10 +2451,26 @@
                             : '取消';
                     }
                 }
+                if (moveTrustBtn) {
+                    const isMoving = moveTrustBtn.dataset.loading === 'true';
+                    moveTrustBtn.style.display = junkSelectedCount > 0 ? 'inline-flex' : 'none';
+                    moveTrustBtn.disabled = junkSelectedCount === 0 || isMoving;
+                    moveTrustBtn.title = junkSelectedCount > 0
+                        ? '移到收件箱并信任发件人'
+                        : '仅垃圾邮件可用';
+                    if (!isMoving) {
+                        moveTrustBtn.textContent = junkSelectedCount > 0
+                            ? `移到收件箱并信任${junkSelectedCount !== selectedEmails.length ? ` (${junkSelectedCount})` : ''}`
+                            : '移到收件箱并信任';
+                    }
+                }
             } else {
                 bar.style.display = 'none';
                 panel?.classList.remove('batch-toolbar-active');
                 resetEmailBatchActionButtons();
+                if (moveTrustBtn) {
+                    moveTrustBtn.style.display = 'none';
+                }
             }
         }
 
@@ -2596,6 +2620,196 @@
             }
 
             await deleteEmails(getSelectedEmailItems());
+        }
+
+        async function confirmMoveSelectedJunkToInboxAndTrust() {
+            const junkItems = getSelectedEmailItems().filter(email => isJunkEmailItem(email));
+            if (!junkItems.length) {
+                showToast('请先选择垃圾邮件', 'error');
+                return;
+            }
+
+            const confirmed = await showConfirmModal(
+                `将选中的 ${junkItems.length} 封垃圾邮件移到收件箱，并把发件人加入该邮箱账号的信任列表？`,
+                { title: '移到收件箱并信任', confirmText: '确认移动' }
+            );
+            if (!confirmed) {
+                return;
+            }
+
+            await moveJunkEmailsToInboxAndTrust(junkItems);
+        }
+
+        async function moveJunkEmailsToInboxAndTrust(sourceItems) {
+            const items = (sourceItems || [])
+                .filter(item => item && item.id && isJunkEmailItem(item))
+                .map(item => ({
+                    id: String(item.id),
+                    folder: 'junkemail',
+                    id_mode: String(item.id_mode || item.idMode || '').trim(),
+                    from: String(item.from || item.sender || '').trim(),
+                    account_id: item.account_id,
+                    account_email: getEmailAccountAddress(item) || (!isAggregatedInboxMode() ? currentAccount : '')
+                }))
+                .filter(item => item.id && item.account_email);
+
+            if (!items.length) {
+                showToast('没有可移动的垃圾邮件', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('batchMoveTrustBtn');
+            if (btn) {
+                btn.disabled = true;
+                btn.dataset.loading = 'true';
+                btn.textContent = '处理中...';
+            }
+
+            showToast('正在移到收件箱并写入信任列表...', 'info');
+
+            try {
+                const requestGroups = groupEmailActionItemsByAccount(items);
+                if (!requestGroups.size) {
+                    showToast('操作失败: 缺少账号信息', 'error');
+                    return;
+                }
+
+                const results = await Promise.all(
+                    Array.from(requestGroups.entries()).map(async ([accountEmail, accountItems]) => {
+                        const response = await fetch('/api/emails/move-to-inbox-and-trust', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                email: accountEmail,
+                                method: getRemoteMailboxMethodFallback(),
+                                folder: 'junkemail',
+                                items: accountItems.map(item => ({
+                                    id: item.id,
+                                    folder: item.folder,
+                                    id_mode: item.id_mode,
+                                    from: item.from
+                                }))
+                            })
+                        });
+                        const result = await response.json();
+                        const movedIdList = Array.isArray(result.moved_ids) && result.moved_ids.length
+                            ? result.moved_ids
+                            : (Array.isArray(result.updated_ids) ? result.updated_ids : []);
+                        const movedItems = accountItems.filter(item =>
+                            movedIdList.map(String).includes(String(item.id))
+                            || (result.success && !movedIdList.length)
+                        ).map(item => ({
+                            ...item,
+                            account_email: accountEmail
+                        }));
+                        return {
+                            ...result,
+                            moved_items: movedItems,
+                            moved_ids: movedItems.map(item => item.id),
+                            trusted_senders: Array.isArray(result.trusted_senders) ? result.trusted_senders : [],
+                            trusted_count: Number(result.trusted_count) || 0
+                        };
+                    })
+                );
+
+                const movedItems = results.flatMap(result => result.moved_items || []);
+                const movedIds = new Set(movedItems.map(item => String(item.id)));
+                const successCount = results.reduce(
+                    (sum, result) => sum + (Number(result.success_count) || (result.moved_items || []).length),
+                    0
+                );
+                const failedCount = results.reduce((sum, result) => sum + (Number(result.failed_count) || 0), 0);
+                const trustedCount = results.reduce((sum, result) => sum + (Number(result.trusted_count) || 0), 0);
+                const anySuccess = movedItems.length > 0 || results.some(result => result.success);
+
+                if (anySuccess) {
+                    if (failedCount === 0) {
+                        showToast(`已移动 ${successCount || movedItems.length} 封，信任发件人 ${trustedCount} 个`);
+                    } else if (movedItems.length > 0) {
+                        showToast(`已移动 ${movedItems.length} 封，失败 ${failedCount} 封，信任 ${trustedCount} 个`, 'warning');
+                    }
+
+                    currentEmails = currentEmails.filter(email => {
+                        const key = getEmailSelectionKey(email);
+                        return !movedItems.some(item => getEmailSelectionKey(item) === key)
+                            && !movedIds.has(String(email.id));
+                    });
+                    removeDeletedEmailsFromCachedLists(movedItems);
+                    const accountsToInvalidate = new Set(
+                        movedItems.map(item => getEmailAccountAddress(item) || item.account_email).filter(Boolean)
+                    );
+                    accountsToInvalidate.forEach(accountEmail => {
+                        if (typeof invalidateEmailListCache === 'function') {
+                            invalidateEmailListCache(accountEmail, 'inbox');
+                            invalidateEmailListCache(accountEmail, 'junkemail');
+                            invalidateEmailListCache(accountEmail, 'all');
+                        }
+                    });
+                    if (isAggregatedInboxMode() && typeof invalidateEmailListCache === 'function') {
+                        invalidateEmailListCache(getAggregatedInboxCacheAccountKey(), 'inbox');
+                        invalidateEmailListCache(getAggregatedInboxCacheAccountKey(), 'junkemail');
+                        invalidateEmailListCache(getAggregatedInboxCacheAccountKey(), 'all');
+                    }
+
+                    const cacheAccountKey = isAggregatedInboxMode()
+                        ? getAggregatedInboxCacheAccountKey()
+                        : currentAccount;
+                    const cache = cacheAccountKey
+                        ? emailListCache[`${cacheAccountKey}_${currentFolder}`]
+                        : null;
+                    if (cache && typeof cache.local_retention_count === 'number') {
+                        setEmailTotalCount(cache.local_retention_count, { merge: false });
+                    } else {
+                        setEmailTotalCount(currentEmails.length, { merge: false });
+                    }
+                    selectedEmailIds.clear();
+                    const currentSelectionKey = currentEmailDetail
+                        ? getEmailSelectionKey(currentEmailDetail)
+                        : '';
+                    if (currentEmailId && (
+                        movedItems.some(item => getEmailSelectionKey(item) === currentSelectionKey)
+                        || movedIds.has(String(currentEmailId))
+                    )) {
+                        currentEmailId = null;
+                    }
+
+                    renderEmailList(currentEmails);
+
+                    if (currentEmailDetail && (
+                        movedItems.some(item => getEmailSelectionKey(item) === getEmailSelectionKey(currentEmailDetail))
+                        || movedIds.has(String(currentEmailDetail.id))
+                    )) {
+                        currentEmailId = null;
+                        currentEmailDetail = null;
+                        document.getElementById('emailDetail').innerHTML = `
+                            <div class="empty-state">
+                                <div class="empty-state-icon">📨</div>
+                                <div class="empty-state-text">邮件已移到收件箱</div>
+                            </div>
+                        `;
+                        document.getElementById('emailDetailToolbar').style.display = 'none';
+                        resetEmailTranslateUi();
+                    }
+
+                    if (failedCount > 0) {
+                        console.warn('Move-to-inbox errors:', results.flatMap(result => result.errors || []));
+                    }
+                } else {
+                    const firstError = results[0] || {};
+                    const errorMessage = firstError.error && firstError.error.message
+                        ? firstError.error.message
+                        : (firstError.error || '未知错误');
+                    showToast(`操作失败: ${errorMessage}`, 'error');
+                }
+            } catch (error) {
+                console.error('moveJunkEmailsToInboxAndTrust failed:', error);
+                showToast(`操作失败: ${error.message || error}`, 'error');
+            } finally {
+                if (btn) {
+                    btn.dataset.loading = 'false';
+                }
+                updateEmailBatchActionBar();
+            }
         }
 
         async function confirmDeleteCurrentEmail() {

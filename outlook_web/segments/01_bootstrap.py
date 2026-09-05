@@ -1763,6 +1763,19 @@ def init_db():
         )
     ''')
 
+    # 按账号维度的信任发件人（白名单）
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS account_trusted_senders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id INTEGER NOT NULL,
+            sender_email TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(account_id, sender_email),
+            FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE CASCADE
+        )
+    ''')
+
     # 创建项目表
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS projects (
@@ -2641,6 +2654,11 @@ def init_db():
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_account_aliases_email
         ON account_aliases(alias_email)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_account_trusted_senders_account
+        ON account_trusted_senders(account_id, sender_email)
     ''')
 
     # 回填历史保留邮件的规范化排序时间，保持旧数据库升级后分页顺序稳定。

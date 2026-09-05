@@ -2643,6 +2643,304 @@ def delete_email_items_imap(mail, items: List[Dict[str, Any]], provider: str,
     }
 
 
+def move_imap_message_to_mailbox(mail, message_id: Any, destination_mailbox: str,
+                                 preferred_mode: str = 'uid') -> tuple[bool, str, List[Dict[str, Any]]]:
+    """将单封邮件移到目标邮箱：优先 MOVE，失败则 COPY + \\Deleted + EXPUNGE。"""
+    message_text = message_id.decode('utf-8', errors='ignore') if isinstance(message_id, (bytes, bytearray)) else str(message_id)
+    destination = str(destination_mailbox or '').strip()
+    if not message_text or not destination:
+        return False, '', [{'mode': preferred_mode, 'status': 'INVALID', 'response': 'empty message or destination'}]
+
+    modes = [preferred_mode]
+    if preferred_mode != 'uid':
+        modes.append('uid')
+    if preferred_mode != 'sequence':
+        modes.append('sequence')
+
+    attempts: List[Dict[str, Any]] = []
+    for mode in modes:
+        if mode != 'uid':
+            continue
+        try:
+            status, data = mail.uid('MOVE', message_text, destination)
+            attempts.append({
+                'mode': mode,
+                'action': 'MOVE',
+                'status': str(status),
+                'response': sanitize_error_details(str(data or ''))[:200],
+            })
+            if status == 'OK':
+                return True, mode, attempts
+        except Exception as exc:
+            attempts.append({
+                'mode': mode,
+                'action': 'MOVE',
+                'status': type(exc).__name__,
+                'response': sanitize_error_details(str(exc))[:200],
+            })
+
+    for mode in modes:
+        try:
+            if mode == 'uid':
+                copy_status, copy_data = mail.uid('COPY', message_text, destination)
+            else:
+                copy_status, copy_data = mail.copy(message_text, destination)
+            attempts.append({
+                'mode': mode,
+                'action': 'COPY',
+                'status': str(copy_status),
+                'response': sanitize_error_details(str(copy_data or ''))[:200],
+            })
+            if copy_status != 'OK':
+                continue
+
+            store_ok, used_mode, store_attempts = store_imap_message_flags(
+                mail,
+                message_text,
+                action='+FLAGS.SILENT',
+                flags=r'(\Deleted)',
+                preferred_mode=mode,
+            )
+            attempts.extend({**item, 'action': 'STORE_DELETED'} for item in store_attempts)
+            if not store_ok:
+                continue
+
+            expunge_status, expunge_data = mail.expunge()
+            attempts.append({
+                'mode': used_mode or mode,
+                'action': 'EXPUNGE',
+                'status': str(expunge_status),
+                'response': sanitize_error_details(str(expunge_data or ''))[:200],
+            })
+            if expunge_status == 'OK':
+                return True, used_mode or mode, attempts
+        except Exception as exc:
+            attempts.append({
+                'mode': mode,
+                'action': 'COPY_DELETE',
+                'status': type(exc).__name__,
+                'response': sanitize_error_details(str(exc))[:200],
+            })
+
+    return False, '', attempts
+
+
+def move_email_items_imap(mail, items: List[Dict[str, Any]], provider: str,
+                          target_folder: str = 'inbox',
+                          default_mode: str = 'uid') -> Dict[str, Any]:
+    """通过 IMAP 将邮件批量移动到目标文件夹。"""
+    moved_ids: List[str] = []
+    errors: List[Any] = []
+    grouped_items: Dict[str, List[Dict[str, Any]]] = {}
+    destination_folder = str(target_folder or 'inbox').strip().lower() or 'inbox'
+
+    for item in items or []:
+        message_id = str(item.get('id', '') or '').strip()
+        folder = str(item.get('folder', 'junkemail') or 'junkemail').strip().lower()
+        if not message_id:
+            errors.append({
+                'id': '',
+                'error': build_error_payload(
+                    'EMAIL_MOVE_INVALID',
+                    'message_id 不能为空',
+                    'ValidationError',
+                    400,
+                    item
+                )
+            })
+            continue
+        if folder == destination_folder:
+            moved_ids.append(message_id)
+            continue
+        grouped_items.setdefault(folder, []).append({
+            'id': message_id,
+            'folder': folder,
+            'id_mode': str(item.get('id_mode', '') or '').strip().lower(),
+        })
+
+    destination_mailbox, destination_diagnostics = resolve_imap_folder(
+        mail, provider, destination_folder, readonly=True
+    )
+    if not destination_mailbox and grouped_items:
+        folder_error = build_error_payload(
+            'IMAP_FOLDER_NOT_FOUND',
+            '目标 IMAP 文件夹不存在或无权访问',
+            'IMAPFolderError',
+            400,
+            {
+                'provider': provider,
+                'folder': destination_folder,
+                **destination_diagnostics,
+            }
+        )
+        for folder_items in grouped_items.values():
+            errors.extend({'id': item['id'], 'error': folder_error} for item in folder_items)
+        unique_moved = list(dict.fromkeys(moved_ids))
+        failed_count = sum(len(group) for group in grouped_items.values())
+        return {
+            'success': failed_count == 0,
+            'success_count': len(unique_moved),
+            'failed_count': failed_count,
+            'moved_ids': unique_moved,
+            'updated_ids': unique_moved,
+            'deleted_ids': unique_moved,
+            'errors': errors,
+        }
+
+    for folder, folder_items in grouped_items.items():
+        selected_folder, folder_diagnostics = resolve_imap_folder(mail, provider, folder, readonly=False)
+        if not selected_folder:
+            folder_error = build_error_payload(
+                'IMAP_FOLDER_NOT_FOUND',
+                '源 IMAP 文件夹不存在或无权访问',
+                'IMAPFolderError',
+                400,
+                {
+                    'provider': provider,
+                    'folder': folder,
+                    **folder_diagnostics,
+                }
+            )
+            errors.extend({'id': item['id'], 'error': folder_error} for item in folder_items)
+            continue
+
+        for item in folder_items:
+            preferred_mode = item.get('id_mode') or default_mode
+            success, used_mode, attempts = move_imap_message_to_mailbox(
+                mail,
+                item['id'],
+                destination_mailbox,
+                preferred_mode=preferred_mode,
+            )
+            if success:
+                moved_ids.append(item['id'])
+                item['id_mode'] = used_mode
+                continue
+
+            errors.append({
+                'id': item['id'],
+                'error': build_error_payload(
+                    'EMAIL_MOVE_FAILED',
+                    '移动邮件失败',
+                    'IMAPMoveError',
+                    502,
+                    {
+                        'provider': provider,
+                        'folder': selected_folder,
+                        'destination': destination_mailbox,
+                        'message_id': item['id'],
+                        'move_attempts': attempts[:12],
+                    }
+                )
+            })
+
+    unique_moved = list(dict.fromkeys(moved_ids))
+    failed_count = len([item for item in errors if item.get('id')]) + sum(
+        1 for item in errors if not item.get('id')
+    )
+    return {
+        'success': failed_count == 0,
+        'success_count': len(unique_moved),
+        'failed_count': failed_count,
+        'moved_ids': unique_moved,
+        'updated_ids': unique_moved,
+        'deleted_ids': unique_moved,
+        'errors': errors,
+    }
+
+
+def move_emails_imap_batch(email_addr: str, client_id: str, refresh_token: str,
+                           items: List[Dict[str, Any]], server: str = IMAP_SERVER_NEW,
+                           proxy_url: str = None,
+                           fallback_proxy_urls: Optional[List[str]] = None,
+                           target_folder: str = 'inbox') -> Dict[str, Any]:
+    access_token = get_access_token_imap(client_id, refresh_token, proxy_url, fallback_proxy_urls)
+    if not access_token:
+        return {
+            'success': False,
+            'success_count': 0,
+            'failed_count': len(items or []),
+            'moved_ids': [],
+            'updated_ids': [],
+            'deleted_ids': [],
+            'errors': [build_error_payload('IMAP_TOKEN_FAILED', '获取访问令牌失败', 'IMAPError', 401, '')],
+        }
+
+    connection = None
+    try:
+        with proxy_socket_context(proxy_url):
+            connection = imaplib.IMAP4_SSL(server, IMAP_PORT, timeout=IMAP_TIMEOUT)
+        auth_string = f"user={email_addr}\1auth=Bearer {access_token}\1\1".encode('utf-8')
+        connection.authenticate('XOAUTH2', lambda x: auth_string)
+        return move_email_items_imap(
+            connection, items, 'outlook', target_folder=target_folder, default_mode='sequence'
+        )
+    except Exception as exc:
+        return {
+            'success': False,
+            'success_count': 0,
+            'failed_count': len(items or []),
+            'moved_ids': [],
+            'updated_ids': [],
+            'deleted_ids': [],
+            'errors': [build_error_payload('IMAP_CONNECT_FAILED', 'IMAP 连接失败', type(exc).__name__, 502, str(exc))],
+        }
+    finally:
+        if connection:
+            try:
+                connection.logout()
+            except Exception:
+                pass
+
+
+def move_emails_imap_generic_result(email_addr: str, imap_password: str, imap_host: str,
+                                    items: List[Dict[str, Any]], imap_port: int = 993,
+                                    provider: str = 'custom', proxy_url: str = '',
+                                    target_folder: str = 'inbox') -> Dict[str, Any]:
+    mail = None
+    try:
+        mail = create_imap_connection(imap_host, imap_port, proxy_url)
+        try:
+            mail.login(email_addr, imap_password)
+        except imaplib.IMAP4.error as exc:
+            return {
+                'success': False,
+                'success_count': 0,
+                'failed_count': len(items or []),
+                'moved_ids': [],
+                'updated_ids': [],
+                'deleted_ids': [],
+                'errors': [build_error_payload(
+                    'IMAP_AUTH_FAILED',
+                    normalize_imap_auth_error(provider, imap_host, str(exc)),
+                    'IMAPAuthError',
+                    401,
+                    ''
+                )],
+            }
+
+        send_imap_id(mail, provider, imap_host)
+        return move_email_items_imap(
+            mail, items, provider, target_folder=target_folder, default_mode='uid'
+        )
+    except Exception as exc:
+        return {
+            'success': False,
+            'success_count': 0,
+            'failed_count': len(items or []),
+            'moved_ids': [],
+            'updated_ids': [],
+            'deleted_ids': [],
+            'errors': [build_error_payload('IMAP_CONNECT_FAILED', sanitize_error_details(str(exc)) or 'IMAP 连接失败', 'IMAPConnectError', 502, '')],
+        }
+    finally:
+        if mail:
+            try:
+                mail.logout()
+            except Exception:
+                pass
+
+
 def delete_emails_imap_batch(email_addr: str, client_id: str, refresh_token: str,
                              items: List[Dict[str, Any]], server: str = IMAP_SERVER_NEW,
                              proxy_url: str = None,

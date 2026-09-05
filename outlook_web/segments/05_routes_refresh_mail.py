@@ -2097,6 +2097,133 @@ def delete_emails_graph(client_id: str, refresh_token: str, message_ids: List[st
     }
 
 
+def move_emails_graph(client_id: str, refresh_token: str, message_ids: List[str],
+                      destination_id: str = 'inbox', proxy_url: str = None,
+                      fallback_proxy_urls: List[str] = None) -> Dict[str, Any]:
+    """通过 Graph API 批量将邮件移动到目标文件夹（默认收件箱）。"""
+    normalized_ids = [str(message_id or '').strip() for message_id in (message_ids or []) if str(message_id or '').strip()]
+    target = str(destination_id or 'inbox').strip() or 'inbox'
+    if not normalized_ids:
+        return {
+            'success': False,
+            'success_count': 0,
+            'failed_count': 0,
+            'moved_ids': [],
+            'updated_ids': [],
+            'deleted_ids': [],
+            'moved_id_map': {},
+            'errors': ['message_ids 不能为空'],
+        }
+
+    access_token = get_access_token_graph(client_id, refresh_token, proxy_url, fallback_proxy_urls)
+    if not access_token:
+        return {
+            'success': False,
+            'success_count': 0,
+            'failed_count': len(normalized_ids),
+            'moved_ids': [],
+            'updated_ids': [],
+            'deleted_ids': [],
+            'moved_id_map': {},
+            'error': '获取 Access Token 失败',
+            'errors': ['获取 Access Token 失败'],
+        }
+
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+    }
+    batch_size = 20
+    moved_ids: List[str] = []
+    moved_id_map: Dict[str, str] = {}
+    errors: List[Any] = []
+
+    for index in range(0, len(normalized_ids), batch_size):
+        batch = normalized_ids[index:index + batch_size]
+        batch_requests = []
+        for batch_index, message_id in enumerate(batch):
+            batch_requests.append({
+                'id': str(batch_index),
+                'method': 'POST',
+                'url': f'/me/messages/{quote(message_id, safe="")}/move',
+                'headers': {'Content-Type': 'application/json'},
+                'body': {'destinationId': target},
+            })
+
+        try:
+            response = request_with_proxy_failover(
+                'post',
+                'https://graph.microsoft.com/v1.0/$batch',
+                headers=headers,
+                json={'requests': batch_requests},
+                timeout=HTTP_REQUEST_TIMEOUT,
+                proxy_url=proxy_url,
+                fallback_proxy_urls=fallback_proxy_urls,
+            )
+        except Exception as exc:
+            errors.extend({
+                'id': message_id,
+                'error': build_error_payload(
+                    'EMAIL_MOVE_FAILED',
+                    '移动邮件失败',
+                    type(exc).__name__,
+                    500,
+                    str(exc)
+                )
+            } for message_id in batch)
+            continue
+
+        if response.status_code != 200:
+            error_payload = build_error_payload(
+                'EMAIL_MOVE_FAILED',
+                '移动邮件失败',
+                'GraphAPIError',
+                response.status_code,
+                get_response_details(response)
+            )
+            errors.extend({'id': message_id, 'error': error_payload} for message_id in batch)
+            continue
+
+        response_items = response.json().get('responses', [])
+        response_map = {str(item.get('id')): item for item in response_items}
+        for batch_index, message_id in enumerate(batch):
+            item = response_map.get(str(batch_index))
+            status_code = int(item.get('status', 0) or 0) if item else 0
+            if status_code in {200, 201, 202}:
+                moved_ids.append(message_id)
+                body = item.get('body') if item else None
+                if isinstance(body, dict):
+                    new_id = str(body.get('id') or '').strip()
+                    if new_id:
+                        moved_id_map[message_id] = new_id
+                continue
+
+            error_body = item.get('body') if item else ''
+            errors.append({
+                'id': message_id,
+                'error': build_error_payload(
+                    'EMAIL_MOVE_FAILED',
+                    '移动邮件失败',
+                    'GraphAPIError',
+                    status_code or 500,
+                    error_body or '批处理返回空响应'
+                )
+            })
+
+    success_count = len(moved_ids)
+    failed_count = len(normalized_ids) - success_count
+    return {
+        'success': failed_count == 0,
+        'success_count': success_count,
+        'failed_count': failed_count,
+        'moved_ids': moved_ids,
+        'updated_ids': moved_ids,
+        'deleted_ids': moved_ids,
+        'moved_id_map': moved_id_map,
+        'errors': errors,
+    }
+
+
 def delete_emails_imap(email_addr: str, client_id: str, refresh_token: str, message_ids: List[str], server: str,
                        proxy_url: str = None, fallback_proxy_urls: List[str] = None,
                        items: List[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -2631,6 +2758,194 @@ def delete_oauth_imap_items(account: Dict[str, Any], items: List[Dict[str, str]]
         fallback_id_mode='uid',
     )
     return result
+
+
+TRUSTED_SENDER_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+
+def parse_trusted_sender_email(value: Any) -> str:
+    """从发件人字段解析可写入信任列表的邮箱地址。"""
+    if isinstance(value, dict):
+        nested = value.get('emailAddress') if isinstance(value.get('emailAddress'), dict) else value
+        candidate = nested.get('address') or nested.get('email') or ''
+        text = str(candidate or '').strip().lower()
+    else:
+        text = str(value or '').strip()
+        if not text:
+            return ''
+        _name, addr = email.utils.parseaddr(text)
+        text = (addr or text).strip().lower()
+    if TRUSTED_SENDER_EMAIL_RE.match(text):
+        return text
+    return ''
+
+
+def normalize_email_move_trust_items(raw_items: Any, fallback_folder: str = 'junkemail') -> List[Dict[str, str]]:
+    normalized_items: List[Dict[str, str]] = []
+    for raw_item in raw_items or []:
+        if isinstance(raw_item, dict):
+            message_id = str(raw_item.get('id') or raw_item.get('message_id') or '').strip()
+            folder = normalize_folder_name(raw_item.get('folder', fallback_folder))
+            id_mode = str(raw_item.get('id_mode') or '').strip().lower()
+            sender = parse_trusted_sender_email(
+                raw_item.get('from')
+                or raw_item.get('sender')
+                or raw_item.get('from_email')
+                or ''
+            )
+        else:
+            message_id = str(raw_item or '').strip()
+            folder = normalize_folder_name(fallback_folder)
+            id_mode = ''
+            sender = ''
+
+        if not message_id:
+            continue
+
+        normalized_items.append({
+            'id': message_id,
+            'folder': folder,
+            'id_mode': id_mode,
+            'from': sender,
+        })
+    return normalized_items
+
+
+def upsert_account_trusted_senders(account_id: int, sender_emails: List[str], db=None) -> List[str]:
+    account_key = int(account_id or 0)
+    if not account_key:
+        return []
+
+    normalized = []
+    seen = set()
+    for value in sender_emails or []:
+        address = parse_trusted_sender_email(value)
+        if not address or address in seen:
+            continue
+        seen.add(address)
+        normalized.append(address)
+    if not normalized:
+        return []
+
+    database = db or get_db()
+    for address in normalized:
+        database.execute(
+            '''
+            INSERT INTO account_trusted_senders (account_id, sender_email, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(account_id, sender_email) DO UPDATE SET
+                updated_at = CURRENT_TIMESTAMP
+            ''',
+            (account_key, address)
+        )
+    database.commit()
+    return normalized
+
+
+def list_account_trusted_senders(account_id: int, db=None) -> List[str]:
+    account_key = int(account_id or 0)
+    if not account_key:
+        return []
+    database = db or get_db()
+    rows = database.execute(
+        '''
+        SELECT sender_email
+        FROM account_trusted_senders
+        WHERE account_id = ?
+        ORDER BY sender_email ASC
+        ''',
+        (account_key,)
+    ).fetchall()
+    return [str(row['sender_email'] or '').strip().lower() for row in rows if row['sender_email']]
+
+
+def move_imap_account_emails_to_inbox(account: Dict[str, Any], items: List[Dict[str, str]],
+                                      proxy_url: str) -> Dict[str, Any]:
+    result = move_emails_imap_generic_result(
+        account['email'],
+        account.get('imap_password', ''),
+        account.get('imap_host', ''),
+        items,
+        account.get('imap_port', 993),
+        account.get('provider', 'custom'),
+        proxy_url,
+        target_folder='inbox',
+    )
+    clear_retained_rows_for_moved_emails(account, items, result, fallback_id_mode='uid')
+    return result
+
+
+def move_graph_items_to_inbox(account: Dict[str, Any], items: List[Dict[str, str]],
+                              proxy_url: str, fallback_proxy_urls: List[str]) -> Dict[str, Any]:
+    result = move_emails_graph(
+        account['client_id'],
+        account['refresh_token'],
+        [item['id'] for item in items],
+        destination_id='inbox',
+        proxy_url=proxy_url,
+        fallback_proxy_urls=fallback_proxy_urls,
+    )
+    clear_retained_rows_for_moved_emails(account, items, result, fallback_id_mode='graph')
+    return result
+
+
+def move_oauth_imap_items_to_inbox(account: Dict[str, Any], items: List[Dict[str, str]],
+                                   proxy_url: str, fallback_proxy_urls: List[str]) -> Dict[str, Any]:
+    result = move_emails_imap_batch(
+        account['email'],
+        account['client_id'],
+        account['refresh_token'],
+        items,
+        IMAP_SERVER_NEW,
+        proxy_url,
+        fallback_proxy_urls,
+        target_folder='inbox',
+    )
+    if not result.get('success') and result.get('success_count', 0) == 0:
+        result = move_emails_imap_batch(
+            account['email'],
+            account['client_id'],
+            account['refresh_token'],
+            items,
+            IMAP_SERVER_OLD,
+            proxy_url,
+            fallback_proxy_urls,
+            target_folder='inbox',
+        )
+    clear_retained_rows_for_moved_emails(account, items, result, fallback_id_mode='uid')
+    return result
+
+
+def clear_retained_rows_for_moved_emails(account: Dict[str, Any], items: List[Dict[str, str]],
+                                         result: Dict[str, Any], fallback_id_mode: str = '',
+                                         db=None) -> int:
+    """按已成功移动的 message id 清理本地保留（支持部分成功）。"""
+    moved_ids = [
+        str(message_id or '').strip()
+        for message_id in (
+            (result or {}).get('moved_ids')
+            or (result or {}).get('updated_ids')
+            or (result or {}).get('deleted_ids')
+            or []
+        )
+        if str(message_id or '').strip()
+    ]
+    if not moved_ids:
+        return 0
+    synthetic = {
+        'success': True,
+        'deleted_ids': moved_ids,
+        'updated_ids': moved_ids,
+        'success_count': len(moved_ids),
+        'failed_count': 0,
+    }
+    return delete_retained_normal_mail_rows(
+        account,
+        [item['id'] for item in items],
+        synthetic,
+        fallback_id_mode=fallback_id_mode,
+        db=db,
+    )
 
 
 def coerce_mail_is_read(value: Any) -> bool:
@@ -4797,6 +5112,106 @@ def api_delete_emails():
         results.append(delete_oauth_imap_items(account, imap_items, proxy_url, fallback_proxy_urls))
     return jsonify(merge_email_action_results(results))
 
+
+@app.route('/api/emails/move-to-inbox-and-trust', methods=['POST'])
+@login_required
+def api_move_emails_to_inbox_and_trust():
+    """将垃圾邮件移到收件箱，并把发件人写入该账号的信任列表。"""
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
+    email_addr = str(data.get('email') or '').strip()
+    method = str(data.get('method') or 'graph').strip().lower()
+    fallback_folder = normalize_folder_name(data.get('folder', 'junkemail'))
+    raw_items = data.get('items') if data.get('items') is not None else data.get('ids', [])
+    items = normalize_email_move_trust_items(raw_items, fallback_folder)
+    if not email_addr or not items:
+        return jsonify({'success': False, 'error': '参数不完整'})
+
+    junk_items = [
+        item for item in items
+        if str(item.get('folder') or '').strip().lower() == 'junkemail'
+    ]
+    if not junk_items:
+        return jsonify({'success': False, 'error': '请选择垃圾邮件'})
+
+    account = get_account_by_email(email_addr)
+    if not account:
+        return jsonify({'success': False, 'error': '账号不存在'})
+
+    proxy_url = get_account_proxy_url(account)
+    fallback_proxy_urls = get_account_proxy_failover_urls(account)
+    if account.get('account_type') == 'imap':
+        move_result = move_imap_account_emails_to_inbox(account, junk_items, proxy_url)
+    else:
+        graph_items, imap_items = split_email_action_items_by_method(junk_items, method)
+        results = []
+        if graph_items:
+            graph_res = move_graph_items_to_inbox(account, graph_items, proxy_url, fallback_proxy_urls)
+            results.append(graph_res)
+            graph_error = graph_res.get('error', '')
+            if (
+                not graph_res.get('success')
+                and graph_res.get('success_count', 0) == 0
+                and isinstance(graph_error, str)
+                and 'ProxyError' in graph_error
+                and not imap_items
+            ):
+                move_result = graph_res
+                move_result['trusted_senders'] = []
+                move_result['trusted_count'] = 0
+                return jsonify(move_result)
+        if imap_items:
+            results.append(move_oauth_imap_items_to_inbox(
+                account, imap_items, proxy_url, fallback_proxy_urls
+            ))
+        move_result = merge_email_action_results(results)
+        moved_id_map = {}
+        for result in results:
+            if isinstance(result.get('moved_id_map'), dict):
+                moved_id_map.update(result['moved_id_map'])
+        if moved_id_map:
+            move_result['moved_id_map'] = moved_id_map
+
+    moved_ids = {
+        str(message_id or '').strip()
+        for message_id in (
+            move_result.get('moved_ids')
+            or move_result.get('updated_ids')
+            or move_result.get('deleted_ids')
+            or []
+        )
+        if str(message_id or '').strip()
+    }
+    if not moved_ids and move_result.get('success'):
+        moved_ids = {item['id'] for item in junk_items}
+
+    trusted_candidates = [
+        item.get('from')
+        for item in junk_items
+        if item.get('id') in moved_ids and item.get('from')
+    ]
+    trusted_senders = upsert_account_trusted_senders(account.get('id'), trusted_candidates)
+    move_result['moved_ids'] = list(moved_ids)
+    move_result['trusted_senders'] = trusted_senders
+    move_result['trusted_count'] = len(trusted_senders)
+    return jsonify(move_result)
+
+
+@app.route('/api/accounts/<email_addr>/trusted-senders', methods=['GET'])
+@login_required
+def api_list_account_trusted_senders(email_addr):
+    """列出账号的信任发件人。"""
+    account = get_account_by_email(email_addr)
+    if not account:
+        return jsonify({'success': False, 'error': '账号不存在'})
+    senders = list_account_trusted_senders(account.get('id'))
+    return jsonify({
+        'success': True,
+        'email': account.get('email'),
+        'trusted_senders': senders,
+        'count': len(senders),
+    })
 
 
 @app.route('/api/email/<email_addr>/<path:message_id>/raw')
