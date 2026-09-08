@@ -4,16 +4,153 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+
+def _strip_code_fence(text: str) -> str:
+    cleaned = str(text or '').strip()
+    if cleaned.startswith('```'):
+        cleaned = re.sub(r'^```(?:json|javascript)?\s*', '', cleaned, count=1, flags=re.I)
+        cleaned = re.sub(r'\s*```(?:\w*)?\s*$', '', cleaned)
+    return cleaned.strip()
+
+
+def _extract_json_blob(text: str) -> str:
+    cleaned = _strip_code_fence(text)
+    start_obj = cleaned.find('{')
+    start_arr = cleaned.find('[')
+    starts = [index for index in (start_obj, start_arr) if index >= 0]
+    if not starts:
+        return cleaned
+    start = min(starts)
+    opener = cleaned[start]
+    closer = '}' if opener == '{' else ']'
+    depth = 0
+    in_string = False
+    escape = False
+    for index, char in enumerate(cleaned[start:], start):
+        if in_string:
+            if escape:
+                escape = False
+            elif char == '\\':
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char == opener:
+            depth += 1
+        elif char == closer:
+            depth -= 1
+            if depth == 0:
+                return cleaned[start:index + 1]
+    return cleaned[start:]
+
+
+def _escape_raw_controls_in_strings(text: str) -> str:
+    """Turn raw newlines/tabs inside JSON strings into valid escapes."""
+    result: List[str] = []
+    in_string = False
+    escape = False
+    for char in text:
+        if in_string:
+            if escape:
+                result.append(char)
+                escape = False
+                continue
+            if char == '\\':
+                result.append(char)
+                escape = True
+                continue
+            if char == '"':
+                in_string = False
+                result.append(char)
+                continue
+            if char == '\n':
+                result.append('\\n')
+                continue
+            if char == '\r':
+                continue
+            if char == '\t':
+                result.append('\\t')
+                continue
+            if ord(char) < 32:
+                result.append(f'\\u{ord(char):04x}')
+                continue
+            result.append(char)
+            continue
+        if char == '"':
+            in_string = True
+        result.append(char)
+    return ''.join(result)
+
+
+def _strip_trailing_commas(text: str) -> str:
+    return re.sub(r',\s*([}\]])', r'\1', text)
+
+
+def _close_truncated_json(text: str) -> str:
+    blob = str(text or '').rstrip()
+    if not blob:
+        return blob
+    in_string = False
+    escape = False
+    stack: List[str] = []
+    for char in blob:
+        if in_string:
+            if escape:
+                escape = False
+            elif char == '\\':
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char == '{':
+            stack.append('}')
+        elif char == '[':
+            stack.append(']')
+        elif char in '}]' and stack:
+            stack.pop()
+    suffix: List[str] = []
+    if in_string:
+        suffix.append('"')
+    suffix.extend(reversed(stack))
+    return blob + ''.join(suffix) if suffix else blob
 
 
 def parse_json_text(raw_text: str, error_message: str) -> Any:
-    cleaned = re.sub(r'^```(?:json)?\s*', '', str(raw_text or '').strip(), flags=re.I)
-    cleaned = re.sub(r'\s*```$', '', cleaned).strip()
-    try:
-        return json.loads(cleaned)
-    except Exception as exc:
-        raise ValueError(error_message) from exc
+    original = str(raw_text or '').strip()
+    if not original:
+        raise ValueError(error_message)
+
+    blobs: List[str] = []
+    for text in (original, _strip_code_fence(original), _extract_json_blob(original)):
+        if text and text not in blobs:
+            blobs.append(text)
+
+    last_exc: Optional[Exception] = None
+    tried = set()
+    for blob in blobs:
+        variants = [
+            blob,
+            _escape_raw_controls_in_strings(blob),
+        ]
+        variants.append(_strip_trailing_commas(variants[-1]))
+        variants.append(_close_truncated_json(variants[-1]))
+        for variant in variants:
+            if variant in tried:
+                continue
+            tried.add(variant)
+            try:
+                return json.loads(variant)
+            except Exception as exc:
+                last_exc = exc
+    raise ValueError(error_message) from last_exc
 
 
 def _as_str_list(value: Any) -> List[str]:

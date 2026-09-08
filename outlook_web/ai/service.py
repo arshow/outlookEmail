@@ -34,6 +34,39 @@ def _fingerprint(*parts: Any) -> str:
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()
 
 
+EMAIL_TRANSLATE_MAX_CHARS = 8000
+EMAIL_TRANSLATE_MAX_OUTPUT_TOKENS = 8192
+
+
+def _extract_translated_field(parsed: Dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ''
+
+
+def _coerce_translation_payload(raw_text: str, provider: str) -> Dict[str, Any]:
+    error_message = f"{provider} 返回了无效翻译 JSON"
+    text = str(raw_text or '').strip()
+    if not text:
+        raise ValueError(error_message)
+
+    parsed: Any = None
+    try:
+        parsed = parse_json_text(text, error_message)
+    except ValueError:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        return parsed
+
+    # Gemini 偶尔直接返回译文正文，而不是 JSON。
+    if not text.lstrip().startswith('{'):
+        return {'subjectZh': '', 'bodyZh': text}
+    raise ValueError(error_message)
+
+
 def _translate_reply_zh(credentials: Dict[str, Any], reply_text: str) -> str:
     prompt = build_translate_zh_prompt(reply_text)
     text = call_structured_model(
@@ -42,7 +75,7 @@ def _translate_reply_zh(credentials: Dict[str, Any], reply_text: str) -> str:
         model=credentials['model'],
         prompt=prompt,
         temperature=0.1,
-        max_output_tokens=1200,
+        max_output_tokens=1600,
         response_schema={
             'type': 'object',
             'required': ['replyTextZh'],
@@ -51,17 +84,16 @@ def _translate_reply_zh(credentials: Dict[str, Any], reply_text: str) -> str:
         gemini_base_url=credentials['gemini_base_url'],
         deepseek_base_url=credentials['deepseek_base_url'],
         gemini_socks5=credentials.get('gemini_socks5'),
+        thinking_budget=0,
     )
-    parsed = parse_json_text(text, f"{credentials['provider']} 返回了无效翻译 JSON")
-    if isinstance(parsed, dict):
-        for key in ('replyTextZh', 'translation', 'chinese', 'zh', 'text'):
-            value = parsed.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
+    parsed = _coerce_translation_payload(text, credentials['provider'])
+    value = _extract_translated_field(
+        parsed,
+        ('replyTextZh', 'translation', 'chinese', 'zh', 'text', 'bodyZh'),
+    )
+    if value:
+        return value
     raise ValueError(f"{credentials['provider']} 返回了空的中文翻译")
-
-
-EMAIL_TRANSLATE_MAX_CHARS = 8000
 
 
 def translate_email_to_zh(
@@ -106,7 +138,7 @@ def translate_email_to_zh(
         model=credentials['model'],
         prompt=prompt,
         temperature=0.1,
-        max_output_tokens=2400,
+        max_output_tokens=EMAIL_TRANSLATE_MAX_OUTPUT_TOKENS,
         response_schema={
             'type': 'object',
             'required': ['subjectZh', 'bodyZh'],
@@ -118,23 +150,14 @@ def translate_email_to_zh(
         gemini_base_url=credentials['gemini_base_url'],
         deepseek_base_url=credentials['deepseek_base_url'],
         gemini_socks5=credentials.get('gemini_socks5'),
+        thinking_budget=0,
     )
-    parsed = parse_json_text(raw_text, f"{credentials['provider']} 返回了无效翻译 JSON")
-    if not isinstance(parsed, dict):
-        raise ValueError(f"{credentials['provider']} 返回了无效翻译 JSON")
-
-    subject_zh = ''
-    body_zh = ''
-    for key in ('subjectZh', 'subject_zh', 'subject'):
-        value = parsed.get(key)
-        if isinstance(value, str) and value.strip():
-            subject_zh = value.strip()
-            break
-    for key in ('bodyZh', 'body_zh', 'body', 'translation', 'replyTextZh', 'text'):
-        value = parsed.get(key)
-        if isinstance(value, str) and value.strip():
-            body_zh = value.strip()
-            break
+    parsed = _coerce_translation_payload(raw_text, credentials['provider'])
+    subject_zh = _extract_translated_field(parsed, ('subjectZh', 'subject_zh', 'subject'))
+    body_zh = _extract_translated_field(
+        parsed,
+        ('bodyZh', 'body_zh', 'body', 'translation', 'replyTextZh', 'text'),
+    )
 
     if not subject_zh and not body_zh:
         raise ValueError(f"{credentials['provider']} 返回了空的中文翻译")

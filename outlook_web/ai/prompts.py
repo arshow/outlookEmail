@@ -95,11 +95,12 @@ def build_translate_zh_prompt(reply_text: str) -> str:
 def build_translate_email_zh_prompt(*, subject: str = '', body: str = '') -> str:
     return '\n'.join([
         '将下面收到的邮件翻译成简体中文，供内部人员快速阅读。',
-        '只输出 JSON 对象，格式严格为 {"subjectZh":"主题中文","bodyZh":"正文中文"}。',
+        '只输出一个合法 JSON 对象，不要 Markdown，不要解释。',
+        '格式严格为 {"subjectZh":"主题中文","bodyZh":"正文中文"}。',
         '忠实翻译，不要添加原文没有的信息、承诺或评论。',
         '若某字段为空，对应译文也输出空字符串。',
         '若原文已是中文，可原样返回。',
-        'bodyZh 使用真实换行，不要转义为 \\n，不要包一层 HTML。',
+        'bodyZh 不要包一层 HTML。换行必须写成 JSON 转义 \\n，字符串内不要出现未转义的真实换行或未转义双引号。',
         f'Subject:\n{subject or ""}',
         f'Body:\n{body or ""}',
     ])

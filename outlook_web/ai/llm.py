@@ -53,6 +53,41 @@ def socks5_proxy_url(socks5: Optional[Dict[str, Any]]) -> Optional[str]:
     return f'socks5h://{auth}{host}:{port}'
 
 
+def _gemini_model_family(model: str) -> str:
+    name = str(model or '').strip().lower()
+    if 'gemini-3' in name or name.startswith('3.'):
+        return '3'
+    if '2.5' in name or 'thinking' in name:
+        return '2.5'
+    return 'other'
+
+
+def _build_gemini_thinking_config(model: str, thinking_budget: Optional[int]) -> Optional[Dict[str, Any]]:
+    if thinking_budget is None:
+        return None
+    family = _gemini_model_family(model)
+    if family == '3':
+        # 3.7 Flash rejects MINIMAL / thinkingBudget=0; LOW is the cheapest valid level.
+        return {'thinkingLevel': 'low'}
+    if family == '2.5':
+        return {'thinkingBudget': int(thinking_budget)}
+    return None
+
+
+def _iter_gemini_text_parts(parts: Any):
+    if not isinstance(parts, list):
+        return
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        # Gemini 2.5 thinking parts can prepend non-JSON prose.
+        if part.get('thought') is True:
+            continue
+        text = part.get('text')
+        if text:
+            yield str(text)
+
+
 def call_gemini(
     *,
     api_key: str,
@@ -64,6 +99,7 @@ def call_gemini(
     base_url: str = '',
     socks5: Optional[Dict[str, Any]] = None,
     timeout: int = 90,
+    thinking_budget: Optional[int] = None,
 ) -> str:
     if not api_key:
         raise ValueError('未配置 Gemini API Key')
@@ -73,13 +109,19 @@ def call_gemini(
 
     root = _normalize_base_url(base_url, DEFAULT_GEMINI_BASE_URL)
     url = f'{root}/v1beta/models/{quote(model_name, safe="")}:generateContent'
+    family = _gemini_model_family(model_name)
     generation_config: Dict[str, Any] = {
-        'temperature': temperature,
         'maxOutputTokens': max_output_tokens,
         'responseMimeType': 'application/json',
     }
+    # Gemini 3.x rejects or degrades with explicit temperature / thinkingBudget.
+    if family != '3':
+        generation_config['temperature'] = temperature
     if response_schema:
         generation_config['responseSchema'] = response_schema
+    thinking_config = _build_gemini_thinking_config(model_name, thinking_budget)
+    if thinking_config:
+        generation_config['thinkingConfig'] = thinking_config
 
     body = {
         'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
@@ -120,9 +162,7 @@ def call_gemini(
         first = candidates[0] or {}
         finish_reason = str(first.get('finishReason') or '')
         parts = ((first.get('content') or {}).get('parts') or [])
-        for part in parts:
-            if isinstance(part, dict) and part.get('text'):
-                text_parts.append(str(part['text']))
+        text_parts.extend(_iter_gemini_text_parts(parts))
     text = ''.join(text_parts).strip()
     if not text:
         raise RuntimeError(f'Gemini 未返回内容（{finish_reason or "empty_candidates"}）')
@@ -200,6 +240,7 @@ def call_structured_model(
     gemini_base_url: str = '',
     deepseek_base_url: str = '',
     gemini_socks5: Optional[Dict[str, Any]] = None,
+    thinking_budget: Optional[int] = None,
 ) -> str:
     provider_name = str(provider or '').strip().lower()
     if provider_name == PROVIDER_DEEPSEEK:
@@ -221,6 +262,7 @@ def call_structured_model(
             response_schema=response_schema,
             base_url=gemini_base_url,
             socks5=gemini_socks5,
+            thinking_budget=thinking_budget,
         )
     raise ValueError(f'不支持的 AI 提供商: {provider}')
 
@@ -253,6 +295,7 @@ def test_provider_connection(settings: Dict[str, Any], provider: Optional[str] =
             base_url=str(settings.get('gemini_base_url') or ''),
             socks5=settings.get('gemini_socks5') if isinstance(settings.get('gemini_socks5'), dict) else None,
             timeout=45,
+            thinking_budget=0,
         )
     elif provider_name == PROVIDER_DEEPSEEK:
         api_key = str(settings.get('deepseek_api_key') or '')
