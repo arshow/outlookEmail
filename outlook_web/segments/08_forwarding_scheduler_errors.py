@@ -287,7 +287,8 @@ def send_forward_email_with_config(config: Dict[str, Any], subject: str, body_te
     return True
 
 
-def _send_telegram_message(bot_token: str, chat_id: str, topic_id: str, proxy_url: str, text: str) -> bool:
+def _send_telegram_message(bot_token: str, chat_id: str, topic_id: str, proxy_url: str,
+                           text: str, parse_mode: str = '') -> bool:
     if not bot_token or not chat_id:
         return False
     payload = {
@@ -295,6 +296,8 @@ def _send_telegram_message(bot_token: str, chat_id: str, topic_id: str, proxy_ur
         'text': text[:4000],
         'disable_web_page_preview': True,
     }
+    if parse_mode:
+        payload['parse_mode'] = parse_mode
     if topic_id:
         try:
             payload['message_thread_id'] = int(topic_id)
@@ -316,6 +319,7 @@ def send_forward_telegram(text: str) -> bool:
         get_setting('telegram_topic_id', '').strip(),
         get_setting('telegram_proxy_url', '').strip(),
         text,
+        parse_mode='HTML',
     )
 
 
@@ -363,7 +367,7 @@ def send_forward_wecom_with_config(config: Dict[str, Any], text: str) -> bool:
     return response.ok
 
 
-def build_forward_payload(account: Dict[str, Any], email_detail: Dict[str, Any]) -> tuple[str, str, str, str]:
+def build_forward_payload(account: Dict[str, Any], email_detail: Dict[str, Any]) -> tuple[str, str, str, str, str]:
     subject = email_detail.get('subject') or '无主题'
     sender = email_detail.get('from') or '未知'
     received_at = email_detail.get('date') or ''
@@ -380,9 +384,28 @@ def build_forward_payload(account: Dict[str, Any], email_detail: Dict[str, Any])
         f"<p><strong>主题:</strong> {html.escape(subject)}</p><hr>{body}"
     )
     remark = str(account.get('remark') or '').strip()
-    telegram_header = f"{remark}\n新邮件转发" if remark else "新邮件转发"
-    telegram_text = f"{telegram_header}\n账号: {account.get('email','')}\n发件人: {sender}\n主题: {subject}\n时间: {received_at}\n\n{body_text[:1200]}"
-    return title, plain, html_body, telegram_text
+    remark_label = f'【{remark}】' if remark else ''
+    header = f'{remark_label}\n新邮件转发' if remark_label else '新邮件转发'
+    telegram_header = f'<b>{html.escape(remark_label)}</b>\n新邮件转发' if remark_label else '新邮件转发'
+    email = account.get('email', '')
+    body_preview = body_text[:1200]
+    telegram_text = (
+        f'{telegram_header}\n'
+        f'账号: {html.escape(str(email))}\n'
+        f'发件人: {html.escape(str(sender))}\n'
+        f'主题: {html.escape(str(subject))}\n'
+        f'时间: {html.escape(str(received_at))}\n\n'
+        f'{html.escape(body_preview)}'
+    )
+    wecom_text = (
+        f'{header}\n'
+        f'账号: {email}\n'
+        f'发件人: {sender}\n'
+        f'主题: {subject}\n'
+        f'时间: {received_at}\n\n'
+        f'{body_preview}'
+    )
+    return title, plain, html_body, telegram_text, wecom_text
 
 
 def fetch_forward_candidates(account: Dict[str, Any], top: int = 20, folder: str = 'inbox') -> Dict[str, Any]:
@@ -712,7 +735,7 @@ def process_forwarding_account(account_row: Dict[str, Any], job_config: Dict[str
                     )
                     continue
 
-                title, plain, html_body, telegram_text = build_forward_payload(account, detail)
+                title, plain, html_body, telegram_text, wecom_text = build_forward_payload(account, detail)
                 message_processed = False
                 message_failed = False
 
@@ -757,7 +780,7 @@ def process_forwarding_account(account_row: Dict[str, Any], job_config: Dict[str
                         detail,
                         FORWARD_CHANNEL_WECOM,
                         send_forward_wecom,
-                        telegram_text,
+                        wecom_text,
                     )
                     result['channel_send_ms'] += duration_ms
                     if sent:
