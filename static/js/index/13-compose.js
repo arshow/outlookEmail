@@ -10,6 +10,7 @@
         let composeSelectedFiles = [];
         let composeQuotedDetail = null;
         let composeSending = false;
+        let composeAutoCcAddress = '';
         let composeAiState = {
             ready: false,
             busy: false,
@@ -165,7 +166,36 @@
             if (hint) {
                 hint.style.display = (typeof isAggregatedInboxMode === 'function' && isAggregatedInboxMode()) ? '' : 'none';
             }
+            if (!select.dataset.replyCcBound) {
+                select.addEventListener('change', onComposeFromEmailChange);
+                select.dataset.replyCcBound = '1';
+            }
             return select.value || '';
+        }
+
+        function applyReplyDefaultCc(fromEmail) {
+            // 回复/全部回复时默认抄送当前发件账号，方便在收件箱留存发出的回复。
+            const ccInput = document.getElementById('composeCc');
+            if (!ccInput) return;
+            const from = extractComposeAddress(fromEmail);
+            const toSet = new Set(parseComposeAddressList(document.getElementById('composeTo')?.value || ''));
+            let ccList = parseComposeAddressList(ccInput.value);
+            const previousAuto = extractComposeAddress(composeAutoCcAddress);
+            if (previousAuto) {
+                ccList = ccList.filter(address => address !== previousAuto);
+            }
+            composeAutoCcAddress = '';
+            if (from && !toSet.has(from)) {
+                ccList.push(from);
+                composeAutoCcAddress = from;
+            }
+            ccInput.value = uniqueAddresses(ccList).join(', ');
+        }
+
+        function onComposeFromEmailChange() {
+            const mode = document.getElementById('composeMode')?.value || '';
+            if (mode !== 'reply' && mode !== 'reply_all') return;
+            applyReplyDefaultCc(document.getElementById('composeFromEmail')?.value || '');
         }
 
         function ensureSubjectPrefix(subject, prefix) {
@@ -366,6 +396,7 @@
         function resetComposeForm() {
             composeSelectedFiles = [];
             composeQuotedDetail = null;
+            composeAutoCcAddress = '';
             document.getElementById('composeMode').value = 'new';
             document.getElementById('composeMessageId').value = '';
             document.getElementById('composeFolder').value = currentFolder || 'inbox';
@@ -457,6 +488,7 @@
                 }
                 document.getElementById('composeTo').value = uniqueAddresses(toList).join(', ');
                 document.getElementById('composeCc').value = ccList.join(', ');
+                applyReplyDefaultCc(accountEmail);
                 document.getElementById('composeSubject').value = ensureSubjectPrefix(detail.subject || '', 'Re:');
                 if (languageGroup) languageGroup.style.display = '';
                 applyComposeQuotedBody(detail);
