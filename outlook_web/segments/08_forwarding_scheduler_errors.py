@@ -379,7 +379,9 @@ def build_forward_payload(account: Dict[str, Any], email_detail: Dict[str, Any])
         f"<p><strong>时间:</strong> {html.escape(received_at)}</p>"
         f"<p><strong>主题:</strong> {html.escape(subject)}</p><hr>{body}"
     )
-    telegram_text = f"新邮件转发\n账号: {account.get('email','')}\n发件人: {sender}\n主题: {subject}\n时间: {received_at}\n\n{body_text[:1200]}"
+    remark = str(account.get('remark') or '').strip()
+    telegram_header = f"{remark}\n新邮件转发" if remark else "新邮件转发"
+    telegram_text = f"{telegram_header}\n账号: {account.get('email','')}\n发件人: {sender}\n主题: {subject}\n时间: {received_at}\n\n{body_text[:1200]}"
     return title, plain, html_body, telegram_text
 
 
