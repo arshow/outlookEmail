@@ -148,6 +148,53 @@ textarea { min-height: 96px; resize: vertical; }
     margin-top: 16px;
 }
 
+.model-id-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+
+.model-id-row input {
+    flex: 1;
+    min-width: 0;
+}
+
+.model-id-row .btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.model-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 180px;
+    overflow: auto;
+    padding: 8px;
+    border: 1px solid var(--ai-border);
+    border-radius: 8px;
+    background: #fafafa;
+}
+
+.model-chip {
+    border: 1px solid var(--ai-border);
+    background: #fff;
+    color: var(--ai-text);
+    border-radius: 999px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
+.model-chip:hover,
+.model-chip.active {
+    border-color: var(--ai-accent);
+    background: var(--ai-accent-soft);
+    color: var(--ai-accent);
+}
+
 .hint {
     color: var(--ai-muted);
     font-size: 0.85rem;

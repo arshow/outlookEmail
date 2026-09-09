@@ -99,6 +99,73 @@ class AiReplyTestCase(unittest.TestCase):
         with self.app.app_context():
             self.assertEqual(web_outlook_app.get_setting_decrypted('ai_reply_deepseek_api_key'), '')
 
+    def test_list_available_models_endpoint(self):
+        self.client.put('/api/ai/settings', json={
+            'provider': 'gemini',
+            'gemini_api_key': 'gm-secret',
+        })
+
+        with patch('outlook_web.ai.llm.list_gemini_models') as mock_list:
+            mock_list.return_value = [
+                {'id': 'gemini-2.5-flash', 'display_name': 'Gemini 2.5 Flash', 'description': ''},
+                {'id': 'gemini-2.0-flash', 'display_name': 'Gemini 2.0 Flash', 'description': ''},
+            ]
+            response = self.client.post('/api/ai/settings/models', json={'provider': 'gemini'})
+        payload = response.get_json()
+        self.assertTrue(payload['success'], payload)
+        self.assertEqual(payload['provider'], 'gemini')
+        self.assertEqual(payload['count'], 2)
+        self.assertEqual(payload['models'][0]['id'], 'gemini-2.5-flash')
+        mock_list.assert_called_once()
+        self.assertEqual(mock_list.call_args.kwargs.get('api_key'), 'gm-secret')
+
+        missing = self.client.post('/api/ai/settings/models', json={
+            'provider': 'deepseek',
+            'deepseek_api_key': '',
+        })
+        missing_payload = missing.get_json()
+        self.assertFalse(missing_payload['success'])
+        self.assertIn('DeepSeek API Key', missing_payload.get('error') or '')
+
+    def test_list_gemini_and_deepseek_model_parsers(self):
+        from outlook_web.ai import llm as ai_llm
+
+        class FakeResponse:
+            def __init__(self, status_code, payload):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        with patch('outlook_web.ai.llm.requests.get') as mock_get:
+            mock_get.return_value = FakeResponse(200, {
+                'models': [
+                    {
+                        'name': 'models/gemini-2.5-flash',
+                        'displayName': 'Gemini 2.5 Flash',
+                        'supportedGenerationMethods': ['generateContent'],
+                    },
+                    {
+                        'name': 'models/embedding-001',
+                        'displayName': 'Embedding',
+                        'supportedGenerationMethods': ['embedContent'],
+                    },
+                ],
+            })
+            gemini_models = ai_llm.list_gemini_models(api_key='k', base_url='https://example.invalid')
+        self.assertEqual([m['id'] for m in gemini_models], ['gemini-2.5-flash'])
+
+        with patch('outlook_web.ai.llm.requests.get') as mock_get:
+            mock_get.return_value = FakeResponse(200, {
+                'data': [
+                    {'id': 'deepseek-reasoner', 'owned_by': 'deepseek'},
+                    {'id': 'deepseek-chat', 'owned_by': 'deepseek'},
+                ],
+            })
+            deepseek_models = ai_llm.list_deepseek_models(api_key='k', base_url='https://example.invalid')
+        self.assertEqual([m['id'] for m in deepseek_models], ['deepseek-chat', 'deepseek-reasoner'])
+
     def test_knowledge_and_rules_crud(self):
         create_k = self.client.post('/api/ai/knowledge', json={
             'title': '退款政策',

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 import requests
@@ -267,6 +267,153 @@ def call_structured_model(
     raise ValueError(f'不支持的 AI 提供商: {provider}')
 
 
+def _strip_gemini_model_name(name: str) -> str:
+    text = str(name or '').strip()
+    if text.startswith('models/'):
+        return text[len('models/'):]
+    return text
+
+
+def list_gemini_models(
+    *,
+    api_key: str,
+    base_url: str = '',
+    socks5: Optional[Dict[str, Any]] = None,
+    timeout: int = 45,
+) -> List[Dict[str, Any]]:
+    if not api_key:
+        raise ValueError('未配置 Gemini API Key')
+    root = _normalize_base_url(base_url, DEFAULT_GEMINI_BASE_URL)
+    url = f'{root}/v1beta/models'
+    headers = {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': api_key,
+    }
+    proxies = None
+    proxy_url = socks5_proxy_url(socks5)
+    if proxy_url:
+        proxies = {'http': proxy_url, 'https': proxy_url}
+
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout, proxies=proxies, params={'pageSize': 1000})
+    except Exception as exc:
+        message = str(exc)
+        if proxy_url and ('SOCKS' in message.upper() or 'proxy' in message.lower()):
+            raise RuntimeError(f'Gemini SOCKS5 代理失败：{message}') from exc
+        raise RuntimeError(f'Gemini 读取模型失败：{message}') from exc
+
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {}
+
+    if response.status_code >= 400:
+        err = ''
+        if isinstance(payload, dict):
+            err = str((payload.get('error') or {}).get('message') or '')
+        raise RuntimeError(_map_gemini_error(err or f'Gemini 读取模型失败（HTTP {response.status_code}）'))
+
+    models: List[Dict[str, Any]] = []
+    raw_models = payload.get('models') if isinstance(payload, dict) else None
+    if isinstance(raw_models, list):
+        for item in raw_models:
+            if not isinstance(item, dict):
+                continue
+            methods = item.get('supportedGenerationMethods') or []
+            if isinstance(methods, list) and methods and 'generateContent' not in methods:
+                continue
+            model_id = _strip_gemini_model_name(str(item.get('name') or ''))
+            if not model_id:
+                continue
+            models.append({
+                'id': model_id,
+                'display_name': str(item.get('displayName') or model_id),
+                'description': str(item.get('description') or ''),
+            })
+    models.sort(key=lambda row: str(row.get('id') or '').lower())
+    return models
+
+
+def list_deepseek_models(
+    *,
+    api_key: str,
+    base_url: str = '',
+    timeout: int = 45,
+) -> List[Dict[str, Any]]:
+    if not api_key:
+        raise ValueError('未配置 DeepSeek API Key')
+    root = _normalize_base_url(base_url, DEFAULT_DEEPSEEK_BASE_URL)
+    url = f'{root}/models'
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+    except Exception as exc:
+        raise RuntimeError(f'DeepSeek 读取模型失败：{exc}') from exc
+
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {}
+
+    if response.status_code >= 400:
+        err = ''
+        if isinstance(payload, dict):
+            err = str((payload.get('error') or {}).get('message') or '')
+        raise RuntimeError(err or f'DeepSeek 读取模型失败（HTTP {response.status_code}）')
+
+    models: List[Dict[str, Any]] = []
+    raw_models = payload.get('data') if isinstance(payload, dict) else None
+    if isinstance(raw_models, list):
+        for item in raw_models:
+            if not isinstance(item, dict):
+                continue
+            model_id = str(item.get('id') or '').strip()
+            if not model_id:
+                continue
+            models.append({
+                'id': model_id,
+                'display_name': model_id,
+                'description': str(item.get('owned_by') or ''),
+            })
+    models.sort(key=lambda row: str(row.get('id') or '').lower())
+    return models
+
+
+def _resolve_socks5_from_settings(settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    socks = settings.get('gemini_socks5_full')
+    if isinstance(socks, dict):
+        return socks
+    socks = settings.get('gemini_socks5')
+    if isinstance(socks, dict):
+        return socks
+    return None
+
+
+def list_available_models(settings: Dict[str, Any], provider: Optional[str] = None) -> Dict[str, Any]:
+    provider_name = str(provider or settings.get('provider') or PROVIDER_GEMINI).strip().lower()
+    if provider_name == PROVIDER_GEMINI:
+        models = list_gemini_models(
+            api_key=str(settings.get('gemini_api_key') or ''),
+            base_url=str(settings.get('gemini_base_url') or ''),
+            socks5=_resolve_socks5_from_settings(settings),
+        )
+    elif provider_name == PROVIDER_DEEPSEEK:
+        models = list_deepseek_models(
+            api_key=str(settings.get('deepseek_api_key') or ''),
+            base_url=str(settings.get('deepseek_base_url') or ''),
+        )
+    else:
+        raise ValueError(f'不支持的 AI 提供商: {provider_name}')
+    return {
+        'success': True,
+        'provider': provider_name,
+        'models': models,
+        'count': len(models),
+    }
+
+
 def test_provider_connection(settings: Dict[str, Any], provider: Optional[str] = None) -> Dict[str, Any]:
     provider_name = str(provider or settings.get('provider') or PROVIDER_GEMINI).strip().lower()
     prompt = (
@@ -293,7 +440,7 @@ def test_provider_connection(settings: Dict[str, Any], provider: Optional[str] =
             max_output_tokens=64,
             response_schema=schema,
             base_url=str(settings.get('gemini_base_url') or ''),
-            socks5=settings.get('gemini_socks5') if isinstance(settings.get('gemini_socks5'), dict) else None,
+            socks5=_resolve_socks5_from_settings(settings),
             timeout=45,
             thinking_budget=0,
         )

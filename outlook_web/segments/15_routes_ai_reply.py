@@ -12,11 +12,12 @@ from outlook_web.ai.db import (
     list_rule_versions,
 )
 from outlook_web.ai.knowledge import parse_keywords
-from outlook_web.ai.llm import test_provider_connection
+from outlook_web.ai.llm import list_available_models, test_provider_connection
 from outlook_web.ai.rules import match_rules, parse_forbidden_phrases, preclassify
 from outlook_web.ai.service import analyze_email, refine_reply, translate_email_to_zh
 from outlook_web.ai.settings import (
     get_ai_reply_settings,
+    parse_socks5,
     public_ai_reply_settings,
     save_ai_reply_settings,
 )
@@ -92,6 +93,28 @@ def ai_admin_page():
     return render_template('ai_admin.html')
 
 
+def _apply_ai_settings_overrides(settings: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply temporary UI overrides for test / list-models without saving."""
+    if data.get('model'):
+        settings['model'] = str(data.get('model')).strip()
+    if data.get('gemini_api_key'):
+        settings['gemini_api_key'] = str(data.get('gemini_api_key')).strip()
+    if data.get('deepseek_api_key'):
+        settings['deepseek_api_key'] = str(data.get('deepseek_api_key')).strip()
+    if data.get('gemini_base_url') is not None:
+        settings['gemini_base_url'] = str(data.get('gemini_base_url') or '').strip()
+    if data.get('deepseek_base_url') is not None:
+        settings['deepseek_base_url'] = str(data.get('deepseek_base_url') or '').strip()
+    if isinstance(data.get('gemini_socks5'), dict):
+        socks = parse_socks5(data.get('gemini_socks5'))
+        current = settings.get('gemini_socks5_full') or {}
+        if not socks.get('password') and current.get('password'):
+            socks['password'] = current['password']
+        settings['gemini_socks5_full'] = socks
+        settings['gemini_socks5'] = socks
+    return settings
+
+
 @app.route('/api/ai/settings', methods=['GET'])
 @login_required
 def api_ai_settings_get():
@@ -127,27 +150,27 @@ def api_ai_settings_test():
     provider = str(data.get('provider') or settings.get('provider') or '').strip().lower()
     if provider and provider not in PROVIDERS:
         return jsonify({'success': False, 'error': '无效的提供商'}), 400
-    # Allow temporary overrides for testing without saving.
-    if data.get('model'):
-        settings['model'] = str(data.get('model')).strip()
-    if data.get('gemini_api_key'):
-        settings['gemini_api_key'] = str(data.get('gemini_api_key')).strip()
-    if data.get('deepseek_api_key'):
-        settings['deepseek_api_key'] = str(data.get('deepseek_api_key')).strip()
-    if data.get('gemini_base_url') is not None:
-        settings['gemini_base_url'] = str(data.get('gemini_base_url') or '').strip()
-    if data.get('deepseek_base_url') is not None:
-        settings['deepseek_base_url'] = str(data.get('deepseek_base_url') or '').strip()
-    if isinstance(data.get('gemini_socks5'), dict):
-        from outlook_web.ai.settings import parse_socks5
-        socks = parse_socks5(data.get('gemini_socks5'))
-        current = settings.get('gemini_socks5_full') or {}
-        if not socks.get('password') and current.get('password'):
-            socks['password'] = current['password']
-        settings['gemini_socks5_full'] = socks
-        settings['gemini_socks5'] = socks
+    _apply_ai_settings_overrides(settings, data)
     try:
         result = test_provider_connection(settings, provider=provider or None)
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+
+@app.route('/api/ai/settings/models', methods=['POST'])
+@login_required
+def api_ai_settings_models():
+    """List models available for the current (or overridden) provider credentials."""
+    _ensure_ai_tables()
+    data = request.get_json(silent=True) or {}
+    settings = _load_ai_settings()
+    provider = str(data.get('provider') or settings.get('provider') or '').strip().lower()
+    if provider and provider not in PROVIDERS:
+        return jsonify({'success': False, 'error': '无效的提供商'}), 400
+    _apply_ai_settings_overrides(settings, data)
+    try:
+        result = list_available_models(settings, provider=provider or None)
         return jsonify(result)
     except Exception as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400

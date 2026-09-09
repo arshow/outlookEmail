@@ -101,7 +101,7 @@
         await loadSettings();
     }
 
-    async function testSettings() {
+    function collectCredentialOverrides() {
         const payload = {
             provider: document.getElementById('aiProvider').value,
             model: document.getElementById('aiModel').value.trim(),
@@ -120,7 +120,77 @@
         const deepseekKey = document.getElementById('deepseekApiKey').value.trim();
         if (geminiKey) payload.gemini_api_key = geminiKey;
         if (deepseekKey) payload.deepseek_api_key = deepseekKey;
-        const data = await api('/api/ai/settings/test', { method: 'POST', body: JSON.stringify(payload) });
+        return payload;
+    }
+
+    function updateModelPresets(models) {
+        const datalist = document.getElementById('aiModelPresets');
+        if (!datalist) return;
+        datalist.innerHTML = '';
+        (models || []).forEach((model) => {
+            const option = document.createElement('option');
+            option.value = model.id || '';
+            if (model.display_name && model.display_name !== model.id) {
+                option.label = model.display_name;
+            }
+            datalist.appendChild(option);
+        });
+    }
+
+    function renderModelList(models, provider) {
+        const root = document.getElementById('aiModelList');
+        const hint = document.getElementById('aiModelListHint');
+        const current = document.getElementById('aiModel').value.trim();
+        root.innerHTML = '';
+        if (!models || !models.length) {
+            root.hidden = true;
+            hint.textContent = `当前提供商 ${provider || ''} 未返回可用模型`;
+            return;
+        }
+        root.hidden = false;
+        hint.textContent = `已读取 ${models.length} 个模型（${provider}），点击可填入`;
+        models.forEach((model) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'model-chip' + (model.id === current ? ' active' : '');
+            btn.textContent = model.id;
+            btn.title = model.display_name || model.id;
+            btn.addEventListener('click', () => {
+                document.getElementById('aiModel').value = model.id;
+                root.querySelectorAll('.model-chip').forEach((el) => el.classList.remove('active'));
+                btn.classList.add('active');
+                showToast(`已选择模型：${model.id}`);
+            });
+            root.appendChild(btn);
+        });
+        updateModelPresets(models);
+    }
+
+    async function fetchAvailableModels() {
+        const btn = document.getElementById('fetchModelsBtn');
+        const hint = document.getElementById('aiModelListHint');
+        const prevLabel = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '读取中…';
+        hint.textContent = '正在读取当前提供商可用模型…';
+        try {
+            const data = await api('/api/ai/settings/models', {
+                method: 'POST',
+                body: JSON.stringify(collectCredentialOverrides()),
+            });
+            renderModelList(data.models || [], data.provider || '');
+            showToast(`已读取 ${data.count || 0} 个模型`);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = prevLabel;
+        }
+    }
+
+    async function testSettings() {
+        const data = await api('/api/ai/settings/test', {
+            method: 'POST',
+            body: JSON.stringify(collectCredentialOverrides()),
+        });
         showToast(`连接成功：${data.provider} / ${data.model}`);
     }
 
@@ -279,6 +349,9 @@
         });
         document.getElementById('testSettingsBtn').addEventListener('click', () => {
             testSettings().catch((err) => showToast(err.message, true));
+        });
+        document.getElementById('fetchModelsBtn').addEventListener('click', () => {
+            fetchAvailableModels().catch((err) => showToast(err.message, true));
         });
         document.getElementById('clearGeminiKeyBtn').addEventListener('click', () => {
             saveSettings({ clear_gemini_api_key: true }).catch((err) => showToast(err.message, true));

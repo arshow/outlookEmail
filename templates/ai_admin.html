@@ -41,7 +41,10 @@
                 </label>
                 <label>
                     模型 ID
-                    <input type="text" id="aiModel" name="ai-model-id" list="aiModelPresets" placeholder="gemini-3.7-flash / deepseek-chat" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
+                    <div class="model-id-row">
+                        <input type="text" id="aiModel" name="ai-model-id" list="aiModelPresets" placeholder="gemini-3.7-flash / deepseek-chat" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
+                        <button class="btn" type="button" id="fetchModelsBtn">读取可用模型</button>
+                    </div>
                     <datalist id="aiModelPresets">
                         <option value="gemini-3.7-flash"></option>
                         <option value="gemini-2.5-flash"></option>
@@ -49,6 +52,8 @@
                         <option value="deepseek-chat"></option>
                         <option value="deepseek-reasoner"></option>
                     </datalist>
+                    <div class="model-list" id="aiModelList" hidden></div>
+                    <span class="hint" id="aiModelListHint"></span>
                 </label>
                 <label id="geminiKeyGroup">
                     Gemini API Key
