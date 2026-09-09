@@ -41,7 +41,7 @@
                 </label>
                 <label>
                     模型 ID
-                    <input type="text" id="aiModel" list="aiModelPresets" placeholder="gemini-3.7-flash / deepseek-chat">
+                    <input type="text" id="aiModel" name="ai-model-id" list="aiModelPresets" placeholder="gemini-3.7-flash / deepseek-chat" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
                     <datalist id="aiModelPresets">
                         <option value="gemini-3.7-flash"></option>
                         <option value="gemini-2.5-flash"></option>
@@ -52,21 +52,21 @@
                 </label>
                 <label id="geminiKeyGroup">
                     Gemini API Key
-                    <input type="password" id="geminiApiKey" placeholder="留空表示保留已有 Key" autocomplete="off">
+                    <input type="password" id="geminiApiKey" name="gemini-api-key" placeholder="留空表示保留已有 Key" autocomplete="new-password" data-1p-ignore data-lpignore="true" data-form-type="other">
                     <span class="hint" id="geminiKeyHint"></span>
                 </label>
                 <label id="deepseekKeyGroup">
                     DeepSeek API Key
-                    <input type="password" id="deepseekApiKey" placeholder="留空表示保留已有 Key" autocomplete="off">
+                    <input type="password" id="deepseekApiKey" name="deepseek-api-key" placeholder="留空表示保留已有 Key" autocomplete="new-password" data-1p-ignore data-lpignore="true" data-form-type="other">
                     <span class="hint" id="deepseekKeyHint"></span>
                 </label>
                 <label>
                     Gemini Base URL
-                    <input type="text" id="geminiBaseUrl" placeholder="https://generativelanguage.googleapis.com">
+                    <input type="text" id="geminiBaseUrl" name="gemini-base-url" placeholder="https://generativelanguage.googleapis.com" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
                 </label>
                 <label>
                     DeepSeek Base URL
-                    <input type="text" id="deepseekBaseUrl" placeholder="https://api.deepseek.com">
+                    <input type="text" id="deepseekBaseUrl" name="deepseek-base-url" placeholder="https://api.deepseek.com" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
                 </label>
                 <label class="full">
                     系统人设（可选）
@@ -78,19 +78,19 @@
                 </label>
                 <label>
                     SOCKS5 主机
-                    <input type="text" id="geminiSocksHost">
+                    <input type="text" id="geminiSocksHost" name="gemini-socks-host" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
                 </label>
                 <label>
                     SOCKS5 端口
-                    <input type="number" id="geminiSocksPort" min="1" max="65535">
+                    <input type="number" id="geminiSocksPort" name="gemini-socks-port" min="1" max="65535" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
                 </label>
                 <label>
                     SOCKS5 用户名
-                    <input type="text" id="geminiSocksUser">
+                    <input type="text" id="geminiSocksUser" name="gemini-socks-user" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
                 </label>
                 <label>
                     SOCKS5 密码
-                    <input type="password" id="geminiSocksPass" placeholder="留空表示保留已有密码" autocomplete="off">
+                    <input type="password" id="geminiSocksPass" name="gemini-socks-pass" placeholder="留空表示保留已有密码" autocomplete="new-password" data-1p-ignore data-lpignore="true" data-form-type="other">
                     <span class="hint" id="geminiSocksPassHint"></span>
                 </label>
             </div>
