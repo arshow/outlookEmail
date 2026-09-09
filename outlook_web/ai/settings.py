@@ -19,9 +19,11 @@ from outlook_web.ai.constants import (
     SETTING_ENABLED,
     SETTING_GEMINI_API_KEY,
     SETTING_GEMINI_BASE_URL,
+    SETTING_GEMINI_REMARK,
     SETTING_GEMINI_SOCKS5,
     SETTING_MODEL,
     SETTING_PROVIDER,
+    SETTING_DEEPSEEK_REMARK,
     SETTING_SYSTEM_PERSONA,
 )
 
@@ -100,6 +102,8 @@ def get_ai_reply_settings(
         'deepseek_api_key_configured': bool(deepseek_key),
         'gemini_api_key_masked': '********' if gemini_key else '',
         'deepseek_api_key_masked': '********' if deepseek_key else '',
+        'gemini_remark': str(get_setting(SETTING_GEMINI_REMARK, '') or ''),
+        'deepseek_remark': str(get_setting(SETTING_DEEPSEEK_REMARK, '') or ''),
         'gemini_socks5': public_socks,
         # Internal secrets for callers that need them (routes strip before JSON).
         'gemini_api_key': gemini_key,
@@ -128,6 +132,16 @@ def public_ai_reply_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
             'has_password': False,
         },
     }
+
+
+def admin_ai_reply_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Admin page only: include decrypted keys and provider remarks."""
+    payload = public_ai_reply_settings(settings)
+    payload['gemini_api_key'] = str(settings.get('gemini_api_key') or '')
+    payload['deepseek_api_key'] = str(settings.get('deepseek_api_key') or '')
+    payload['gemini_remark'] = str(settings.get('gemini_remark') or '')
+    payload['deepseek_remark'] = str(settings.get('deepseek_remark') or '')
+    return payload
 
 
 def resolve_runtime_credentials(settings: Dict[str, Any], provider: Optional[str] = None) -> Dict[str, Any]:
@@ -194,6 +208,14 @@ def save_ai_reply_settings(
     if 'system_persona' in data:
         if set_setting(SETTING_SYSTEM_PERSONA, str(data.get('system_persona') or '')):
             updated.append(SETTING_SYSTEM_PERSONA)
+
+    if 'gemini_remark' in data:
+        if set_setting(SETTING_GEMINI_REMARK, str(data.get('gemini_remark') or '')):
+            updated.append(SETTING_GEMINI_REMARK)
+
+    if 'deepseek_remark' in data:
+        if set_setting(SETTING_DEEPSEEK_REMARK, str(data.get('deepseek_remark') or '')):
+            updated.append(SETTING_DEEPSEEK_REMARK)
 
     if data.get('clear_gemini_api_key'):
         if set_setting_encrypted(SETTING_GEMINI_API_KEY, ''):

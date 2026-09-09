@@ -21,18 +21,61 @@ def _normalize_base_url(value: str, default: str) -> str:
     return text or default
 
 
+def re_search_location_unsupported(message: str) -> bool:
+    import re
+    return bool(re.search(r'user location is not supported', message or '', re.I))
+
+
+def _parse_gemini_retry_seconds(message: str) -> Optional[int]:
+    import re
+    match = re.search(r'retry in\s+([\d.]+)\s*s', message or '', re.I)
+    if not match:
+        return None
+    try:
+        return max(1, int(float(match.group(1))))
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_gemini_model_from_error(message: str) -> str:
+    import re
+    match = re.search(r'model:\s*([^\s,\]]+)', message or '', re.I)
+    return match.group(1).strip() if match else ''
+
+
 def _map_gemini_error(message: str) -> str:
-    if re_search_location_unsupported(message):
+    text = str(message or '').strip()
+    if not text:
+        return text
+    if re_search_location_unsupported(text):
         return (
             'Gemini 拒绝了当前请求出口地区（User location is not supported）。'
             '请在 /ai 管理页为 Gemini 启用位于可用地区的 SOCKS5 代理。'
         )
-    return message
 
-
-def re_search_location_unsupported(message: str) -> bool:
     import re
-    return bool(re.search(r'user location is not supported', message or '', re.I))
+    if re.search(r'high demand|experiencing high demand', text, re.I):
+        return (
+            '当前 Gemini 模型请求量过高（high demand），通常是临时拥堵，请稍后再试，'
+            '或改用 gemini-2.5-flash / gemini-2.0-flash 等较稳定模型。'
+        )
+
+    if re.search(r'exceeded your current quota|quota exceeded|rate limit', text, re.I):
+        model = _parse_gemini_model_from_error(text)
+        retry = _parse_gemini_retry_seconds(text)
+        limit_match = re.search(r'limit:\s*(\d+)', text, re.I)
+        limit = limit_match.group(1) if limit_match else ''
+        parts = ['Gemini API 配额或速率已达上限']
+        if model:
+            parts.append(f'（模型：{model}）')
+        if limit:
+            parts.append(f'，当前限额约 {limit} 次/分钟')
+        if retry:
+            parts.append(f'，建议 {retry} 秒后再试')
+        parts.append('。可在 Google AI Studio 查看用量，或切换到配额更宽松的模型（如 gemini-2.5-flash）。')
+        return ''.join(parts)
+
+    return text
 
 
 def socks5_proxy_url(socks5: Optional[Dict[str, Any]]) -> Optional[str]:

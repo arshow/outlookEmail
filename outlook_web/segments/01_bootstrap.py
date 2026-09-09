@@ -2205,6 +2205,14 @@ def init_db():
     ''')
     cursor.execute('''
         INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_gemini_remark', '')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_deepseek_remark', '')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
         VALUES ('ai_reply_gemini_base_url', 'https://generativelanguage.googleapis.com')
     ''')
     cursor.execute('''

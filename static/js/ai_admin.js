@@ -61,10 +61,12 @@
         document.getElementById('geminiBaseUrl').value = s.gemini_base_url || '';
         document.getElementById('deepseekBaseUrl').value = s.deepseek_base_url || '';
         document.getElementById('systemPersona').value = s.system_persona || '';
-        document.getElementById('geminiApiKey').value = '';
-        document.getElementById('deepseekApiKey').value = '';
-        document.getElementById('geminiKeyHint').textContent = s.gemini_api_key_configured ? '已配置（********）' : '未配置';
-        document.getElementById('deepseekKeyHint').textContent = s.deepseek_api_key_configured ? '已配置（********）' : '未配置';
+        document.getElementById('geminiApiKey').value = s.gemini_api_key || '';
+        document.getElementById('deepseekApiKey').value = s.deepseek_api_key || '';
+        document.getElementById('geminiRemark').value = s.gemini_remark || '';
+        document.getElementById('deepseekRemark').value = s.deepseek_remark || '';
+        document.getElementById('geminiKeyHint').textContent = s.gemini_api_key ? '已配置' : '未配置';
+        document.getElementById('deepseekKeyHint').textContent = s.deepseek_api_key ? '已配置' : '未配置';
         const socks = s.gemini_socks5 || {};
         document.getElementById('geminiSocksEnabled').checked = !!socks.enabled;
         document.getElementById('geminiSocksHost').value = socks.hostname || '';
@@ -82,6 +84,8 @@
             gemini_base_url: document.getElementById('geminiBaseUrl').value.trim(),
             deepseek_base_url: document.getElementById('deepseekBaseUrl').value.trim(),
             system_persona: document.getElementById('systemPersona').value,
+            gemini_remark: document.getElementById('geminiRemark').value.trim(),
+            deepseek_remark: document.getElementById('deepseekRemark').value.trim(),
             gemini_socks5: {
                 enabled: document.getElementById('geminiSocksEnabled').checked,
                 hostname: document.getElementById('geminiSocksHost').value.trim(),

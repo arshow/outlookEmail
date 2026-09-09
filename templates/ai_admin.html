@@ -42,10 +42,11 @@
                 <label>
                     模型 ID
                     <div class="model-id-row">
-                        <input type="text" id="aiModel" name="ai-model-id" list="aiModelPresets" placeholder="gemini-3.7-flash / deepseek-chat" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
+                        <input type="text" id="aiModel" name="ai-model-id" list="aiModelPresets" placeholder="gemini-3.8-flash / gemini-2.5-flash" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
                         <button class="btn" type="button" id="fetchModelsBtn">读取可用模型</button>
                     </div>
                     <datalist id="aiModelPresets">
+                        <option value="gemini-3.8-flash"></option>
                         <option value="gemini-3.7-flash"></option>
                         <option value="gemini-2.5-flash"></option>
                         <option value="gemini-2.0-flash"></option>
@@ -57,13 +58,17 @@
                 </label>
                 <label id="geminiKeyGroup">
                     Gemini API Key
-                    <input type="password" id="geminiApiKey" name="gemini-api-key" placeholder="留空表示保留已有 Key" autocomplete="new-password" data-1p-ignore data-lpignore="true" data-form-type="other">
+                    <input type="text" id="geminiApiKey" name="gemini-api-key" placeholder="留空表示保留已有 Key" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
                     <span class="hint" id="geminiKeyHint"></span>
+                    <span>备注</span>
+                    <input type="text" id="geminiRemark" name="gemini-remark" placeholder="例如：主 Key / gemini-3.8-flash" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
                 </label>
                 <label id="deepseekKeyGroup">
                     DeepSeek API Key
-                    <input type="password" id="deepseekApiKey" name="deepseek-api-key" placeholder="留空表示保留已有 Key" autocomplete="new-password" data-1p-ignore data-lpignore="true" data-form-type="other">
+                    <input type="text" id="deepseekApiKey" name="deepseek-api-key" placeholder="留空表示保留已有 Key" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
                     <span class="hint" id="deepseekKeyHint"></span>
+                    <span>备注</span>
+                    <input type="text" id="deepseekRemark" name="deepseek-remark" placeholder="例如：备用 Key / deepseek-chat" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
                 </label>
                 <label>
                     Gemini Base URL

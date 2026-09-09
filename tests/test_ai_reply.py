@@ -43,6 +43,8 @@ class AiReplyTestCase(unittest.TestCase):
                 'ai_reply_model',
                 'ai_reply_gemini_api_key',
                 'ai_reply_deepseek_api_key',
+                'ai_reply_gemini_remark',
+                'ai_reply_deepseek_remark',
                 'ai_reply_gemini_base_url',
                 'ai_reply_deepseek_base_url',
                 'ai_reply_gemini_socks5',
@@ -78,8 +80,8 @@ class AiReplyTestCase(unittest.TestCase):
         self.assertEqual(settings['provider'], 'deepseek')
         self.assertTrue(settings['deepseek_api_key_configured'])
         self.assertTrue(settings['gemini_api_key_configured'])
-        self.assertEqual(settings['deepseek_api_key_masked'], '********')
-        self.assertNotIn('deepseek_api_key', settings)
+        self.assertEqual(settings['deepseek_api_key'], 'ds-secret')
+        self.assertEqual(settings['gemini_api_key'], 'gm-secret')
 
         with self.app.app_context():
             raw = web_outlook_app.get_setting('ai_reply_deepseek_api_key')
@@ -98,6 +100,14 @@ class AiReplyTestCase(unittest.TestCase):
         self.assertTrue(clear.get_json()['success'])
         with self.app.app_context():
             self.assertEqual(web_outlook_app.get_setting_decrypted('ai_reply_deepseek_api_key'), '')
+
+        remarks = self.client.put('/api/ai/settings', json={
+            'gemini_remark': '主 Key / gemini-3.8-flash',
+            'deepseek_remark': '备用',
+        })
+        remark_settings = remarks.get_json()['settings']
+        self.assertEqual(remark_settings['gemini_remark'], '主 Key / gemini-3.8-flash')
+        self.assertEqual(remark_settings['deepseek_remark'], '备用')
 
     def test_list_available_models_endpoint(self):
         self.client.put('/api/ai/settings', json={
@@ -126,6 +136,25 @@ class AiReplyTestCase(unittest.TestCase):
         missing_payload = missing.get_json()
         self.assertFalse(missing_payload['success'])
         self.assertIn('DeepSeek API Key', missing_payload.get('error') or '')
+
+    def test_map_gemini_error_messages(self):
+        from outlook_web.ai.llm import _map_gemini_error
+
+        high_demand = _map_gemini_error(
+            'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.'
+        )
+        self.assertIn('请求量过高', high_demand)
+        self.assertIn('gemini-2.5-flash', high_demand)
+
+        quota = _map_gemini_error(
+            'You exceeded your current quota, please check your plan and billing details. '
+            'Metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, Limit: 20, '
+            'Model: gemini-3.7-flash. Please retry in 58.454115043s.'
+        )
+        self.assertIn('配额', quota)
+        self.assertIn('gemini-3.7-flash', quota)
+        self.assertIn('58 秒', quota)
+        self.assertIn('20', quota)
 
     def test_list_gemini_and_deepseek_model_parsers(self):
         from outlook_web.ai import llm as ai_llm

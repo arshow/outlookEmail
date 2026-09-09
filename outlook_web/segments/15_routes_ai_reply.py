@@ -16,6 +16,7 @@ from outlook_web.ai.llm import list_available_models, test_provider_connection
 from outlook_web.ai.rules import match_rules, parse_forbidden_phrases, preclassify
 from outlook_web.ai.service import analyze_email, refine_reply, translate_email_to_zh
 from outlook_web.ai.settings import (
+    admin_ai_reply_settings,
     get_ai_reply_settings,
     parse_socks5,
     public_ai_reply_settings,
@@ -119,7 +120,7 @@ def _apply_ai_settings_overrides(settings: Dict[str, Any], data: Dict[str, Any])
 @login_required
 def api_ai_settings_get():
     _ensure_ai_tables()
-    settings = public_ai_reply_settings(_load_ai_settings())
+    settings = admin_ai_reply_settings(_load_ai_settings())
     return jsonify({'success': True, 'settings': settings})
 
 
@@ -138,7 +139,7 @@ def api_ai_settings_put():
         )
     except ValueError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
-    return jsonify({'success': True, 'settings': public_ai_reply_settings(settings)})
+    return jsonify({'success': True, 'settings': admin_ai_reply_settings(settings)})
 
 
 @app.route('/api/ai/settings/test', methods=['POST'])
