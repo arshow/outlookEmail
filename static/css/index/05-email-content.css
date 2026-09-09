@@ -570,6 +570,21 @@
             outline: none;
         }
 
+        .compose-editor img,
+        .compose-editor svg,
+        .compose-editor video {
+            max-width: 100%;
+            max-height: 160px;
+            height: auto !important;
+            width: auto !important;
+            object-fit: contain;
+        }
+
+        .compose-editor table {
+            max-width: 100%;
+            height: auto !important;
+        }
+
         @media (max-width: 960px) {
             .compose-modal-body {
                 flex-direction: column;

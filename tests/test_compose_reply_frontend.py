@@ -16,6 +16,15 @@ class ComposeReplyFrontendTests(unittest.TestCase):
         self.assertIn("if (mode !== 'reply' && mode !== 'reply_all') return", source)
         self.assertIn("select.addEventListener('change', onComposeFromEmailChange)", source)
 
+    def test_quoted_html_is_sanitized_and_cleared_on_close(self):
+        source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
+
+        self.assertIn('function sanitizeComposeQuotedHtml', source)
+        self.assertIn("FORBID_TAGS: [", source)
+        self.assertIn("sanitizeComposeQuotedHtml(typeof rawBody === 'string' ? rawBody : '')", source)
+        self.assertIn('resetComposeForm();', source)
+        self.assertIn('引用里的 <style> 会漏到整页', source)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -614,13 +614,19 @@ def api_ai_translate_email():
     """Translate inbound email subject/body using configured /ai provider."""
     _ensure_ai_tables()
     data = request.get_json(silent=True) or {}
+    from outlook_web.ai.context import format_attachment_note, strip_embedded_media
+
     text = str(data.get('text') or '')
-    html = str(data.get('html') or '')
+    html = strip_embedded_media(data.get('html') or '')
     subject = str(data.get('subject') or '')
 
-    plain_body = text.strip()
+    plain_body = strip_embedded_media(text).strip()
     if not plain_body and html:
         plain_body = html_to_plain_text(html).strip()
+        plain_body = strip_embedded_media(plain_body).strip()
+    attachment_note = format_attachment_note(data.get('attachments'))
+    if attachment_note and attachment_note not in plain_body:
+        plain_body = f'{plain_body}\n\n{attachment_note}'.strip()
     if not plain_body and not subject.strip():
         return jsonify({'success': False, 'error': 'text 与 html 至少提供一项有效正文'}), 400
 

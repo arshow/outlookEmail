@@ -3558,14 +3558,27 @@
             updateTranslateEmailButtonLabel();
         }
 
+        function stripEmbeddedMediaForTranslate(value) {
+            return String(value || '')
+                .replace(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi, '[图片]')
+                .replace(/<img\b[^>]*>/gi, '[图片]')
+                .replace(/[A-Za-z0-9+/]{400,}={0,2}/g, '[附件内容已省略]');
+        }
+
         function buildEmailTranslateRequestPayload() {
-            const body = String(currentEmailDetail?.body || '');
+            const body = stripEmbeddedMediaForTranslate(currentEmailDetail?.body || '');
             const isHtml = currentEmailDetail?.body_type === 'html'
                 || (body && (body.includes('<html') || body.includes('<div') || body.includes('<p>')));
+            const attachments = Array.isArray(currentEmailDetail?.attachments)
+                ? currentEmailDetail.attachments
+                    .map(item => String(item?.name || item?.filename || '').trim())
+                    .filter(Boolean)
+                : [];
             return {
                 subject: String(currentEmailDetail?.subject || '').trim(),
                 html: isHtml ? body : '',
                 text: isHtml ? '' : body,
+                attachments,
                 source_lang: 'en',
             };
         }

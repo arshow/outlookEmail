@@ -14,7 +14,7 @@ from outlook_web.ai.constants import (
     REFINED_REPLY_SCHEMA,
     REFINE_MODES,
 )
-from outlook_web.ai.context import build_analysis_context, context_haystack
+from outlook_web.ai.context import build_analysis_context, context_haystack, strip_embedded_media
 from outlook_web.ai.db import get_knowledge_revision, list_knowledge_entries, list_published_rules
 from outlook_web.ai.knowledge import match_knowledge_entries
 from outlook_web.ai.llm import call_structured_model
@@ -107,7 +107,7 @@ def translate_email_to_zh(
         raise ValueError('AI 智能回复未启用，请先在 /ai 配置并开启')
 
     subject_text = str(subject or '').strip()
-    body_text = str(body or '').strip()
+    body_text = strip_embedded_media(body).strip()
     if subject_text in {'无主题', '(无主题)', 'No Subject', 'no subject'}:
         subject_text = ''
     if not subject_text and not body_text:

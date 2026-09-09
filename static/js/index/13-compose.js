@@ -268,6 +268,30 @@
             }
         }
 
+        function sanitizeComposeQuotedHtml(html) {
+            let text = String(html || '');
+            text = text.replace(/<style[\s\S]*?<\/style>/gi, '');
+            text = text.replace(/<script[\s\S]*?<\/script>/gi, '');
+            text = text.replace(/<link\b[^>]*>/gi, '');
+            text = text.replace(/<meta\b[^>]*>/gi, '');
+            text = text.replace(/<img\b[^>]*>/gi, '[图片]');
+            text = text.replace(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi, '[图片]');
+            if (typeof DOMPurify !== 'undefined' && DOMPurify.sanitize) {
+                text = DOMPurify.sanitize(text, {
+                    USE_PROFILES: { html: true },
+                    FORBID_TAGS: [
+                        'style', 'script', 'link', 'meta', 'iframe', 'object',
+                        'embed', 'form', 'svg', 'video', 'audio', 'base', 'img',
+                    ],
+                    FORBID_ATTR: ['style', 'background', 'height', 'width'],
+                });
+            }
+            if (text.length > 50000) {
+                text = `${text.slice(0, 50000)}…`;
+            }
+            return text;
+        }
+
         function buildQuotedHtml(detail, language = 'zh') {
             const lang = normalizeComposeQuoteLanguage(language);
             const from = escapeHtml(detail?.from || '');
@@ -278,7 +302,7 @@
                 lang
             ));
             const rawBody = detail?.body?.content || detail?.body || detail?.body_preview || '';
-            const body = typeof rawBody === 'string' ? rawBody : '';
+            const body = sanitizeComposeQuotedHtml(typeof rawBody === 'string' ? rawBody : '');
 
             if (lang === 'en') {
                 return (
@@ -391,6 +415,8 @@
             }
             setComposeSendStatus('');
             setModalVisible('composeEmailModal', false);
+            // 引用里的 <style> 会漏到整页；关掉弹窗必须清掉，否则主界面继续变形。
+            resetComposeForm();
         }
 
         function resetComposeForm() {

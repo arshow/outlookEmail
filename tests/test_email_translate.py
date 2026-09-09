@@ -98,6 +98,17 @@ class TranslateMyMemoryTests(unittest.TestCase):
         self.assertEqual(fields['subject'], 'Subject')
         self.assertEqual(fields['body'], 'Hello')
 
+    def test_prepare_fields_strips_inline_image_payload(self):
+        blob = 'B' * 500
+        fields = prepare_translate_fields(
+            text='',
+            html=f'<p>Order photo below</p><img src="data:image/png;base64,{blob}">',
+            subject='Order',
+            html_to_plain=web_outlook_app.html_to_plain_text,
+        )
+        self.assertIn('Order photo below', fields['body'])
+        self.assertNotIn(blob[:40], fields['body'])
+
     def test_translate_to_zh_joins_chunks(self):
         session = MagicMock()
         responses = []

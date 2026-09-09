@@ -222,9 +222,12 @@ def prepare_translate_fields(
     html_to_plain,
 ) -> Dict[str, str]:
     """Normalize request fields into plain subject/body."""
-    plain_body = str(text or '').strip()
+    from outlook_web.ai.context import strip_embedded_media
+
+    plain_body = strip_embedded_media(text).strip()
     if not plain_body and html:
-        plain_body = str(html_to_plain(html) or '').strip()
+        plain_body = str(html_to_plain(strip_embedded_media(html)) or '').strip()
+        plain_body = strip_embedded_media(plain_body).strip()
     subject_text = str(subject or '').strip()
 
     if not plain_body and not subject_text:

@@ -139,5 +139,32 @@ class GeminiResponseParsingTests(unittest.TestCase):
         self.assertNotIn('thinkingBudget', config['thinkingConfig'])
 
 
+class EmbeddedMediaSanitizeTests(unittest.TestCase):
+    def test_strips_inline_image_and_keeps_visible_text(self):
+        from outlook_web.ai.context import html_to_text, normalize_email_detail, strip_embedded_media
+
+        blob = 'A' * 500
+        html = (
+            '<p>Bonjour merci pour votre réponse</p>'
+            f'<img src="data:image/jpeg;base64,{blob}" alt="order">'
+        )
+        cleaned = strip_embedded_media(html)
+        self.assertIn('Bonjour', cleaned)
+        self.assertIn('[图片]', cleaned)
+        self.assertNotIn(blob[:40], cleaned)
+        self.assertNotIn(blob[:40], html_to_text(html))
+
+        detail = normalize_email_detail({
+            'subject': 'Re: coffee',
+            'from': 'ana@example.com',
+            'body': html,
+            'body_type': 'html',
+            'attachments': [{'name': 'order.jpg'}],
+        })
+        self.assertIn('Bonjour', detail['body_text'])
+        self.assertIn('[附件: order.jpg]', detail['body_text'])
+        self.assertNotIn(blob[:40], detail['body_text'])
+
+
 if __name__ == '__main__':
     unittest.main()

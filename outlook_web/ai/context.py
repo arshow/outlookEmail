@@ -15,6 +15,37 @@ from outlook_web.ai.constants import (
 
 EMAIL_RE = re.compile(r'[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}', re.I)
 TAG_RE = re.compile(r'<[^>]+>')
+DATA_IMAGE_RE = re.compile(r'(?is)data:image/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+')
+IMG_TAG_RE = re.compile(r'(?is)<img\b[^>]*>')
+BASE64_BLOB_RE = re.compile(r'(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{400,}={0,2}')
+
+
+def strip_embedded_media(value: Any) -> str:
+    """Drop inline images / base64 blobs so AI sees the real email text."""
+    text = str(value or '')
+    if not text:
+        return ''
+    text = DATA_IMAGE_RE.sub('[图片]', text)
+    text = IMG_TAG_RE.sub('[图片]', text)
+    text = BASE64_BLOB_RE.sub('[附件内容已省略]', text)
+    return text
+
+
+def format_attachment_note(attachments: Any) -> str:
+    names: List[str] = []
+    if isinstance(attachments, list):
+        for item in attachments:
+            if isinstance(item, dict):
+                name = str(item.get('name') or item.get('filename') or '').strip()
+            else:
+                name = str(item or '').strip()
+            if name and name not in names:
+                names.append(name)
+            if len(names) >= 10:
+                break
+    if not names:
+        return ''
+    return f'[附件: {", ".join(names)}]'
 
 
 def extract_email_address(value: Any) -> str:
@@ -40,7 +71,7 @@ def extract_email_address(value: Any) -> str:
 
 
 def html_to_text(value: Any) -> str:
-    text = str(value or '')
+    text = strip_embedded_media(value)
     text = re.sub(r'(?i)<br\s*/?>', '\n', text)
     text = re.sub(r'(?i)</p>', '\n', text)
     text = TAG_RE.sub('', text)
@@ -62,7 +93,10 @@ def normalize_email_detail(detail: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(body, dict):
         body_type = str(body.get('contentType') or body_type).lower()
         body = body.get('content') or ''
-    body_text = html_to_text(body) if 'html' in body_type else str(body or '')
+    body_text = html_to_text(body) if 'html' in body_type else strip_embedded_media(body)
+    attachment_note = format_attachment_note(detail.get('attachments'))
+    if attachment_note:
+        body_text = f'{body_text}\n\n{attachment_note}'.strip()
     sender = extract_email_address(detail.get('from') or detail.get('sender'))
     return {
         'id': str(detail.get('id') or detail.get('provider_message_id') or ''),
