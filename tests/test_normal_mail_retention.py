@@ -1730,6 +1730,66 @@ class NormalMailRetentionTests(unittest.TestCase):
         self.assertIsNotNone(row['updated_at'])
         self.assertEqual(json.loads(row['attachments_json']), attachments)
 
+    def test_get_email_detail_fetches_attachments_for_inline_cid_when_has_attachments_false(self):
+        graph_detail = {
+            'id': 'graph-inline-1',
+            'subject': 'Re: Wrong address',
+            'from': {'emailAddress': {'address': 'princeaandp@aol.co.uk'}},
+            'toRecipients': [{'emailAddress': {'address': 'mansetgesing@hotmail.com'}}],
+            'ccRecipients': [],
+            'receivedDateTime': '2026-09-09T21:19:51Z',
+            'hasAttachments': False,
+            'body': {
+                'contentType': 'html',
+                'content': '<img src="cid:a8902e46-daa3-4462-bbac-0987787c61f3" alt="IMG_3496.png">',
+            },
+        }
+        attachments = [{
+            'id': 'att-inline-1',
+            'name': 'IMG_3496.png',
+            'content_type': 'image/png',
+            'size': 708199,
+            'is_inline': True,
+            'content_id': 'a8902e46-daa3-4462-bbac-0987787c61f3',
+        }]
+        with self.app.app_context():
+            self.assertTrue(web_outlook_app.set_setting(
+                'normal_mail_local_retention_enabled',
+                'true',
+            ))
+
+        with patch.object(
+            web_outlook_app,
+            'get_email_detail_graph_result',
+            return_value={'success': True, 'detail': graph_detail},
+        ) as detail_mock, \
+             patch.object(web_outlook_app, 'get_email_attachments_graph', return_value=attachments) as attachments_mock:
+            response = self.client.get(
+                '/api/email/retained@example.com/graph-inline-1?method=graph&folder=inbox&id_mode=graph'
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        detail_mock.assert_called_once()
+        attachments_mock.assert_called_once()
+        self.assertTrue(payload['email']['has_attachments'])
+        self.assertEqual(payload['email']['attachments'][0]['content_id'], 'a8902e46-daa3-4462-bbac-0987787c61f3')
+        self.assertIn('/attachments/att-inline-1?', payload['email']['body'])
+        self.assertNotIn('cid:', payload['email']['body'])
+
+        rows = [
+            row for row in self._retained_detail_rows()
+            if row['provider_message_id'] == 'graph-inline-1'
+        ]
+        self.assertGreaterEqual(len(rows), 1)
+        self.assertTrue(any(row['has_attachments'] == 1 for row in rows))
+        self.assertTrue(any(
+            json.loads(row['attachments_json'] or '[]')
+            and json.loads(row['attachments_json'])[0]['name'] == 'IMG_3496.png'
+            for row in rows
+        ))
+
     def test_get_email_detail_disabled_retention_returns_detail_without_caching_body(self):
         self._seed_graph_detail_retained_row()
         graph_detail = self._graph_detail_payload()

@@ -3588,7 +3588,10 @@ def fetch_graph_detail_response(account: Dict[str, Any], folder: str,
 
     detail = detail_result.get('detail') or {}
     attachments = []
-    if detail.get('hasAttachments'):
+    body_content = str(((detail.get('body') or {}) if isinstance(detail.get('body'), dict) else {}).get('content') or '')
+    # Graph 对纯内联图片常返回 hasAttachments=false，但仍需拉取 /attachments 才能解析 cid:
+    should_fetch_attachments = bool(detail.get('hasAttachments')) or ('cid:' in body_content.lower())
+    if should_fetch_attachments:
         attachments = get_email_attachments_graph(
             account['client_id'], account['refresh_token'], message_id, proxy_url, fallback_proxy_urls
         ) or []
