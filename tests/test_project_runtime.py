@@ -1876,6 +1876,13 @@ class ProjectRuntimeTests(unittest.TestCase):
                         'contentType': 'application/pdf',
                         'size': 15178,
                         'isInline': False,
+                    }, {
+                        'id': 'graph-attachment-2',
+                        'name': 'IMG_3496.png',
+                        'contentType': 'image/png',
+                        'size': 2048,
+                        'isInline': True,
+                        'contentId': 'pic001@aol',
                     }]
                 }
 
@@ -1888,8 +1895,11 @@ class ProjectRuntimeTests(unittest.TestCase):
             )
 
         params = request_mock.call_args.kwargs['params']
-        self.assertEqual(params['$select'], 'id,name,contentType,size,isInline')
-        self.assertNotIn('contentId', params['$select'])
+        self.assertEqual(
+            params['$select'],
+            'id,name,contentType,size,isInline,microsoft.graph.fileAttachment/contentId',
+        )
+        self.assertIn('microsoft.graph.fileAttachment/contentId', params['$select'])
         self.assertEqual(attachments, [{
             'id': 'graph-attachment-1',
             'name': 'Invoice-103975.pdf',
@@ -1897,6 +1907,13 @@ class ProjectRuntimeTests(unittest.TestCase):
             'size': 15178,
             'is_inline': False,
             'content_id': '',
+        }, {
+            'id': 'graph-attachment-2',
+            'name': 'IMG_3496.png',
+            'content_type': 'image/png',
+            'size': 2048,
+            'is_inline': True,
+            'content_id': 'pic001@aol',
         }])
 
     def test_graph_detail_preserves_has_attachments_when_metadata_is_empty(self):

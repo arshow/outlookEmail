@@ -3686,10 +3686,14 @@ def parse_retained_mail_attachments(raw_attachments: Any) -> List[Dict[str, Any]
 def retained_detail_has_incomplete_attachment_metadata(retained_detail: Dict[str, Any]) -> bool:
     email = (retained_detail or {}).get('email') or {}
     attachments = email.get('attachments')
-    return (
-        bool(email.get('has_attachments'))
-        and not (isinstance(attachments, list) and len(attachments) > 0)
-    )
+    if bool(email.get('has_attachments')) and not (isinstance(attachments, list) and len(attachments) > 0):
+        return True
+
+    body = str(email.get('body') or '')
+    if 'cid:' in body.lower() and (not isinstance(attachments, list) or len(attachments) == 0):
+        # 正文引用了内联图片，但本地没有附件元数据，需要回源补齐
+        return True
+    return False
 
 
 def retained_mail_row_to_detail_response(row) -> Dict[str, Any]:
@@ -5452,6 +5456,16 @@ def api_get_email_detail(email_addr, message_id):
         id_mode,
         prefer_local=is_prefer_local_detail_request(),
     )
+    if result.get('success') and isinstance(result.get('email'), dict):
+        prepared = dict(result)
+        prepared['email'] = prepare_email_detail_inline_images(
+            result.get('email'),
+            email_addr,
+            method=method,
+            folder=folder,
+            id_mode=id_mode,
+        )
+        return jsonify(prepared)
     return jsonify(result)
 
 
@@ -5733,5 +5747,9 @@ def api_download_email_attachment(email_addr, message_id, attachment_id):
     encoded_filename = quote(filename)
     content_type = result.get('content_type', 'application/octet-stream') or 'application/octet-stream'
     response = Response(result.get('content', b''), mimetype=content_type)
-    response.headers['Content-Disposition'] = f"attachment; filename*=UTF-8''{encoded_filename}"
+    inline = str(request.args.get('inline') or '').strip().lower() in {'1', 'true', 'yes'}
+    disposition = 'inline' if inline else 'attachment'
+    response.headers['Content-Disposition'] = f"{disposition}; filename*=UTF-8''{encoded_filename}"
+    if inline:
+        response.headers['Cache-Control'] = 'private, max-age=300'
     return response

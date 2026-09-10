@@ -3833,6 +3833,84 @@ class MultiChannelForwardingTests(unittest.TestCase):
         self.assertEqual(attachments[0]['content_type'], 'text/plain')
         self.assertEqual(attachments[0]['content'], b'hello attachment')
 
+    def test_extract_message_attachments_includes_cid_only_inline_image(self):
+        raw = (
+            b'From: sender@example.com\r\n'
+            b'To: user@example.com\r\n'
+            b'Subject: Inline image\r\n'
+            b'MIME-Version: 1.0\r\n'
+            b'Content-Type: multipart/related; boundary="bound"\r\n'
+            b'\r\n'
+            b'--bound\r\n'
+            b'Content-Type: text/html; charset="utf-8"\r\n'
+            b'\r\n'
+            b'<img src="cid:pic001@aol" alt="IMG_3496.png">\r\n'
+            b'--bound\r\n'
+            b'Content-Type: image/png; name="IMG_3496.png"\r\n'
+            b'Content-Transfer-Encoding: base64\r\n'
+            b'Content-ID: <pic001@aol>\r\n'
+            b'\r\n'
+            b'aGVsbG8=\r\n'
+            b'--bound--\r\n'
+        )
+        parsed = web_outlook_app.email.message_from_bytes(raw)
+        attachments = web_outlook_app.extract_message_attachments(parsed, include_content=True)
+
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0]['name'], 'IMG_3496.png')
+        self.assertEqual(attachments[0]['content_type'], 'image/png')
+        self.assertTrue(attachments[0]['is_inline'])
+        self.assertEqual(attachments[0]['content_id'], 'pic001@aol')
+        self.assertEqual(attachments[0]['content'], b'hello')
+
+    def test_rewrite_html_cid_images_maps_content_id_to_url(self):
+        html = '<p><img src="cid:pic001@aol" alt="IMG_3496.png"></p>'
+        attachments = [{
+            'id': 'attachment-1',
+            'name': 'IMG_3496.png',
+            'content_type': 'image/png',
+            'is_inline': True,
+            'content_id': 'pic001@aol',
+        }]
+        rewritten = web_outlook_app.rewrite_html_cid_images(
+            html,
+            attachments,
+            lambda attachment: f'/api/email/user%40example.com/msg-1/attachments/{attachment["id"]}?inline=1',
+        )
+        self.assertIn(
+            'src="/api/email/user%40example.com/msg-1/attachments/attachment-1?inline=1"',
+            rewritten,
+        )
+        self.assertNotIn('cid:', rewritten)
+
+    def test_prepare_email_detail_inline_images_rewrites_body(self):
+        detail = {
+            'id': 'msg-1',
+            'body_type': 'html',
+            'body': '<div><img src="cid:abc123" alt="photo.png"></div>',
+            'attachments': [{
+                'id': 'att-9',
+                'name': 'photo.png',
+                'content_type': 'image/png',
+                'is_inline': True,
+                'content_id': 'abc123',
+            }],
+            'folder': 'inbox',
+            'id_mode': 'uid',
+        }
+        prepared = web_outlook_app.prepare_email_detail_inline_images(
+            detail,
+            'reader@example.com',
+            method='imap',
+            folder='inbox',
+            id_mode='uid',
+        )
+        self.assertIn('inline=1', prepared['body'])
+        self.assertIn('/attachments/att-9?', prepared['body'])
+        self.assertNotIn('cid:', prepared['body'])
+        # 不修改入参
+        self.assertIn('cid:', detail['body'])
+
 class MailFetchErrorPayloadTests(unittest.TestCase):
     def test_proxy_failure_is_classified_with_actionable_reason(self):
         error = web_outlook_app.requests.exceptions.ProxyError(

@@ -995,8 +995,9 @@ def get_email_attachments_graph(client_id: str, refresh_token: str, message_id: 
         headers = {
             "Authorization": f"Bearer {access_token}",
         }
+        # contentId 属于 fileAttachment 派生类型，需用类型限定名才能 $select
         params = {
-            "$select": "id,name,contentType,size,isInline"
+            "$select": "id,name,contentType,size,isInline,microsoft.graph.fileAttachment/contentId"
         }
 
         res = get_with_proxy_fallback(
@@ -1669,29 +1670,200 @@ def extract_message_attachments(msg, include_content: bool = False) -> List[Dict
             continue
 
         disposition = str(part.get('Content-Disposition', '') or '').lower()
-        filename = part.get_filename()
+        filename = part.get_filename() or part.get_param('name') or ''
         has_filename = bool(filename)
+        content_id = str(part.get('Content-ID', '') or '').strip().strip('<>').strip()
+        content_type = (part.get_content_type() or 'application/octet-stream').lower()
         is_attachment = 'attachment' in disposition
         is_inline = 'inline' in disposition
+        is_image = content_type.startswith('image/')
 
-        if not (is_attachment or is_inline or has_filename):
+        # 内联图片常只有 Content-ID，没有 attachment/inline disposition
+        if not (is_attachment or is_inline or has_filename or content_id):
             continue
+        if content_id and not (is_attachment or is_inline or has_filename or is_image):
+            # 跳过纯正文相关的非图片 CID 部件（如 multipart 相关标记）
+            if content_type.startswith('text/'):
+                continue
 
         attachment_number += 1
         payload = part.get_payload(decode=True) or b''
         item = {
             'id': f'attachment-{attachment_number}',
             'name': sanitize_attachment_filename(filename or '', f'attachment-{attachment_number}'),
-            'content_type': (part.get_content_type() or 'application/octet-stream').lower(),
+            'content_type': content_type,
             'size': len(payload),
-            'is_inline': bool(is_inline and not is_attachment),
-            'content_id': str(part.get('Content-ID', '') or '').strip('<>'),
+            'is_inline': bool((is_inline or bool(content_id)) and not is_attachment),
+            'content_id': content_id,
         }
         if include_content:
             item['content'] = payload
         attachments.append(item)
 
     return attachments
+
+
+def normalize_email_content_id(value: Any) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    try:
+        text = unquote(text)
+    except Exception:
+        pass
+    return text.strip().strip('<>').strip().lower()
+
+
+def build_attachment_cid_indexes(attachments: Optional[List[Dict[str, Any]]]):
+    by_cid: Dict[str, Dict[str, Any]] = {}
+    by_name: Dict[str, Dict[str, Any]] = {}
+    image_attachments: List[Dict[str, Any]] = []
+    for item in attachments or []:
+        if not isinstance(item, dict) or not item.get('id'):
+            continue
+        cid = normalize_email_content_id(item.get('content_id') or item.get('contentId') or '')
+        if cid and cid not in by_cid:
+            by_cid[cid] = item
+        name = str(item.get('name') or '').strip().lower()
+        if name and name not in by_name:
+            by_name[name] = item
+        content_type = str(item.get('content_type') or item.get('contentType') or '').lower()
+        if content_type.startswith('image/') or bool(item.get('is_inline') or item.get('isInline')):
+            image_attachments.append(item)
+    return by_cid, by_name, image_attachments
+
+
+def resolve_cid_attachment(
+    cid_value: Any,
+    attachments: Optional[List[Dict[str, Any]]] = None,
+    by_cid: Optional[Dict[str, Dict[str, Any]]] = None,
+    by_name: Optional[Dict[str, Dict[str, Any]]] = None,
+    image_attachments: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    if by_cid is None or by_name is None or image_attachments is None:
+        by_cid, by_name, image_attachments = build_attachment_cid_indexes(attachments)
+
+    cid = normalize_email_content_id(cid_value)
+    if not cid:
+        return None
+    if cid in by_cid:
+        return by_cid[cid]
+    if cid in by_name:
+        return by_name[cid]
+    local_part = cid.split('@', 1)[0].strip().lower()
+    if local_part and local_part in by_name:
+        return by_name[local_part]
+    if len(image_attachments) == 1:
+        return image_attachments[0]
+    return None
+
+
+_CID_IMG_SRC_RE = re.compile(r'''(?is)(\bsrc\s*=\s*(?P<quote>["']))\s*cid:(?P<cid>[^"']+)(?P=quote)''')
+_CID_CSS_URL_RE = re.compile(
+    r'''(?is)(url\(\s*(?P<quote>["']?))\s*cid:(?P<cid>[^"')\s]+)(?P=quote)\s*\)'''
+)
+
+
+def rewrite_html_cid_images(html: str, attachments: Optional[List[Dict[str, Any]]], url_for_attachment) -> str:
+    """将 HTML 中的 cid: 图片引用替换为可访问的附件 URL。"""
+    if not html or 'cid:' not in html.lower():
+        return html
+
+    by_cid, by_name, image_attachments = build_attachment_cid_indexes(attachments)
+
+    def replace_match(match: re.Match) -> str:
+        attachment = resolve_cid_attachment(
+            match.group('cid'),
+            by_cid=by_cid,
+            by_name=by_name,
+            image_attachments=image_attachments,
+        )
+        if not attachment:
+            return match.group(0)
+        try:
+            url = url_for_attachment(attachment)
+        except Exception:
+            return match.group(0)
+        if not url:
+            return match.group(0)
+        quote = match.group('quote') or ''
+        prefix = match.group(1)
+        if match.re is _CID_CSS_URL_RE:
+            return f'{prefix}{url}{quote})'
+        return f'{prefix}{url}{quote}'
+
+    rewritten = _CID_IMG_SRC_RE.sub(replace_match, html)
+    rewritten = _CID_CSS_URL_RE.sub(replace_match, rewritten)
+    return rewritten
+
+
+def build_email_attachment_access_url(
+    email_addr: str,
+    message_id: str,
+    attachment: Dict[str, Any],
+    method: str = 'graph',
+    folder: str = 'inbox',
+    id_mode: str = '',
+    inline: bool = False,
+) -> str:
+    query_items = [
+        ('method', method or 'graph'),
+        ('folder', folder or 'inbox'),
+    ]
+    if id_mode:
+        query_items.append(('id_mode', id_mode))
+    if inline:
+        query_items.append(('inline', '1'))
+    attachment_id = str(attachment.get('id') or '')
+    path = (
+        f"/api/email/{quote(str(email_addr or ''), safe='')}/"
+        f"{quote(str(message_id or ''), safe='')}/"
+        f"attachments/{quote(attachment_id, safe='')}"
+    )
+    query = '&'.join(
+        f"{quote(str(key), safe='')}={quote(str(value), safe='')}"
+        for key, value in query_items
+    )
+    return f"{path}?{query}"
+
+
+def prepare_email_detail_inline_images(
+    email_detail: Optional[Dict[str, Any]],
+    email_addr: str,
+    method: str = 'graph',
+    folder: str = 'inbox',
+    id_mode: str = '',
+) -> Dict[str, Any]:
+    """返回详情副本，并将正文中的 cid: 引用改写为附件下载地址（不回写缓存）。"""
+    if not isinstance(email_detail, dict):
+        return {}
+
+    prepared = dict(email_detail)
+    body = str(prepared.get('body') or '')
+    attachments = prepared.get('attachments') if isinstance(prepared.get('attachments'), list) else []
+    body_type = str(prepared.get('body_type') or '').lower()
+    if 'cid:' not in body.lower():
+        return prepared
+    if body_type and body_type != 'html' and '<img' not in body.lower():
+        return prepared
+
+    message_id = str(prepared.get('id') or '')
+    resolved_id_mode = str(id_mode or prepared.get('id_mode') or '').strip().lower()
+    resolved_folder = str(folder or prepared.get('folder') or 'inbox')
+
+    def url_for_attachment(attachment: Dict[str, Any]) -> str:
+        return build_email_attachment_access_url(
+            email_addr,
+            message_id,
+            attachment,
+            method=method,
+            folder=resolved_folder,
+            id_mode=resolved_id_mode,
+            inline=True,
+        )
+
+    prepared['body'] = rewrite_html_cid_images(body, attachments, url_for_attachment)
+    return prepared
 
 
 def get_message_attachment_by_id(msg, attachment_id: str) -> Optional[Dict[str, Any]]:

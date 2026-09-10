@@ -1567,19 +1567,124 @@
         }
 
         function buildAttachmentDownloadUrl(email, attachment) {
+            const accountEmail = getEmailAccountAddress(email)
+                || (!isAggregatedInboxMode() ? currentAccount : '');
             const query = new URLSearchParams();
             query.set('method', getCurrentEmailRemoteActionMethod(email));
             query.set('folder', email?.folder || currentFolder || 'inbox');
             appendEmailIdModeParam(query, email);
-            return `/api/email/${encodeURIComponent(currentAccount)}/${encodeURIComponent(email.id)}/attachments/${encodeURIComponent(attachment.id)}?${query.toString()}`;
+            return `/api/email/${encodeURIComponent(accountEmail)}/${encodeURIComponent(email.id)}/attachments/${encodeURIComponent(attachment.id)}?${query.toString()}`;
+        }
+
+        function buildAttachmentInlineUrl(email, attachment) {
+            const url = buildAttachmentDownloadUrl(email, attachment);
+            return `${url}&inline=1`;
+        }
+
+        function normalizeEmailContentId(value) {
+            let text = String(value || '').trim();
+            if (!text) {
+                return '';
+            }
+            try {
+                text = decodeURIComponent(text);
+            } catch (error) {
+                // keep raw value
+            }
+            return text.replace(/^<|>$/g, '').trim().toLowerCase();
+        }
+
+        function resolveCidAttachment(email, cidValue, imgEl) {
+            const attachments = Array.isArray(email?.attachments) ? email.attachments : [];
+            const cid = normalizeEmailContentId(cidValue);
+            if (!cid) {
+                return null;
+            }
+
+            const byCid = new Map();
+            const byName = new Map();
+            const imageAttachments = [];
+            attachments.forEach((attachment) => {
+                if (!attachment?.id) {
+                    return;
+                }
+                const contentId = normalizeEmailContentId(attachment.content_id || attachment.contentId);
+                if (contentId && !byCid.has(contentId)) {
+                    byCid.set(contentId, attachment);
+                }
+                const name = String(attachment.name || '').trim().toLowerCase();
+                if (name && !byName.has(name)) {
+                    byName.set(name, attachment);
+                }
+                const contentType = String(attachment.content_type || attachment.contentType || '').toLowerCase();
+                if (contentType.startsWith('image/') || attachment.is_inline || attachment.isInline) {
+                    imageAttachments.push(attachment);
+                }
+            });
+
+            if (byCid.has(cid)) {
+                return byCid.get(cid);
+            }
+            if (byName.has(cid)) {
+                return byName.get(cid);
+            }
+            const localPart = cid.split('@')[0].trim().toLowerCase();
+            if (localPart && byName.has(localPart)) {
+                return byName.get(localPart);
+            }
+
+            const altName = String(imgEl?.getAttribute?.('alt') || '').trim().toLowerCase();
+            if (altName && byName.has(altName)) {
+                return byName.get(altName);
+            }
+            if (imageAttachments.length === 1) {
+                return imageAttachments[0];
+            }
+            return null;
+        }
+
+        function rewriteEmailHtmlInlineImages(html, email) {
+            if (!html || !/cid:/i.test(html)) {
+                return html;
+            }
+
+            const replaceCidReference = (prefix, cidRaw, quote, isCssUrl) => {
+                let cid = String(cidRaw || '').trim();
+                try {
+                    cid = decodeURIComponent(cid);
+                } catch (error) {
+                    // keep raw value
+                }
+                const attachment = resolveCidAttachment(email, cid, null);
+                if (!attachment?.id) {
+                    return null;
+                }
+                const url = buildAttachmentInlineUrl(email, attachment);
+                if (isCssUrl) {
+                    return `${prefix}${url}${quote || ''})`;
+                }
+                return `${prefix}${url}${quote || ''}`;
+            };
+
+            let rewritten = String(html).replace(
+                /(\bsrc\s*=\s*(["']))\s*cid:([^"']+)\2/gi,
+                (match, prefix, quote, cid) => replaceCidReference(prefix, cid, quote, false) || match
+            );
+            rewritten = rewritten.replace(
+                /(url\(\s*(["']?))\s*cid:([^"')\s]+)\2\s*\)/gi,
+                (match, prefix, quote, cid) => replaceCidReference(prefix, cid, quote, true) || match
+            );
+            return rewritten;
         }
 
         function buildAllAttachmentsDownloadUrl(email) {
+            const accountEmail = getEmailAccountAddress(email)
+                || (!isAggregatedInboxMode() ? currentAccount : '');
             const query = new URLSearchParams();
             query.set('method', getCurrentEmailRemoteActionMethod(email));
             query.set('folder', email?.folder || currentFolder || 'inbox');
             appendEmailIdModeParam(query, email);
-            return `/api/email/${encodeURIComponent(currentAccount)}/${encodeURIComponent(email.id)}/attachments/download-all?${query.toString()}`;
+            return `/api/email/${encodeURIComponent(accountEmail)}/${encodeURIComponent(email.id)}/attachments/download-all?${query.toString()}`;
         }
 
         function parseDownloadFilename(response, fallbackFilename) {
@@ -3197,12 +3302,13 @@
             if (isHtml) {
                 const iframe = document.getElementById('emailBodyFrame');
                 if (iframe) {
+                    const bodyHtml = rewriteEmailHtmlInlineImages(email.body || '', email);
                     let sanitizedBody;
                     if (isTrustedMode) {
-                        sanitizedBody = email.body; // 信任模式：不过滤
+                        sanitizedBody = bodyHtml; // 信任模式：不过滤
                     } else {
                         // 使用 DOMPurify 净化 HTML 内容，防止 XSS 攻击
-                        sanitizedBody = DOMPurify.sanitize(email.body, {
+                        sanitizedBody = DOMPurify.sanitize(bodyHtml, {
                             ALLOWED_TAGS: ['a', 'b', 'i', 'u', 'strong', 'em', 'p', 'br', 'div', 'span', 'img', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'code'],
                             ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'style', 'class', 'width', 'height', 'align', 'border', 'cellpadding', 'cellspacing'],
                             ALLOW_DATA_ATTR: false,
