@@ -17,6 +17,8 @@ from outlook_web.mail_notes import (
     normalize_email_note_folder,
     normalize_email_note_id_mode,
     normalize_email_note_message_id,
+    resolve_contact_email_for_item,
+    save_contact_note,
     save_email_note,
 )
 from outlook_web.mail_reply_address import attach_preferred_reply_address, extract_first_email_address
@@ -3981,6 +3983,7 @@ def attach_email_notes_to_result(result: Dict[str, Any], account: Optional[Dict[
                 emails,
                 default_account_id=account_id,
                 default_folder=default_folder,
+                default_account_email=(account or {}).get('email') or '',
             )
         email = result.get('email')
         if isinstance(email, dict):
@@ -3989,6 +3992,7 @@ def attach_email_notes_to_result(result: Dict[str, Any], account: Optional[Dict[
                 [email],
                 default_account_id=account_id,
                 default_folder=str(email.get('folder') or default_folder),
+                default_account_email=(account or {}).get('email') or '',
             )
     except Exception:
         pass
@@ -4996,23 +5000,58 @@ def api_put_email_note():
         return jsonify({'success': False, 'error': 'folder 参数无效'}), 400
 
     id_mode = normalize_email_note_id_mode(data.get('id_mode'))
+    account_id = int(account.get('id') or 0)
+    account_email = account.get('email') or email_addr
+    contact = extract_first_email_address(data.get('contact') or data.get('contact_email'))
+    if not contact:
+        contact = resolve_contact_email_for_item(
+            {
+                'from': data.get('from') or data.get('sender'),
+                'reply_to': data.get('reply_to'),
+                'to': data.get('to'),
+                'subject': data.get('subject'),
+                'body': data.get('body') or data.get('body_preview'),
+                'account_email': account_email,
+            },
+            account_email,
+        )
+    if not contact:
+        retained = fetch_retained_normal_mail_detail(account, folder, message_id, id_mode)
+        detail = (retained or {}).get('email') or {}
+        contact = resolve_contact_email_for_item(detail, account_email)
+
+    db = get_db()
     try:
         note = save_email_note(
-            get_db(),
-            account_id=int(account.get('id') or 0),
+            db,
+            account_id=account_id,
             folder=folder,
             message_id=message_id,
             id_mode=id_mode,
             note=data.get('note'),
+            commit=False,
         )
+        if contact:
+            save_contact_note(
+                db,
+                account_id=account_id,
+                contact_email=contact,
+                note=note,
+                commit=False,
+            )
+        db.commit()
     except ValueError:
+        db.rollback()
         return jsonify({'success': False, 'error': '参数不完整'}), 400
     except Exception:
+        db.rollback()
         return jsonify({'success': False, 'error': '备注保存失败'}), 500
 
     return jsonify({
         'success': True,
         'note': note,
+        'contact_email': contact,
+        'contact_note': note if contact else '',
         'message_id': message_id,
         'folder': folder,
         'id_mode': id_mode,
@@ -5085,6 +5124,7 @@ def api_contact_history():
         payload.get('emails') or [],
         default_account_id=int(account.get('id') or 0),
         default_folder=folder,
+        default_account_email=account.get('email') or email_addr,
     )
     return jsonify(payload)
 

@@ -1681,6 +1681,18 @@ def init_db():
     ''')
 
     cursor.execute('''
+        CREATE TABLE IF NOT EXISTS contact_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id INTEGER NOT NULL,
+            contact_email TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE CASCADE
+        )
+    ''')
+
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS forwarding_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             account_id INTEGER NOT NULL,
@@ -2639,6 +2651,11 @@ def init_db():
     cursor.execute('''
         CREATE UNIQUE INDEX IF NOT EXISTS ux_email_notes_key
         ON email_notes(account_id, folder, provider_message_id, id_mode)
+    ''')
+
+    cursor.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_contact_notes_key
+        ON contact_notes(account_id, contact_email)
     ''')
 
     ensure_index_columns(

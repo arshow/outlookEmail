@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, buildEmailDetailRequestUrl, buildEmailTranslateRequestPayload, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentFolder, currentGroupId, currentMethod, DOMPurify, emailTranslateCache, ensureAiTranslateReady, escapeHtml, fetchWithTimeout, formatDate, getEmailTranslateBucket, getEmailTranslateCacheKey, handleApiError, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, providerDisplayName, resolveEmailNoteAccountEmail, rewriteEmailHtmlInlineImages, saveEmailNote, setModalVisible, showToast, stripEmbeddedMediaForTranslate */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, buildEmailDetailRequestUrl, buildEmailTranslateRequestPayload, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentFolder, currentGroupId, currentMethod, DOMPurify, emailTranslateCache, ensureAiTranslateReady, escapeHtml, fetchWithTimeout, formatDate, getEmailTranslateBucket, getEmailTranslateCacheKey, handleApiError, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, providerDisplayName, resolveEmailNoteAccountEmail, resolveEmailNoteContact, rewriteEmailHtmlInlineImages, saveEmailNote, setModalVisible, showToast, stripEmbeddedMediaForTranslate */
 
         const COMPOSE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
         const COMPOSE_ATTACHMENT_TOTAL_MAX_BYTES = 25 * 1024 * 1024;
@@ -673,6 +673,9 @@
                 folder: document.getElementById('composeFolder')?.value || detail.folder || currentFolder || 'inbox',
                 idMode: detail.id_mode || '',
                 note,
+                contact: typeof resolveEmailNoteContact === 'function'
+                    ? resolveEmailNoteContact(detail)
+                    : (detail.contact_email || detail.reply_to || ''),
             });
         }
 

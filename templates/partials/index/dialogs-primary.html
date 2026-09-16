@@ -236,13 +236,18 @@
                 <input type="hidden" id="editEmailNoteMessageId">
                 <input type="hidden" id="editEmailNoteFolder">
                 <input type="hidden" id="editEmailNoteIdMode">
+                <input type="hidden" id="editEmailNoteContact">
                 <div class="form-group">
                     <label class="form-label">邮件主题</label>
                     <div id="editEmailNoteSubject" class="form-hint" style="margin: 0; word-break: break-all;"></div>
                 </div>
+                <div class="form-group" id="editEmailNoteContactGroup" style="display: none;">
+                    <label class="form-label">联系人</label>
+                    <div id="editEmailNoteContactHint" class="form-hint" style="margin: 0; word-break: break-all;"></div>
+                </div>
                 <div class="form-group">
                     <label class="form-label">备注</label>
-                    <textarea class="form-textarea" id="editEmailNoteInput" placeholder="仅保存在本系统，不会发给对方。最多 2000 字" rows="5" maxlength="2000"></textarea>
+                    <textarea class="form-textarea" id="editEmailNoteInput" placeholder="仅保存在本系统。保存后会同步到该联系人的所有相关邮件。最多 2000 字" rows="5" maxlength="2000"></textarea>
                 </div>
             </div>
             <div class="modal-footer">
@@ -824,7 +829,7 @@
                         <div class="form-group compose-field-row" id="composeNoteGroup" style="display: none;">
                             <label class="form-label" for="composeEmailNote">邮件备注</label>
                             <div class="compose-field-control">
-                                <textarea class="form-textarea" id="composeEmailNote" rows="3" maxlength="2000" placeholder="仅保存在本系统，不会发给对方"></textarea>
+                                <textarea class="form-textarea" id="composeEmailNote" rows="3" maxlength="2000" placeholder="仅保存在本系统，会同步到该联系人的所有相关邮件"></textarea>
                                 <div class="compose-note-actions">
                                     <button type="button" class="btn btn-sm btn-secondary" id="composeEmailNoteSaveBtn" onclick="saveComposeEmailNote()">保存备注</button>
                                     <span class="form-hint" id="composeEmailNoteHint">右击邮件列表也可快速填写。</span>

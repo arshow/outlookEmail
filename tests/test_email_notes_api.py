@@ -31,6 +31,7 @@ class EmailNotesApiTests(unittest.TestCase):
             web_outlook_app.clear_normal_mail_local_retention_enabled_cache()
             db = web_outlook_app.get_db()
             db.execute("DELETE FROM email_notes")
+            db.execute("DELETE FROM contact_notes")
             db.execute("DELETE FROM retained_normal_mail_messages")
             db.execute("DELETE FROM accounts WHERE email = ?", ('notes@example.com',))
             db.execute(
@@ -66,6 +67,30 @@ class EmailNotesApiTests(unittest.TestCase):
             db.commit()
             self.account_id = account_id
 
+    def _insert_retained(self, message_id, sender, body='Please ship again'):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode, subject, sender,
+                    recipients, received_at, received_at_sort, body, body_type, body_preview,
+                    body_cached, list_cached
+                ) VALUES (?, 'inbox', ?, 'graph', ?, ?, ?, ?, 3, ?, 'text', ?, 1, 1)
+                ''',
+                (
+                    self.account_id,
+                    message_id,
+                    'Need a follow-up',
+                    sender,
+                    'notes@example.com',
+                    '2026-09-15 10:45:00',
+                    body,
+                    body,
+                ),
+            )
+            db.commit()
+
     def test_put_note_and_list_attaches_it(self):
         response = self.client.put('/api/emails/note', json={
             'email': 'notes@example.com',
@@ -78,6 +103,8 @@ class EmailNotesApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, payload)
         self.assertTrue(payload['success'], payload)
         self.assertEqual(payload['note'], '已答应补发')
+        self.assertEqual(payload['contact_email'], 'buyer@example.com')
+        self.assertEqual(payload['contact_note'], '已答应补发')
 
         listed = self.client.get(
             '/api/emails/notes@example.com',
@@ -87,6 +114,27 @@ class EmailNotesApiTests(unittest.TestCase):
         self.assertTrue(listed_payload['success'], listed_payload)
         self.assertEqual(listed_payload['emails'][0]['id'], 'note-msg-1')
         self.assertEqual(listed_payload['emails'][0]['note'], '已答应补发')
+        self.assertEqual(listed_payload['emails'][0]['contact_email'], 'buyer@example.com')
+        self.assertEqual(listed_payload['emails'][0]['contact_note'], '已答应补发')
+
+    def test_note_syncs_to_same_contact_other_emails(self):
+        self._insert_retained('note-msg-2', 'buyer@example.com', 'Second order')
+        self.client.put('/api/emails/note', json={
+            'email': 'notes@example.com',
+            'message_id': 'note-msg-1',
+            'folder': 'inbox',
+            'id_mode': 'graph',
+            'contact': 'buyer@example.com',
+            'note': '同一客户',
+        })
+        listed = self.client.get(
+            '/api/emails/notes@example.com',
+            query_string={'source': 'local', 'folder': 'inbox', 'skip': 0, 'top': 20},
+        )
+        payload = listed.get_json()
+        notes = {item['id']: item['note'] for item in payload['emails']}
+        self.assertEqual(notes['note-msg-1'], '同一客户')
+        self.assertEqual(notes['note-msg-2'], '同一客户')
 
     def test_empty_note_clears_row(self):
         self.client.put('/api/emails/note', json={
@@ -111,7 +159,12 @@ class EmailNotesApiTests(unittest.TestCase):
                 'SELECT COUNT(*) AS c FROM email_notes WHERE account_id = ?',
                 (self.account_id,),
             ).fetchone()['c']
+            contact_count = web_outlook_app.get_db().execute(
+                'SELECT COUNT(*) AS c FROM contact_notes WHERE account_id = ?',
+                (self.account_id,),
+            ).fetchone()['c']
         self.assertEqual(count, 0)
+        self.assertEqual(contact_count, 0)
 
     def test_missing_message_id_is_rejected(self):
         response = self.client.put('/api/emails/note', json={
@@ -143,8 +196,11 @@ class EmailNotesFrontendTests(unittest.TestCase):
         self.assertIn('function editCurrentEmailNote()', emails_js)
         self.assertIn("fetch('/api/emails/note'", emails_js)
         self.assertIn('email-note-snippet', emails_js)
-        self.assertIn('function renderEmailDetailNoteRow(email)', emails_js)
-        self.assertIn('id="editEmailNoteModal"', html)
+        self.assertIn('function resolveEmailNoteContact(email)', emails_js)
+        self.assertIn('function isEmailNoteShopifyPlatformAddress(address)', emails_js)
+        self.assertIn('function emailNoteContactMatchesItem(item, contactEmail, accountEmail)', emails_js)
+        self.assertIn('contact: String(contact || \'\').trim()', emails_js)
+        self.assertIn('id="editEmailNoteContact"', html)
         self.assertIn('id="composeEmailNote"', html)
         self.assertIn('function syncComposeEmailNoteField', compose_js)
         self.assertIn('function saveComposeEmailNote', compose_js)

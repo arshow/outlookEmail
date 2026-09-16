@@ -318,6 +318,8 @@
                 email?.to,
                 email?.body_preview,
                 email?.note,
+                email?.contact_note,
+                email?.contact_email,
                 email?.account_email,
                 email?.accountEmail
             ].map(value => String(value || '').toLowerCase()).join('\n');
@@ -1996,11 +1998,51 @@
         const EMAIL_NOTE_MAX_LENGTH = 2000;
 
         function getEmailNoteText(email) {
-            return String(email?.note || '').trim();
+            return String(email?.note || email?.contact_note || '').trim();
         }
 
         function resolveEmailNoteAccountEmail(email) {
             return getEmailAccountAddress(email) || String(currentAccount || '').trim();
+        }
+
+        function extractEmailNoteAddress(value) {
+            if (!value) return '';
+            if (typeof value === 'object') {
+                const nested = value.emailAddress || value;
+                return String(nested.address || nested.email || '').trim().toLowerCase();
+            }
+            const match = String(value).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+            return match ? match[0].toLowerCase() : '';
+        }
+
+        function isEmailNoteShopifyPlatformAddress(address) {
+            if (typeof isShopifyPlatformAddress === 'function') {
+                return isShopifyPlatformAddress(address);
+            }
+            const value = String(address || '').trim().toLowerCase();
+            return /(?:^|@)(?:[a-z0-9-]+\.)*(?:shopify\.com|shopifyemail\.com)$/i.test(value);
+        }
+
+        function resolveEmailNoteContact(email) {
+            if (!email) return '';
+            const accountEmail = extractEmailNoteAddress(resolveEmailNoteAccountEmail(email));
+            const preferred = (typeof resolveComposeReplyTo === 'function')
+                ? extractEmailNoteAddress(resolveComposeReplyTo(email))
+                : '';
+            const candidates = [
+                preferred,
+                email.contact_email,
+                email.reply_to,
+                email.from || email.sender,
+                email.to,
+            ];
+            for (const candidate of candidates) {
+                const address = extractEmailNoteAddress(candidate);
+                if (address && address !== accountEmail && !isEmailNoteShopifyPlatformAddress(address)) {
+                    return address;
+                }
+            }
+            return '';
         }
 
         function handleEmailListContextMenu(event) {
@@ -2041,6 +2083,19 @@
             document.getElementById('editEmailNoteMessageId').value = String(email.id || '');
             document.getElementById('editEmailNoteFolder').value = String(email.folder || currentFolder || 'inbox');
             document.getElementById('editEmailNoteIdMode').value = String(email.id_mode || '');
+            const contact = resolveEmailNoteContact(email);
+            document.getElementById('editEmailNoteContact').value = contact;
+            const contactGroup = document.getElementById('editEmailNoteContactGroup');
+            const contactHint = document.getElementById('editEmailNoteContactHint');
+            if (contactGroup && contactHint) {
+                if (contact) {
+                    contactGroup.style.display = '';
+                    contactHint.textContent = `保存后会同步到 ${contact} 的所有相关邮件`;
+                } else {
+                    contactGroup.style.display = 'none';
+                    contactHint.textContent = '';
+                }
+            }
             document.getElementById('editEmailNoteSubject').textContent = String(email.subject || '无主题');
             const input = document.getElementById('editEmailNoteInput');
             if (input) {
@@ -2063,19 +2118,21 @@
             const folder = document.getElementById('editEmailNoteFolder')?.value || 'inbox';
             const idMode = document.getElementById('editEmailNoteIdMode')?.value || '';
             const note = document.getElementById('editEmailNoteInput')?.value || '';
+            const contact = document.getElementById('editEmailNoteContact')?.value || '';
             const saved = await saveEmailNote({
                 email: accountEmail,
                 messageId,
                 folder,
                 idMode,
                 note,
+                contact,
             });
             if (saved != null) {
                 hideEditEmailNoteModal();
             }
         }
 
-        async function saveEmailNote({ email, messageId, folder, idMode = '', note = '' } = {}) {
+        async function saveEmailNote({ email, messageId, folder, idMode = '', note = '', contact = '' } = {}) {
             const accountEmail = String(email || '').trim();
             const id = String(messageId || '').trim();
             if (!accountEmail || !id) {
@@ -2095,6 +2152,7 @@
                         message_id: id,
                         folder: folder || 'inbox',
                         id_mode: idMode || '',
+                        contact: String(contact || '').trim(),
                         note: String(note || '').slice(0, EMAIL_NOTE_MAX_LENGTH)
                     })
                 });
@@ -2104,7 +2162,14 @@
                     return null;
                 }
                 const nextNote = String(result.note ?? '');
-                applyEmailNoteToCaches(id, folder, idMode, nextNote, accountEmail);
+                applyEmailNoteToCaches(
+                    id,
+                    folder,
+                    idMode,
+                    nextNote,
+                    accountEmail,
+                    result.contact_email || contact
+                );
                 showToast(nextNote ? '备注已保存' : '备注已清除', 'success');
                 return nextNote;
             } catch (error) {
@@ -2138,42 +2203,95 @@
             return true;
         }
 
-        function applyEmailNoteToCaches(messageId, folder, idMode, note, accountEmail) {
+        function emailNoteContactMatchesItem(item, contactEmail, accountEmail) {
+            const contact = extractEmailNoteAddress(contactEmail);
+            if (!item || !contact) {
+                return false;
+            }
+            const wantAccount = extractEmailNoteAddress(accountEmail);
+            const itemAccount = extractEmailNoteAddress(resolveEmailNoteAccountEmail(item));
+            if (wantAccount && itemAccount && wantAccount !== itemAccount) {
+                return false;
+            }
+            const itemContact = extractEmailNoteAddress(item.contact_email || item.reply_to);
+            if (itemContact) {
+                return itemContact === contact;
+            }
+            const from = extractEmailNoteAddress(item.from || item.sender);
+            const to = extractEmailNoteAddress(item.to);
+            if (from && /(?:shopify\.com|shopifyemail\.com)$/i.test(from) && to !== contact) {
+                return false;
+            }
+            return from === contact || to === contact;
+        }
+
+        function applyEmailNoteToCaches(messageId, folder, idMode, note, accountEmail, contactEmail = '') {
             const nextNote = String(note || '');
+            const contact = extractEmailNoteAddress(contactEmail);
+            const applyToItem = (item) => {
+                const matchedMessage = emailNoteMatchesItem(item, messageId, folder, idMode, accountEmail);
+                const matchedContact = emailNoteContactMatchesItem(item, contact, accountEmail);
+                if (!matchedMessage && !matchedContact) {
+                    return false;
+                }
+                if (contact) {
+                    item.contact_email = contact;
+                    item.contact_note = nextNote;
+                }
+                item.note = nextNote;
+                return true;
+            };
             const applyToList = (list) => {
                 if (!Array.isArray(list)) {
-                    return;
+                    return [];
                 }
-                list.forEach(item => {
-                    if (emailNoteMatchesItem(item, messageId, folder, idMode, accountEmail)) {
-                        item.note = nextNote;
-                    }
-                });
+                return list.filter(applyToItem);
             };
-            applyToList(currentEmails);
-            applyToList(statusFilterOverrideEmails);
+            const updated = []
+                .concat(applyToList(currentEmails))
+                .concat(applyToList(statusFilterOverrideEmails));
             if (emailListCache && typeof emailListCache === 'object') {
                 Object.values(emailListCache).forEach(cacheValue => {
                     applyToList(cacheValue?.emails);
                 });
             }
-            if (currentEmailDetail && emailNoteMatchesItem(currentEmailDetail, messageId, folder, idMode, accountEmail)) {
-                currentEmailDetail.note = nextNote;
+            if (currentEmailDetail && applyToItem(currentEmailDetail)) {
+                updateEmailNoteDetailDom(
+                    nextNote,
+                    currentEmailDetail.id,
+                    currentEmailDetail.folder,
+                    currentEmailDetail.id_mode,
+                    accountEmail,
+                    contact
+                );
             }
-            const listEmail = (currentEmails || []).find(item => (
-                emailNoteMatchesItem(item, messageId, folder, idMode, accountEmail)
-            ));
-            updateEmailNoteListDom(listEmail || {
-                id: messageId,
-                folder,
-                id_mode: idMode,
-                account_email: accountEmail,
-                note: nextNote
+            const uniqueUpdated = [];
+            const seen = new Set();
+            updated.forEach(item => {
+                const key = getEmailSelectionKey(item) || String(item?.id || '');
+                if (!key || seen.has(key)) {
+                    return;
+                }
+                seen.add(key);
+                uniqueUpdated.push(item);
             });
-            updateEmailNoteDetailDom(nextNote, messageId, folder, idMode, accountEmail);
+            if (!uniqueUpdated.length) {
+                uniqueUpdated.push({
+                    id: messageId,
+                    folder,
+                    id_mode: idMode,
+                    account_email: accountEmail,
+                    contact_email: contact,
+                    note: nextNote
+                });
+            }
+            uniqueUpdated.forEach(updateEmailNoteListDom);
             const composeNote = document.getElementById('composeEmailNote');
             const composeMessageId = document.getElementById('composeMessageId')?.value || '';
-            if (composeNote && String(composeMessageId) === String(messageId || '')) {
+            if (composeNote && (
+                String(composeMessageId) === String(messageId || '')
+                || emailNoteContactMatchesItem(currentEmailDetail, contact, accountEmail)
+            )) {
                 composeNote.value = nextNote;
             }
         }
@@ -2208,8 +2326,13 @@
             snippet.textContent = text;
         }
 
-        function updateEmailNoteDetailDom(note, messageId, folder, idMode, accountEmail) {
-            if (!currentEmailDetail || !emailNoteMatchesItem(currentEmailDetail, messageId, folder, idMode, accountEmail)) {
+        function updateEmailNoteDetailDom(note, messageId, folder, idMode, accountEmail, contactEmail = '') {
+            if (!currentEmailDetail) {
+                return;
+            }
+            const matchedMessage = emailNoteMatchesItem(currentEmailDetail, messageId, folder, idMode, accountEmail);
+            const matchedContact = emailNoteContactMatchesItem(currentEmailDetail, contactEmail, accountEmail);
+            if (!matchedMessage && !matchedContact) {
                 return;
             }
             const valueEl = document.querySelector('#emailDetail .email-detail-note-value');
