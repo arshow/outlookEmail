@@ -346,9 +346,9 @@
         }
 
         .compose-history-preview-overlay {
-            position: absolute;
+            position: fixed;
             inset: 0;
-            z-index: 8;
+            z-index: 1100;
             display: flex;
             align-items: stretch;
             justify-content: center;
@@ -509,17 +509,23 @@
             display: grid;
             grid-template-columns: minmax(0, 1fr) auto;
             gap: 8px;
-            align-items: center;
+            align-items: start;
         }
 
-        .compose-ai-custom-row .form-input {
+        .compose-ai-custom-row .form-textarea {
             width: 100%;
             min-width: 0;
+            min-height: 88px;
+            height: 88px;
+            padding: 8px 10px;
+            font-family: inherit;
+            line-height: 1.45;
         }
 
         .compose-ai-custom-row .btn {
             white-space: nowrap;
             min-width: 64px;
+            align-self: start;
         }
 
         .compose-ai-insert-block {
@@ -649,7 +655,8 @@
         .compose-ai-panel.is-busy .compose-ai-controls,
         .compose-ai-panel.is-busy .compose-ai-insert-block,
         .compose-ai-panel.is-busy .compose-ai-scope,
-        .compose-ai-panel.is-busy .compose-ai-custom-row input {
+        .compose-ai-panel.is-busy .compose-ai-custom-row input,
+        .compose-ai-panel.is-busy .compose-ai-custom-row textarea {
             pointer-events: none;
         }
 
@@ -1399,6 +1406,49 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+        }
+
+        .email-detail-meta-value--with-action {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            overflow: visible;
+        }
+
+        .email-detail-meta-text {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+        }
+
+        .email-detail-history-btn {
+            flex: 0 0 auto;
+            padding: 2px 8px;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        .email-contact-history-modal-content {
+            width: min(560px, 92vw);
+            max-height: 86vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .email-contact-history-modal-content .modal-body {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-height: 0;
+            flex: 1 1 auto;
+            overflow: hidden;
+        }
+
+        #emailContactHistoryList {
+            max-height: min(62vh, 580px);
         }
 
         .email-detail-note-row .email-detail-note-value {

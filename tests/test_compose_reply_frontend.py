@@ -42,6 +42,22 @@ class ComposeReplyFrontendTests(unittest.TestCase):
         self.assertNotIn('class="compose-history-preview"', html)
         self.assertIn('相关往来', html)
 
+    def test_email_detail_has_contact_history_entries(self):
+        source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
+        emails_js = (ROOT_DIR / 'static' / 'js' / 'index' / '05-emails.js').read_text(encoding='utf-8')
+        html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-primary.html').read_text(encoding='utf-8')
+        layout = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'layout.html').read_text(encoding='utf-8')
+
+        self.assertIn('function showEmailContactHistoryModal()', source)
+        self.assertIn("source: 'detail'", source)
+        self.assertIn('id="emailContactHistoryModal"', html)
+        self.assertIn('id="emailContactHistoryList"', html)
+        self.assertIn('email-detail-action-btn--history', layout)
+        self.assertIn('onclick="showEmailContactHistoryModal()"', layout)
+        self.assertIn('onclick="showEmailContactHistoryModal()"', emails_js)
+        self.assertIn('往来邮件', layout)
+        self.assertIn('往来邮件', emails_js)
+
     def test_history_preview_has_ai_translate(self):
         source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
         html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-primary.html').read_text(encoding='utf-8')

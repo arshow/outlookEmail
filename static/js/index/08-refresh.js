@@ -1719,6 +1719,9 @@
             hideFailedForwardingLogs();
 
             closeFullscreenEmail();
+            if (typeof hideComposeHistoryPreview === 'function') {
+                hideComposeHistoryPreview();
+            }
             updateModalBodyState();
         }
 

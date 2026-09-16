@@ -542,6 +542,10 @@
                 white-space: nowrap;
             }
 
+            .email-detail-meta-value--with-action {
+                overflow: visible;
+            }
+
             .email-detail-meta-collapsible {
                 display: block;
                 border-top: 1px solid #eef2f7;

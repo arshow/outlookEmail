@@ -3624,7 +3624,10 @@
                 </div>
                 <div class="email-detail-meta-row">
                     <span class="email-detail-meta-label">收件人</span>
-                    <span class="email-detail-meta-value">${escapeHtml(email.to || '-')}</span>
+                    <span class="email-detail-meta-value email-detail-meta-value--with-action">
+                        <span class="email-detail-meta-text">${escapeHtml(email.to || '-')}</span>
+                        <button type="button" class="btn btn-sm btn-secondary email-detail-history-btn" onclick="showEmailContactHistoryModal()">往来邮件</button>
+                    </span>
                 </div>
                 ${email.cc ? `
                 <div class="email-detail-meta-row">

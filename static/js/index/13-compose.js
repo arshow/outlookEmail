@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, buildEmailDetailRequestUrl, buildEmailTranslateRequestPayload, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentFolder, currentGroupId, currentMethod, DOMPurify, emailTranslateCache, ensureAiTranslateReady, escapeHtml, fetchWithTimeout, formatDate, getEmailTranslateBucket, getEmailTranslateCacheKey, handleApiError, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, providerDisplayName, resolveEmailNoteAccountEmail, resolveEmailNoteContact, rewriteEmailHtmlInlineImages, saveEmailNote, setModalVisible, showToast, stripEmbeddedMediaForTranslate */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, buildEmailDetailRequestUrl, buildEmailTranslateRequestPayload, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentFolder, currentGroupId, currentMethod, DOMPurify, emailTranslateCache, ensureAiTranslateReady, escapeHtml, fetchWithTimeout, formatDate, getEmailTranslateBucket, getEmailTranslateCacheKey, handleApiError, hideModal, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, providerDisplayName, resolveEmailNoteAccountEmail, resolveEmailNoteContact, rewriteEmailHtmlInlineImages, saveEmailNote, setModalVisible, showModal, showToast, stripEmbeddedMediaForTranslate */
 
         const COMPOSE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
         const COMPOSE_ATTACHMENT_TOTAL_MAX_BYTES = 25 * 1024 * 1024;
@@ -798,6 +798,62 @@
             }
         }
 
+        function isEmailContactHistoryModalOpen() {
+            const modal = document.getElementById('emailContactHistoryModal');
+            return !!(modal && modal.classList.contains('show'));
+        }
+
+        function getContactHistoryLoadContext(source = '') {
+            const fromDetail = source === 'detail' || isEmailContactHistoryModalOpen();
+            const mode = document.getElementById('composeMode')?.value || 'new';
+            const detail = currentEmailDetail || composeQuotedDetail || {};
+            const accountEmail = String(
+                (fromDetail
+                    ? ((typeof resolveEmailNoteAccountEmail === 'function' && resolveEmailNoteAccountEmail(detail)) || currentAccount)
+                    : (document.getElementById('composeFromEmail')?.value || currentAccount)
+                ) || ''
+            ).trim();
+            const messageId = String(detail.id || document.getElementById('composeMessageId')?.value || '').trim();
+            const contact = (
+                (typeof resolveEmailNoteContact === 'function' && resolveEmailNoteContact(detail))
+                || resolveComposeReplyTo(detail)
+                || parseComposeAddressList(document.getElementById('composeTo')?.value || '')[0]
+                || ''
+            );
+            const folder = String(
+                (fromDetail
+                    ? (detail.folder || currentFolder)
+                    : (document.getElementById('composeFolder')?.value || detail.folder || currentFolder)
+                ) || 'inbox'
+            );
+            return { fromDetail, mode, detail, accountEmail, messageId, contact, folder };
+        }
+
+        function showEmailContactHistoryModal() {
+            if (isTempEmailGroup || currentMethod === 'cloudflare-admin') {
+                showToast('当前邮箱不支持往来邮件', 'error');
+                return;
+            }
+            if (!currentEmailDetail) {
+                showToast('请先打开一封邮件', 'error');
+                return;
+            }
+            const contact = (typeof resolveEmailNoteContact === 'function'
+                ? resolveEmailNoteContact(currentEmailDetail)
+                : resolveComposeReplyTo(currentEmailDetail)) || '';
+            const title = document.getElementById('emailContactHistoryTitle');
+            if (title) {
+                title.textContent = contact ? `往来邮件 · ${contact}` : '往来邮件';
+            }
+            showModal('emailContactHistoryModal');
+            void loadComposeContactHistory({ reset: true, source: 'detail' });
+        }
+
+        function hideEmailContactHistoryModal() {
+            hideComposeHistoryPreview();
+            hideModal('emailContactHistoryModal');
+        }
+
         function resetComposeHistoryPanel() {
             composeHistoryState = {
                 requestSeq: composeHistoryState.requestSeq + 1,
@@ -894,20 +950,19 @@
             return merged;
         }
 
-        function renderComposeHistoryList() {
-            const list = document.getElementById('composeHistoryList');
-            const moreBtn = document.getElementById('composeHistoryMoreBtn');
-            const hint = document.getElementById('composeHistoryHint');
+        function renderComposeHistoryListInto(list, moreBtn, hint) {
             if (!list) return;
             const emails = composeHistoryState.emails || [];
             if (!emails.length) {
-                let empty = '本地没有找到该客户的其他往来。';
-                if (composeHistoryState.reason === 'local_retention_disabled') {
-                    empty = '未开启普通邮件本地保留，目前只能看到本封。开启后可查看更多往来。';
-                } else if (composeHistoryState.reason === 'contact_missing') {
-                    empty = '无法识别客户邮箱，所以没有相关往来。';
-                } else if (!composeHistoryState.contact) {
-                    empty = '无法识别客户邮箱，所以没有相关往来。';
+                let empty = composeHistoryState.loading
+                    ? '正在加载往来邮件…'
+                    : '本地没有找到该客户的其他往来。';
+                if (!composeHistoryState.loading) {
+                    if (composeHistoryState.reason === 'local_retention_disabled') {
+                        empty = '未开启普通邮件本地保留，目前只能看到本封。开启后可查看更多往来。';
+                    } else if (composeHistoryState.reason === 'contact_missing' || !composeHistoryState.contact) {
+                        empty = '无法识别客户邮箱，所以没有相关往来。';
+                    }
                 }
                 list.innerHTML = `<div class="compose-history-empty">${escapeHtml(empty)}</div>`;
             } else {
@@ -937,7 +992,9 @@
             }
             if (hint) {
                 const contact = composeHistoryState.contact;
-                if (contact) {
+                if (composeHistoryState.loading && !emails.length) {
+                    hint.textContent = '正在加载本地往来…';
+                } else if (contact) {
                     const onlyCurrent = emails.length === 1 && emails[0]?.is_current;
                     hint.textContent = onlyCurrent
                         ? `客户 ${contact} · 没有其他本地往来。`
@@ -946,17 +1003,25 @@
             }
         }
 
-        async function loadComposeContactHistory({ reset = true } = {}) {
-            const mode = document.getElementById('composeMode')?.value || 'new';
-            if (mode !== 'reply' && mode !== 'reply_all') {
+        function renderComposeHistoryList() {
+            renderComposeHistoryListInto(
+                document.getElementById('composeHistoryList'),
+                document.getElementById('composeHistoryMoreBtn'),
+                document.getElementById('composeHistoryHint')
+            );
+            renderComposeHistoryListInto(
+                document.getElementById('emailContactHistoryList'),
+                document.getElementById('emailContactHistoryMoreBtn'),
+                document.getElementById('emailContactHistoryHint')
+            );
+        }
+
+        async function loadComposeContactHistory({ reset = true, source = '' } = {}) {
+            const ctx = getContactHistoryLoadContext(source);
+            if (!ctx.fromDetail && ctx.mode !== 'reply' && ctx.mode !== 'reply_all') {
                 return;
             }
-            const accountEmail = document.getElementById('composeFromEmail')?.value?.trim() || '';
-            const messageId = document.getElementById('composeMessageId')?.value?.trim() || '';
-            const detail = currentEmailDetail || composeQuotedDetail || {};
-            const contact = resolveComposeReplyTo(detail)
-                || parseComposeAddressList(document.getElementById('composeTo')?.value || '')[0]
-                || '';
+            const { detail, accountEmail, messageId, contact, folder } = ctx;
             if (reset) {
                 composeHistoryState.emails = [];
                 composeHistoryState.offset = 0;
@@ -980,7 +1045,7 @@
                     email: accountEmail,
                     contact,
                     message_id: messageId,
-                    folder: document.getElementById('composeFolder')?.value || 'inbox',
+                    folder,
                     limit: String(COMPOSE_HISTORY_PAGE_SIZE),
                     offset: String(composeHistoryState.offset),
                 });
@@ -1226,7 +1291,8 @@
         async function openComposeHistoryPreview(index) {
             const item = composeHistoryState.emails[index];
             if (!item?.id) return;
-            const accountEmail = document.getElementById('composeFromEmail')?.value?.trim() || '';
+            const ctx = getContactHistoryLoadContext();
+            const accountEmail = ctx.accountEmail;
             const preview = document.getElementById('composeHistoryPreview');
             const body = document.getElementById('composeHistoryPreviewBody');
             const title = document.getElementById('composeHistoryPreviewTitle');
@@ -1245,7 +1311,7 @@
             body.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
             preview.hidden = false;
             try {
-                const folder = item.folder || document.getElementById('composeFolder')?.value || 'inbox';
+                const folder = item.folder || ctx.folder || 'inbox';
                 const url = typeof buildEmailDetailRequestUrl === 'function'
                     ? buildEmailDetailRequestUrl(item.id, folder, {
                         account_email: accountEmail,
