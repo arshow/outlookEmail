@@ -6,6 +6,8 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from outlook_web.mail_reply_address import attach_preferred_reply_address
+
 if TYPE_CHECKING:
     # These segmented files are executed into the shared `web_outlook_app`
     # globals at runtime. Importing from the assembled module keeps IDE
@@ -3514,26 +3516,29 @@ def upsert_retained_normal_mail_detail(account: Dict[str, Any], folder: str,
 
 
 def format_graph_email_detail(detail: Dict[str, Any], attachments: List[Dict[str, Any]]) -> Dict[str, Any]:
-    return {
-        'id': detail.get('id'),
-        'subject': detail.get('subject', '无主题'),
-        'from': detail.get('from', {}).get('emailAddress', {}).get('address', '未知'),
-        'to': ', '.join([
-            r.get('emailAddress', {}).get('address', '')
-            for r in detail.get('toRecipients', [])
-            if r.get('emailAddress', {}).get('address', '')
-        ]),
-        'cc': ', '.join([
-            r.get('emailAddress', {}).get('address', '')
-            for r in detail.get('ccRecipients', [])
-            if r.get('emailAddress', {}).get('address', '')
-        ]),
-        'date': detail.get('receivedDateTime', ''),
-        'body': detail.get('body', {}).get('content', ''),
-        'body_type': detail.get('body', {}).get('contentType', 'text'),
-        'attachments': attachments,
-        'has_attachments': bool(attachments or detail.get('hasAttachments')),
-    }
+    return attach_preferred_reply_address(
+        {
+            'id': detail.get('id'),
+            'subject': detail.get('subject', '无主题'),
+            'from': detail.get('from', {}).get('emailAddress', {}).get('address', '未知'),
+            'to': ', '.join([
+                r.get('emailAddress', {}).get('address', '')
+                for r in detail.get('toRecipients', [])
+                if r.get('emailAddress', {}).get('address', '')
+            ]),
+            'cc': ', '.join([
+                r.get('emailAddress', {}).get('address', '')
+                for r in detail.get('ccRecipients', [])
+                if r.get('emailAddress', {}).get('address', '')
+            ]),
+            'date': detail.get('receivedDateTime', ''),
+            'body': detail.get('body', {}).get('content', ''),
+            'body_type': detail.get('body', {}).get('contentType', 'text'),
+            'attachments': attachments,
+            'has_attachments': bool(attachments or detail.get('hasAttachments')),
+        },
+        header_reply_to=detail.get('replyTo') or '',
+    )
 
 def build_retained_detail_success_response(account: Dict[str, Any], folder: str,
                                            message_id: str, email_detail: Dict[str, Any],
@@ -3703,7 +3708,7 @@ def retained_mail_row_to_detail_response(row) -> Dict[str, Any]:
     attachments = parse_retained_mail_attachments(row['attachments_json'])
     return {
         'success': True,
-        'email': {
+        'email': attach_preferred_reply_address({
             'id': row['provider_message_id'],
             'subject': row['subject'] or '无主题',
             'from': row['sender'] or '未知',
@@ -3716,7 +3721,7 @@ def retained_mail_row_to_detail_response(row) -> Dict[str, Any]:
             'has_attachments': bool(row['has_attachments']),
             'folder': row['folder'] or 'inbox',
             'id_mode': row['id_mode'] or '',
-        },
+        }),
         'method': 'Local Retention',
         'source': 'local_retention',
         'request_method': 'local',

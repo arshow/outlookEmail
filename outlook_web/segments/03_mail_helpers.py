@@ -5,6 +5,7 @@ import secrets
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from outlook_web.mail_datetime import parse_mail_datetime
+from outlook_web.mail_reply_address import attach_preferred_reply_address
 
 if TYPE_CHECKING:
     # These segmented files are executed into the shared `web_outlook_app`
@@ -680,7 +681,7 @@ def get_email_detail_graph_result(client_id: str, refresh_token: str, message_id
     try:
         url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}"
         params = {
-            "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,isRead,flag,hasAttachments,body,bodyPreview"
+            "$select": "id,subject,from,replyTo,toRecipients,ccRecipients,receivedDateTime,isRead,flag,hasAttachments,body,bodyPreview"
         }
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -1909,17 +1910,20 @@ def get_raw_email_imap_generic(email_addr: str, imap_password: str, imap_host: s
 
 def build_email_detail_from_message(msg, message_id: str, date_value: str = '') -> Dict[str, Any]:
     body_text, body_html = extract_text_and_html(msg)
-    return {
-        'id': str(message_id),
-        'subject': decode_header_value(msg.get('Subject', '无主题')),
-        'from': decode_header_value(msg.get('From', '未知发件人')),
-        'to': decode_header_value(msg.get('To', '')),
-        'cc': decode_header_value(msg.get('Cc', '')),
-        'date': date_value or msg.get('Date', ''),
-        'body': body_html or body_text,
-        'body_type': 'html' if body_html else 'text',
-        'attachments': extract_message_attachments(msg),
-    }
+    return attach_preferred_reply_address(
+        {
+            'id': str(message_id),
+            'subject': decode_header_value(msg.get('Subject', '无主题')),
+            'from': decode_header_value(msg.get('From', '未知发件人')),
+            'to': decode_header_value(msg.get('To', '')),
+            'cc': decode_header_value(msg.get('Cc', '')),
+            'date': date_value or msg.get('Date', ''),
+            'body': body_html or body_text,
+            'body_type': 'html' if body_html else 'text',
+            'attachments': extract_message_attachments(msg),
+        },
+        header_reply_to=decode_header_value(msg.get('Reply-To', '')),
+    )
 
 
 def has_message_attachments(msg) -> bool:

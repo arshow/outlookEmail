@@ -16,6 +16,16 @@ class ComposeReplyFrontendTests(unittest.TestCase):
         self.assertIn("if (mode !== 'reply' && mode !== 'reply_all') return", source)
         self.assertIn("select.addEventListener('change', onComposeFromEmailChange)", source)
 
+    def test_reply_uses_shopify_contact_form_customer_email(self):
+        source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
+
+        self.assertIn('function resolveComposeReplyTo', source)
+        self.assertIn('function extractShopifyContactFormEmail', source)
+        self.assertIn('const replyTo = resolveComposeReplyTo(detail);', source)
+        self.assertIn('let toList = replyTo ? [replyTo] : [];', source)
+        self.assertIn('address !== replyTo', source)
+        self.assertIn('new customer message on', source)
+
     def test_quoted_html_is_sanitized_and_cleared_on_close(self):
         source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
 

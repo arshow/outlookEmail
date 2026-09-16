@@ -4,6 +4,8 @@ import mimetypes
 from email.utils import formataddr, parseaddr
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+from outlook_web.mail_reply_address import resolve_preferred_reply_address
+
 if TYPE_CHECKING:
     from web_outlook_app import *  # noqa: F403
 
@@ -662,7 +664,16 @@ def reply_email_via_graph(
     fallback_to = to_list
     if not fallback_to:
         sender = extract_email_address(detail.get('from'))
-        fallback_to = [sender] if sender else []
+        body_obj = detail.get('body')
+        body = body_obj.get('content') if isinstance(body_obj, dict) else body_obj
+        preferred = resolve_preferred_reply_address(
+            sender=sender,
+            subject=detail.get('subject') or '',
+            body=body or '',
+            header_reply_to=detail.get('replyTo') or '',
+        )
+        chosen = preferred or sender
+        fallback_to = [chosen] if chosen else []
     if not fallback_to:
         return result
     quoted = detail.get('body', {}).get('content') if isinstance(detail.get('body'), dict) else ''

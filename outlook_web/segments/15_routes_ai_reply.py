@@ -22,6 +22,7 @@ from outlook_web.ai.settings import (
     public_ai_reply_settings,
     save_ai_reply_settings,
 )
+from outlook_web.mail_reply_address import attach_preferred_reply_address
 
 
 def _ensure_ai_tables():
@@ -445,7 +446,7 @@ def _normalize_client_email_detail(raw: Any, message_id: str) -> Optional[Dict[s
         detail.setdefault('body_type', 'text')
     if not _ai_detail_has_usable_body(detail) and not str(detail.get('subject') or '').strip():
         return None
-    return detail
+    return attach_preferred_reply_address(detail)
 
 
 def _fetch_local_ai_email_detail(account: Dict[str, Any], folder: str,
@@ -495,7 +496,7 @@ def _fetch_local_ai_email_detail(account: Dict[str, Any], folder: str,
         body = item.get('body_preview') or ''
     if not str(body or '').strip() and not str(item.get('subject') or '').strip():
         return None
-    return {
+    return attach_preferred_reply_address({
         'id': item.get('provider_message_id') or message_id,
         'subject': item.get('subject') or '无主题',
         'from': item.get('sender') or '未知',
@@ -508,7 +509,7 @@ def _fetch_local_ai_email_detail(account: Dict[str, Any], folder: str,
         'body_type': item.get('body_type') or 'text',
         'folder': item.get('folder') or folder_name,
         'id_mode': item.get('id_mode') or '',
-    }
+    })
 
 
 def resolve_ai_analyze_email_detail(

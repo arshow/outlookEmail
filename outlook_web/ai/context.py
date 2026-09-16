@@ -12,6 +12,7 @@ from outlook_web.ai.constants import (
     HISTORY_BODY_MAX_CHARS,
     HISTORY_MAX_MESSAGES,
 )
+from outlook_web.mail_reply_address import resolve_preferred_reply_address
 
 EMAIL_RE = re.compile(r'[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}', re.I)
 TAG_RE = re.compile(r'<[^>]+>')
@@ -98,10 +99,17 @@ def normalize_email_detail(detail: Dict[str, Any]) -> Dict[str, Any]:
     if attachment_note:
         body_text = f'{body_text}\n\n{attachment_note}'.strip()
     sender = extract_email_address(detail.get('from') or detail.get('sender'))
+    preferred = extract_email_address(detail.get('reply_to')) or resolve_preferred_reply_address(
+        sender=sender,
+        subject=str(detail.get('subject') or ''),
+        body=body if isinstance(body, str) else body_text,
+        header_reply_to=detail.get('reply_to') or detail.get('replyTo') or '',
+    )
     return {
         'id': str(detail.get('id') or detail.get('provider_message_id') or ''),
         'subject': str(detail.get('subject') or '无主题'),
         'from': sender or str(detail.get('from') or detail.get('sender') or ''),
+        'reply_to': preferred,
         'to': detail.get('to') or detail.get('toRecipients') or detail.get('recipients') or '',
         'received_at': str(detail.get('receivedDateTime') or detail.get('received_at') or detail.get('date') or ''),
         'body_text': truncate_text(body_text, HISTORY_BODY_MAX_CHARS * 2),
@@ -111,6 +119,9 @@ def normalize_email_detail(detail: Dict[str, Any]) -> Dict[str, Any]:
 
 def resolve_contact_email(current: Dict[str, Any], account_email: str) -> str:
     account = str(account_email or '').strip().lower()
+    preferred = extract_email_address(current.get('reply_to'))
+    if preferred and preferred != account:
+        return preferred
     sender = extract_email_address(current.get('from'))
     if sender and sender != account:
         return sender

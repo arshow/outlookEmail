@@ -67,6 +67,63 @@
             return (match ? match[1] : text).trim().toLowerCase();
         }
 
+        function isShopifyPlatformAddress(address) {
+            const value = String(address || '').trim().toLowerCase();
+            return /(?:^|@)(?:[a-z0-9-]+\.)*(?:shopify\.com|shopifyemail\.com)$/i.test(value);
+        }
+
+        function looksLikeShopifyContactForm(detail) {
+            const sender = extractComposeAddress(detail?.from);
+            const subject = String(detail?.subject || '').toLowerCase();
+            const body = String(detail?.body || '').toLowerCase();
+            const haystack = `${subject}\n${body}`;
+            const markers = [
+                "you received a new message from your online store's contact form",
+                'from your online store&#39;s contact form',
+                'from your online store&apos;s contact form',
+                'from your online store&#x27;s contact form',
+                'new customer message on',
+                'class="form-section"',
+                "class='form-section'",
+                'class="mail-section mail-section--type-primary"',
+            ];
+            if (!markers.some(marker => haystack.includes(marker))) {
+                return false;
+            }
+            return isShopifyPlatformAddress(sender)
+                || haystack.includes('form-section')
+                || haystack.includes('contact form');
+        }
+
+        function extractShopifyContactFormEmail(body) {
+            const text = String(body || '');
+            const patterns = [
+                /<b>\s*e-?mail(?:\s*address)?\s*:?\s*<\/b>\s*<pre[^>]*>\s*([^<]+?)\s*<\/pre>/i,
+                /<b>\s*e-?mail(?:\s*address)?\s*:?\s*<\/b>\s*(?:<[^>]+>\s*)*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i,
+                /^\s*e-?mail(?:\s*address)?\s*:\s*([^\s<>]+@[^\s<>]+)\s*$/im,
+                /^\s*e-?mail(?:\s*address)?\s*:\s*[\r\n]+\s*([^\s<>]+@[^\s<>]+)\s*$/im,
+            ];
+            for (const pattern of patterns) {
+                const match = text.match(pattern);
+                if (!match) continue;
+                const address = extractComposeAddress(match[1]);
+                if (address && !isShopifyPlatformAddress(address)) {
+                    return address;
+                }
+            }
+            return '';
+        }
+
+        function resolveComposeReplyTo(detail) {
+            const preferred = extractComposeAddress(detail?.reply_to);
+            if (preferred) return preferred;
+            if (looksLikeShopifyContactForm(detail)) {
+                const formEmail = extractShopifyContactFormEmail(detail?.body || '');
+                if (formEmail) return formEmail;
+            }
+            return extractComposeAddress(detail?.from);
+        }
+
         function parseComposeAddressList(value) {
             return String(value || '')
                 .split(/[,;\n]+/)
@@ -500,7 +557,8 @@
                 // 必须用详情里的原始 provider id；currentEmailId 可能是 selection key
                 document.getElementById('composeMessageId').value = String(detail.id || '').trim();
                 const from = extractComposeAddress(detail.from);
-                let toList = from ? [from] : [];
+                const replyTo = resolveComposeReplyTo(detail);
+                let toList = replyTo ? [replyTo] : [];
                 let ccList = [];
                 if (mode === 'reply_all') {
                     const recipients = []
@@ -509,7 +567,12 @@
                         .concat(detail.cc || [])
                         .concat(detail.ccRecipients || [])
                         .map(extractComposeAddress)
-                        .filter(address => address && address !== selfAddress && address !== from);
+                        .filter(address => (
+                            address
+                            && address !== selfAddress
+                            && address !== from
+                            && address !== replyTo
+                        ));
                     ccList = uniqueAddresses(recipients);
                 }
                 document.getElementById('composeTo').value = uniqueAddresses(toList).join(', ');
