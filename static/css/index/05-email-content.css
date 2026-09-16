@@ -324,7 +324,7 @@
         }
 
         .compose-history-from,
-        .compose-history-preview {
+        .compose-history-excerpt {
             font-size: 12px;
             color: var(--skin-text-soft);
             line-height: 1.4;
@@ -345,7 +345,7 @@
             align-self: stretch;
         }
 
-        .compose-history-preview {
+        .compose-history-preview-overlay {
             position: absolute;
             inset: 0;
             z-index: 8;
@@ -356,7 +356,7 @@
             background: rgba(17, 24, 39, 0.42);
         }
 
-        .compose-history-preview[hidden] {
+        .compose-history-preview-overlay[hidden] {
             display: none !important;
         }
 

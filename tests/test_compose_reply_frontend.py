@@ -36,6 +36,10 @@ class ComposeReplyFrontendTests(unittest.TestCase):
         self.assertIn('setComposeSidebarTab(\'history\')', source)
         self.assertIn('id="composeHistoryList"', html)
         self.assertIn('id="composeHistoryPreview"', html)
+        self.assertIn('compose-history-preview-overlay', html)
+        self.assertIn('compose-history-excerpt', source)
+        self.assertNotIn('class="compose-history-preview"', source)
+        self.assertNotIn('class="compose-history-preview"', html)
         self.assertIn('相关往来', html)
 
     def test_reply_window_has_email_note_field(self):

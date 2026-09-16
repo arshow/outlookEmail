@@ -920,7 +920,7 @@
                             </div>
                             <div class="compose-history-subject">${escapeHtml(item.subject || '无主题')}</div>
                             <div class="compose-history-from">${escapeHtml(item.from || '')}</div>
-                            <div class="compose-history-preview">${escapeHtml(item.body_preview || '')}</div>
+                            <div class="compose-history-excerpt">${escapeHtml(item.body_preview || '')}</div>
                         </button>
                     `;
                 }).join('');
