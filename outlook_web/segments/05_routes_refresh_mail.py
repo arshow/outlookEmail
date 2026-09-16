@@ -11,6 +11,14 @@ from outlook_web.mail_contact_history import (
     CONTACT_HISTORY_MAX_LIMIT,
     fetch_local_contact_history,
 )
+from outlook_web.mail_notes import (
+    EMAIL_NOTE_MAX_LENGTH,
+    attach_notes_to_email_items,
+    normalize_email_note_folder,
+    normalize_email_note_id_mode,
+    normalize_email_note_message_id,
+    save_email_note,
+)
 from outlook_web.mail_reply_address import attach_preferred_reply_address, extract_first_email_address
 
 if TYPE_CHECKING:
@@ -3960,6 +3968,33 @@ def build_retained_mail_filter_sql(subject_contains: str = '',
     return 'AND ' + ' AND '.join(clauses), params
 
 
+def attach_email_notes_to_result(result: Dict[str, Any], account: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if not isinstance(result, dict) or not result.get('success'):
+        return result
+    try:
+        account_id = int((account or {}).get('id') or 0)
+        default_folder = str(result.get('folder') or 'inbox')
+        emails = result.get('emails')
+        if isinstance(emails, list) and emails:
+            attach_notes_to_email_items(
+                get_db(),
+                emails,
+                default_account_id=account_id,
+                default_folder=default_folder,
+            )
+        email = result.get('email')
+        if isinstance(email, dict):
+            attach_notes_to_email_items(
+                get_db(),
+                [email],
+                default_account_id=account_id,
+                default_folder=str(email.get('folder') or default_folder),
+            )
+    except Exception:
+        pass
+    return result
+
+
 def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
                                     skip: int, top: int,
                                     include_body: bool = False,
@@ -4046,7 +4081,7 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
     ).fetchall()
 
     emails = [retained_mail_row_to_list_item(row) for row in rows[:top]]
-    return {
+    return attach_email_notes_to_result({
         'success': True,
         'emails': emails,
         'has_more': len(rows) > top or total_count > skip + len(emails),
@@ -4057,7 +4092,7 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
         'local_retention': True,
         'folder': folder_name,
         'status': status_name,
-    }
+    }, account)
 
 
 def format_graph_email_item(item: Dict[str, Any], folder: str) -> Dict[str, Any]:
@@ -4457,15 +4492,18 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
     explicit_folder_id = str(folder_id or '').strip()
     explicit_mailbox = str(mailbox or '').strip()
     if explicit_folder_id or explicit_mailbox or is_custom_mail_folder_storage_key(folder):
-        return fetch_account_folder_emails(
+        return attach_email_notes_to_result(
+            fetch_account_folder_emails(
+                account,
+                folder,
+                skip,
+                top,
+                proxy_url,
+                fallback_proxy_urls,
+                folder_id=explicit_folder_id or None,
+                mailbox=explicit_mailbox or None,
+            ),
             account,
-            folder,
-            skip,
-            top,
-            proxy_url,
-            fallback_proxy_urls,
-            folder_id=explicit_folder_id or None,
-            mailbox=explicit_mailbox or None,
         )
 
     folder_name = normalize_folder_name(folder)
@@ -4540,13 +4578,19 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
         ):
             record_outlook_mail_channel(account, next(iter(channels)))
 
-        return merge_folder_results(
-            results,
-            0,
-            merged_top
+        return attach_email_notes_to_result(
+            merge_folder_results(
+                results,
+                0,
+                merged_top
+            ),
+            account,
         )
 
-    return fetch_account_folder_emails(account, folder_name, skip, top, proxy_url, fallback_proxy_urls)
+    return attach_email_notes_to_result(
+        fetch_account_folder_emails(account, folder_name, skip, top, proxy_url, fallback_proxy_urls),
+        account,
+    )
 
 
 AGGREGATED_INBOX_MAX_ACCOUNTS = 50
@@ -4932,6 +4976,50 @@ def api_get_aggregated_emails():
     return jsonify(merged), status_code
 
 
+@app.route('/api/emails/note', methods=['PUT'])
+@login_required
+def api_put_email_note():
+    """Save or clear a local per-email note. Empty note deletes the row."""
+    data = request.get_json(silent=True) or {}
+    email_addr = str(data.get('email') or '').strip()
+    account = get_account_by_email(email_addr)
+    if not account:
+        return jsonify({'success': False, 'error': '账号不存在'}), 404
+
+    message_id = normalize_email_note_message_id(data.get('message_id') or data.get('id'))
+    if not message_id:
+        return jsonify({'success': False, 'error': '缺少邮件 ID'}), 400
+
+    folder = normalize_folder_name(data.get('folder') or 'inbox')
+    folder = normalize_email_note_folder(folder)
+    if not folder or folder in {'all', 'both', 'combined'}:
+        return jsonify({'success': False, 'error': 'folder 参数无效'}), 400
+
+    id_mode = normalize_email_note_id_mode(data.get('id_mode'))
+    try:
+        note = save_email_note(
+            get_db(),
+            account_id=int(account.get('id') or 0),
+            folder=folder,
+            message_id=message_id,
+            id_mode=id_mode,
+            note=data.get('note'),
+        )
+    except ValueError:
+        return jsonify({'success': False, 'error': '参数不完整'}), 400
+    except Exception:
+        return jsonify({'success': False, 'error': '备注保存失败'}), 500
+
+    return jsonify({
+        'success': True,
+        'note': note,
+        'message_id': message_id,
+        'folder': folder,
+        'id_mode': id_mode,
+        'max_length': EMAIL_NOTE_MAX_LENGTH,
+    })
+
+
 @app.route('/api/emails/contact-history', methods=['GET'])
 @login_required
 def api_contact_history():
@@ -4992,6 +5080,12 @@ def api_contact_history():
     payload.update(result)
     payload['success'] = True
     payload['retention_enabled'] = True
+    attach_notes_to_email_items(
+        get_db(),
+        payload.get('emails') or [],
+        default_account_id=int(account.get('id') or 0),
+        default_folder=folder,
+    )
     return jsonify(payload)
 
 
@@ -5541,6 +5635,7 @@ def api_get_email_detail(email_addr, message_id):
             folder=folder,
             id_mode=id_mode,
         )
+        attach_email_notes_to_result(prepared, account)
         return jsonify(prepared)
     return jsonify(result)
 

@@ -1667,6 +1667,20 @@ def init_db():
     ''')
 
     cursor.execute('''
+        CREATE TABLE IF NOT EXISTS email_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id INTEGER NOT NULL,
+            folder TEXT NOT NULL DEFAULT 'inbox',
+            provider_message_id TEXT NOT NULL,
+            id_mode TEXT NOT NULL DEFAULT '',
+            note TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE CASCADE
+        )
+    ''')
+
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS forwarding_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             account_id INTEGER NOT NULL,
@@ -2620,6 +2634,11 @@ def init_db():
     cursor.execute('''
         CREATE UNIQUE INDEX IF NOT EXISTS ux_retained_normal_mail_messages_key
         ON retained_normal_mail_messages(account_id, folder, provider_message_id, id_mode)
+    ''')
+
+    cursor.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_email_notes_key
+        ON email_notes(account_id, folder, provider_message_id, id_mode)
     ''')
 
     ensure_index_columns(

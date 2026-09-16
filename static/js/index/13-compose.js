@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, buildEmailDetailRequestUrl, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentFolder, currentGroupId, currentMethod, DOMPurify, escapeHtml, fetchWithTimeout, formatDate, handleApiError, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, rewriteEmailHtmlInlineImages, setModalVisible, showToast */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, buildEmailDetailRequestUrl, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentFolder, currentGroupId, currentMethod, DOMPurify, escapeHtml, fetchWithTimeout, formatDate, handleApiError, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, resolveEmailNoteAccountEmail, rewriteEmailHtmlInlineImages, saveEmailNote, setModalVisible, showToast */
 
         const COMPOSE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
         const COMPOSE_ATTACHMENT_TOTAL_MAX_BYTES = 25 * 1024 * 1024;
@@ -503,6 +503,10 @@
             document.getElementById('composeSubject').value = '';
             const languageGroup = document.getElementById('composeQuoteLanguageGroup');
             if (languageGroup) languageGroup.style.display = 'none';
+            const noteGroup = document.getElementById('composeNoteGroup');
+            if (noteGroup) noteGroup.style.display = 'none';
+            const noteInput = document.getElementById('composeEmailNote');
+            if (noteInput) noteInput.value = '';
             setComposeSendStatus('');
             const editor = document.getElementById('composeBodyEditor');
             if (editor) editor.innerHTML = '';
@@ -605,6 +609,8 @@
                 if (languageGroup) languageGroup.style.display = 'none';
             }
 
+            syncComposeEmailNoteField(mode, detail);
+
             const attachmentInput = document.getElementById('composeAttachments');
             if (attachmentInput && !attachmentInput.dataset.bound) {
                 attachmentInput.addEventListener('change', syncComposeAttachmentsFromInput);
@@ -619,6 +625,52 @@
                 void loadComposeContactHistory({ reset: true });
             }
             document.getElementById(mode === 'forward' || mode === 'new' ? 'composeTo' : 'composeBodyEditor')?.focus();
+        }
+
+        function syncComposeEmailNoteField(mode, detail) {
+            const group = document.getElementById('composeNoteGroup');
+            const input = document.getElementById('composeEmailNote');
+            const showNote = mode === 'reply' || mode === 'reply_all' || mode === 'forward';
+            if (group) {
+                group.style.display = showNote ? '' : 'none';
+            }
+            if (input) {
+                input.value = showNote ? String(detail?.note || '').trim() : '';
+                if (!input.dataset.noteBlurBound) {
+                    input.dataset.noteBlurBound = '1';
+                    input.addEventListener('blur', () => {
+                        const composeMode = document.getElementById('composeMode')?.value || '';
+                        if (composeMode === 'reply' || composeMode === 'reply_all' || composeMode === 'forward') {
+                            void saveComposeEmailNote({ silentIfUnchanged: true });
+                        }
+                    });
+                }
+            }
+        }
+
+        async function saveComposeEmailNote(options = {}) {
+            const mode = document.getElementById('composeMode')?.value || '';
+            if (mode !== 'reply' && mode !== 'reply_all' && mode !== 'forward') {
+                return null;
+            }
+            const messageId = document.getElementById('composeMessageId')?.value?.trim() || '';
+            const noteInput = document.getElementById('composeEmailNote');
+            const note = String(noteInput?.value || '');
+            const detail = currentEmailDetail || composeQuotedDetail || {};
+            if (options.silentIfUnchanged && String(detail.note || '') === note.trim()) {
+                return String(detail.note || '');
+            }
+            if (typeof saveEmailNote !== 'function') {
+                showToast('备注功能不可用', 'error');
+                return null;
+            }
+            return saveEmailNote({
+                email: resolveEmailNoteAccountEmail(detail) || document.getElementById('composeFromEmail')?.value || currentAccount,
+                messageId,
+                folder: document.getElementById('composeFolder')?.value || detail.folder || currentFolder || 'inbox',
+                idMode: detail.id_mode || '',
+                note,
+            });
         }
 
         async function submitComposeEmail() {

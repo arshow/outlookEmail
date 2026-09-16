@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, accountsCache, adjustAccountUnreadCount, adjustIframeHeight, aggregatedInboxGroupId, applyAccountUnreadCountsMap, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getAggregatedInboxCacheAccountKey, getCanonicalMailFolder, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderColoredRemarkMarkup, renderEmptyStateMarkup, scheduleEmailListLoadCheck, shouldHydrateEmailListFromLocalRetention, showEmailFetchErrorModal, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, accountsCache, adjustAccountUnreadCount, adjustIframeHeight, aggregatedInboxGroupId, applyAccountUnreadCountsMap, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getAggregatedInboxCacheAccountKey, getCanonicalMailFolder, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, hideModal, invalidateEmailListCache, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderColoredRemarkMarkup, renderEmptyStateMarkup, scheduleEmailListLoadCheck, shouldHydrateEmailListFromLocalRetention, showEmailFetchErrorModal, showMobileEmailDetail, showModal, showToast, statusFilterOverrideEmails, updateMobileContext, updateModalBodyState */
 
         // ==================== 邮件相关 ====================
 
@@ -317,6 +317,7 @@
                 email?.from,
                 email?.to,
                 email?.body_preview,
+                email?.note,
                 email?.account_email,
                 email?.accountEmail
             ].map(value => String(value || '').toLowerCase()).join('\n');
@@ -1901,6 +1902,7 @@
                         </div>` : ''}
                         <div class="email-subject">${escapeHtml(email.subject || '无主题')}</div>
                         <div class="email-preview">${escapeHtml((email.body_preview || '').trim() || '暂无预览内容')}</div>
+                        ${String(email.note || '').trim() ? `<div class="email-note-snippet" title="${escapeHtml(String(email.note).trim())}">${escapeHtml(String(email.note).trim())}</div>` : ''}
                     </div>
                 </div>
             `}).join('');
@@ -1978,11 +1980,264 @@
 
         function bindEmailListDelegatedEvents() {
             const container = document.getElementById('emailList');
-            if (!container || container.dataset.emailListClickBound === 'true') {
+            if (!container) {
                 return;
             }
-            container.dataset.emailListClickBound = 'true';
-            container.addEventListener('click', handleEmailListClick);
+            if (container.dataset.emailListClickBound !== 'true') {
+                container.dataset.emailListClickBound = 'true';
+                container.addEventListener('click', handleEmailListClick);
+            }
+            if (container.dataset.emailListContextBound !== 'true') {
+                container.dataset.emailListContextBound = 'true';
+                container.addEventListener('contextmenu', handleEmailListContextMenu);
+            }
+        }
+
+        const EMAIL_NOTE_MAX_LENGTH = 2000;
+
+        function getEmailNoteText(email) {
+            return String(email?.note || '').trim();
+        }
+
+        function resolveEmailNoteAccountEmail(email) {
+            return getEmailAccountAddress(email) || String(currentAccount || '').trim();
+        }
+
+        function handleEmailListContextMenu(event) {
+            if (isTempEmailGroup || currentMethod === 'cloudflare-admin') {
+                return;
+            }
+            const emailItem = event.target.closest('.email-item[data-email-id]');
+            if (!emailItem || !emailItem.parentElement?.contains(event.target)) {
+                return;
+            }
+            if (event.target.closest('.email-checkbox-wrapper, .email-flag-btn, input, button, a')) {
+                return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            const email = findEmailForListAction(
+                emailItem.dataset.emailId,
+                Number(emailItem.dataset.emailIndex || 0)
+            );
+            if (!email) {
+                showToast('未找到该邮件', 'error');
+                return;
+            }
+            showEditEmailNoteModal(email);
+        }
+
+        function showEditEmailNoteModal(email) {
+            if (!email || !email.id) {
+                showToast('请先选择一封邮件', 'error');
+                return;
+            }
+            const accountEmail = resolveEmailNoteAccountEmail(email);
+            if (!accountEmail) {
+                showToast('请先选择邮箱账号', 'error');
+                return;
+            }
+            document.getElementById('editEmailNoteAccountEmail').value = accountEmail;
+            document.getElementById('editEmailNoteMessageId').value = String(email.id || '');
+            document.getElementById('editEmailNoteFolder').value = String(email.folder || currentFolder || 'inbox');
+            document.getElementById('editEmailNoteIdMode').value = String(email.id_mode || '');
+            document.getElementById('editEmailNoteSubject').textContent = String(email.subject || '无主题');
+            const input = document.getElementById('editEmailNoteInput');
+            if (input) {
+                input.value = getEmailNoteText(email);
+            }
+            showModal('editEmailNoteModal');
+            window.setTimeout(() => {
+                input?.focus();
+                input?.setSelectionRange?.(input.value.length, input.value.length);
+            }, 0);
+        }
+
+        function hideEditEmailNoteModal() {
+            hideModal('editEmailNoteModal');
+        }
+
+        async function saveEmailNoteFromModal() {
+            const accountEmail = document.getElementById('editEmailNoteAccountEmail')?.value || '';
+            const messageId = document.getElementById('editEmailNoteMessageId')?.value || '';
+            const folder = document.getElementById('editEmailNoteFolder')?.value || 'inbox';
+            const idMode = document.getElementById('editEmailNoteIdMode')?.value || '';
+            const note = document.getElementById('editEmailNoteInput')?.value || '';
+            const saved = await saveEmailNote({
+                email: accountEmail,
+                messageId,
+                folder,
+                idMode,
+                note,
+            });
+            if (saved != null) {
+                hideEditEmailNoteModal();
+            }
+        }
+
+        async function saveEmailNote({ email, messageId, folder, idMode = '', note = '' } = {}) {
+            const accountEmail = String(email || '').trim();
+            const id = String(messageId || '').trim();
+            if (!accountEmail || !id) {
+                showToast('缺少邮件信息，无法保存备注', 'error');
+                return null;
+            }
+            const saveBtn = document.getElementById('saveEmailNoteBtn');
+            const composeSaveBtn = document.getElementById('composeEmailNoteSaveBtn');
+            if (saveBtn) saveBtn.disabled = true;
+            if (composeSaveBtn) composeSaveBtn.disabled = true;
+            try {
+                const response = await fetch('/api/emails/note', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email: accountEmail,
+                        message_id: id,
+                        folder: folder || 'inbox',
+                        id_mode: idMode || '',
+                        note: String(note || '').slice(0, EMAIL_NOTE_MAX_LENGTH)
+                    })
+                });
+                const result = await response.json();
+                if (!result.success) {
+                    handleApiError(result, '备注保存失败');
+                    return null;
+                }
+                const nextNote = String(result.note ?? '');
+                applyEmailNoteToCaches(id, folder, idMode, nextNote, accountEmail);
+                showToast(nextNote ? '备注已保存' : '备注已清除', 'success');
+                return nextNote;
+            } catch (error) {
+                showToast('备注保存失败', 'error');
+                return null;
+            } finally {
+                if (saveBtn) saveBtn.disabled = false;
+                if (composeSaveBtn) composeSaveBtn.disabled = false;
+            }
+        }
+
+        function emailNoteMatchesItem(item, messageId, folder, idMode, accountEmail) {
+            if (!item || String(item.id || '') !== String(messageId || '')) {
+                return false;
+            }
+            const wantFolder = String(folder || '').trim().toLowerCase();
+            const itemFolder = String(item.folder || '').trim().toLowerCase();
+            if (wantFolder && itemFolder && wantFolder !== itemFolder) {
+                return false;
+            }
+            const wantMode = String(idMode || '').trim().toLowerCase();
+            const itemMode = String(item.id_mode || '').trim().toLowerCase();
+            if (wantMode && itemMode && wantMode !== itemMode) {
+                return false;
+            }
+            const wantAccount = String(accountEmail || '').trim().toLowerCase();
+            const itemAccount = resolveEmailNoteAccountEmail(item).toLowerCase();
+            if (wantAccount && itemAccount && wantAccount !== itemAccount) {
+                return false;
+            }
+            return true;
+        }
+
+        function applyEmailNoteToCaches(messageId, folder, idMode, note, accountEmail) {
+            const nextNote = String(note || '');
+            const applyToList = (list) => {
+                if (!Array.isArray(list)) {
+                    return;
+                }
+                list.forEach(item => {
+                    if (emailNoteMatchesItem(item, messageId, folder, idMode, accountEmail)) {
+                        item.note = nextNote;
+                    }
+                });
+            };
+            applyToList(currentEmails);
+            applyToList(statusFilterOverrideEmails);
+            if (emailListCache && typeof emailListCache === 'object') {
+                Object.values(emailListCache).forEach(cacheValue => {
+                    applyToList(cacheValue?.emails);
+                });
+            }
+            if (currentEmailDetail && emailNoteMatchesItem(currentEmailDetail, messageId, folder, idMode, accountEmail)) {
+                currentEmailDetail.note = nextNote;
+            }
+            const listEmail = (currentEmails || []).find(item => (
+                emailNoteMatchesItem(item, messageId, folder, idMode, accountEmail)
+            ));
+            updateEmailNoteListDom(listEmail || {
+                id: messageId,
+                folder,
+                id_mode: idMode,
+                account_email: accountEmail,
+                note: nextNote
+            });
+            updateEmailNoteDetailDom(nextNote, messageId, folder, idMode, accountEmail);
+            const composeNote = document.getElementById('composeEmailNote');
+            const composeMessageId = document.getElementById('composeMessageId')?.value || '';
+            if (composeNote && String(composeMessageId) === String(messageId || '')) {
+                composeNote.value = nextNote;
+            }
+        }
+
+        function updateEmailNoteListDom(email) {
+            if (!email) {
+                return;
+            }
+            const selectionKey = getEmailSelectionKey(email);
+            const item = (selectionKey && findEmailItemBySelectionKey(selectionKey))
+                || Array.from(document.querySelectorAll('.email-item[data-email-id]'))
+                    .find(node => String(node.dataset.emailId || '') === String(email.id || ''));
+            if (!item) {
+                return;
+            }
+            const body = item.querySelector('.email-body');
+            if (!body) {
+                return;
+            }
+            let snippet = item.querySelector('.email-note-snippet');
+            const text = getEmailNoteText(email);
+            if (!text) {
+                snippet?.remove();
+                return;
+            }
+            if (!snippet) {
+                snippet = document.createElement('div');
+                snippet.className = 'email-note-snippet';
+                body.appendChild(snippet);
+            }
+            snippet.title = text;
+            snippet.textContent = text;
+        }
+
+        function updateEmailNoteDetailDom(note, messageId, folder, idMode, accountEmail) {
+            if (!currentEmailDetail || !emailNoteMatchesItem(currentEmailDetail, messageId, folder, idMode, accountEmail)) {
+                return;
+            }
+            const valueEl = document.querySelector('#emailDetail .email-detail-note-value');
+            if (!valueEl) {
+                return;
+            }
+            const text = String(note || '').trim();
+            valueEl.innerHTML = `
+                <span class="${text ? '' : 'email-detail-note-empty'}">${text ? escapeHtml(text) : '暂无备注'}</span>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="editCurrentEmailNote()">编辑</button>
+            `;
+        }
+
+        function editCurrentEmailNote() {
+            showEditEmailNoteModal(currentEmailDetail);
+        }
+
+        function renderEmailDetailNoteRow(email) {
+            const text = getEmailNoteText(email);
+            return `
+                <div class="email-detail-meta-row email-detail-note-row">
+                    <span class="email-detail-meta-label">备注</span>
+                    <span class="email-detail-meta-value email-detail-note-value">
+                        <span class="${text ? '' : 'email-detail-note-empty'}">${text ? escapeHtml(text) : '暂无备注'}</span>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="editCurrentEmailNote()">编辑</button>
+                    </span>
+                </div>
+            `;
         }
 
         function getSelectedEmailItems() {
@@ -3180,7 +3435,8 @@
                         folder: requestFolder,
                         id_mode: data.email?.id_mode || selectedEmail?.id_mode || '',
                         account_id: selectedEmail?.account_id,
-                        account_email: accountEmail
+                        account_email: accountEmail,
+                        note: data.email?.note || selectedEmail?.note || ''
                     };
                     renderEmailDetail(currentEmailDetail);
                 } else {
@@ -3257,6 +3513,7 @@
                     <span class="email-detail-meta-label">时间</span>
                     <span class="email-detail-meta-value">${formatDate(email.date)}</span>
                 </div>
+                ${renderEmailDetailNoteRow(email)}
             `;
 
             const detailHeader = compactMobileMeta

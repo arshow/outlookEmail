@@ -38,6 +38,17 @@ class ComposeReplyFrontendTests(unittest.TestCase):
         self.assertIn('id="composeHistoryPreview"', html)
         self.assertIn('相关往来', html)
 
+    def test_reply_window_has_email_note_field(self):
+        source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
+        html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-primary.html').read_text(encoding='utf-8')
+
+        self.assertIn('function syncComposeEmailNoteField', source)
+        self.assertIn('function saveComposeEmailNote', source)
+        self.assertIn('syncComposeEmailNoteField(mode, detail);', source)
+        self.assertIn('id="composeEmailNote"', html)
+        self.assertIn('id="composeNoteGroup"', html)
+        self.assertIn('保存备注', html)
+
     def test_quoted_html_is_sanitized_and_cleared_on_close(self):
         source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
 

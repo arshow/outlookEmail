@@ -224,6 +224,34 @@
         </div>
     </div>
 
+    <!-- 邮件备注模态框 -->
+    <div class="modal" id="editEmailNoteModal" onmousedown="if(event.target === this) hideEditEmailNoteModal()">
+        <div class="modal-content" style="max-width: 460px;">
+            <div class="modal-header">
+                <h3>邮件备注</h3>
+                <button class="modal-close" onclick="hideEditEmailNoteModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editEmailNoteAccountEmail">
+                <input type="hidden" id="editEmailNoteMessageId">
+                <input type="hidden" id="editEmailNoteFolder">
+                <input type="hidden" id="editEmailNoteIdMode">
+                <div class="form-group">
+                    <label class="form-label">邮件主题</label>
+                    <div id="editEmailNoteSubject" class="form-hint" style="margin: 0; word-break: break-all;"></div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">备注</label>
+                    <textarea class="form-textarea" id="editEmailNoteInput" placeholder="仅保存在本系统，不会发给对方。最多 2000 字" rows="5" maxlength="2000"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideEditEmailNoteModal()">取消</button>
+                <button class="btn btn-primary" id="saveEmailNoteBtn" onclick="saveEmailNoteFromModal()">保存</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 编辑账号模态框 -->
     <div class="modal" id="editAccountModal" onmousedown="if(event.target === this) hideEditAccountModal()">
         <div class="modal-content edit-account-modal-content">
@@ -792,6 +820,16 @@
                         <div class="form-group compose-field-row">
                             <label class="form-label" for="composeSubject">主题</label>
                             <input type="text" class="form-input" id="composeSubject" placeholder="邮件主题">
+                        </div>
+                        <div class="form-group compose-field-row" id="composeNoteGroup" style="display: none;">
+                            <label class="form-label" for="composeEmailNote">邮件备注</label>
+                            <div class="compose-field-control">
+                                <textarea class="form-textarea" id="composeEmailNote" rows="3" maxlength="2000" placeholder="仅保存在本系统，不会发给对方"></textarea>
+                                <div class="compose-note-actions">
+                                    <button type="button" class="btn btn-sm btn-secondary" id="composeEmailNoteSaveBtn" onclick="saveComposeEmailNote()">保存备注</button>
+                                    <span class="form-hint" id="composeEmailNoteHint">右击邮件列表也可快速填写。</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="form-group compose-quote-language-group" id="composeQuoteLanguageGroup" style="display: none;" title="中文保持现有引用格式；English 使用英文引用头，时间按太平洋时区显示">
