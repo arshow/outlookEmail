@@ -6,7 +6,12 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from outlook_web.mail_reply_address import attach_preferred_reply_address
+from outlook_web.mail_contact_history import (
+    CONTACT_HISTORY_DEFAULT_LIMIT,
+    CONTACT_HISTORY_MAX_LIMIT,
+    fetch_local_contact_history,
+)
+from outlook_web.mail_reply_address import attach_preferred_reply_address, extract_first_email_address
 
 if TYPE_CHECKING:
     # These segmented files are executed into the shared `web_outlook_app`
@@ -4925,6 +4930,69 @@ def api_get_aggregated_emails():
         merged['unread_total'] = int(sum(unread_by_account.values()))
     status_code = 200 if merged.get('success') else 502
     return jsonify(merged), status_code
+
+
+@app.route('/api/emails/contact-history', methods=['GET'])
+@login_required
+def api_contact_history():
+    """List locally retained messages for a contact. Grouped by customer email only."""
+    email_addr = str(request.args.get('email') or '').strip()
+    account = get_account_by_email(email_addr)
+    if not account:
+        return jsonify({'success': False, 'error': '账号不存在'}), 404
+
+    contact = extract_first_email_address(request.args.get('contact'))
+    message_id = str(request.args.get('message_id') or '').strip()
+    folder = normalize_folder_name(request.args.get('folder') or 'inbox')
+    id_mode = str(request.args.get('id_mode') or '').strip().lower()
+    limit = parse_non_negative_int(
+        request.args.get('limit', CONTACT_HISTORY_DEFAULT_LIMIT),
+        CONTACT_HISTORY_DEFAULT_LIMIT,
+        CONTACT_HISTORY_MAX_LIMIT,
+    )
+    if limit < 1:
+        limit = CONTACT_HISTORY_DEFAULT_LIMIT
+    offset = parse_non_negative_int(request.args.get('offset', 0), 0)
+
+    retention_enabled = bool(is_normal_mail_local_retention_enabled())
+    if not contact and message_id and retention_enabled:
+        retained = fetch_retained_normal_mail_detail(account, folder, message_id, id_mode)
+        detail = (retained or {}).get('email') or {}
+        contact = extract_first_email_address(detail.get('reply_to') or detail.get('from'))
+
+    payload = {
+        'success': True,
+        'retention_enabled': retention_enabled,
+        'contact_email': contact,
+        'thread_key': '',
+        'thread_strategy': 'contact_email',
+        'emails': [],
+        'total': 0,
+        'has_more': False,
+        'reason': '',
+    }
+    if not retention_enabled:
+        payload['reason'] = 'local_retention_disabled'
+        return jsonify(payload)
+    if not contact:
+        payload['reason'] = 'contact_missing'
+        return jsonify(payload)
+
+    result = fetch_local_contact_history(
+        get_db(),
+        account_id=int(account.get('id') or 0),
+        account_email=account.get('email') or email_addr,
+        contact_email=contact,
+        current_message_id=message_id,
+        limit=limit,
+        offset=offset,
+        include_current=True,
+        include_body=False,
+    )
+    payload.update(result)
+    payload['success'] = True
+    payload['retention_enabled'] = True
+    return jsonify(payload)
 
 
 @app.route('/api/emails/<email_addr>')

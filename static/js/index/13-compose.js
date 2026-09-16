@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentFolder, currentGroupId, currentMethod, escapeHtml, fetchWithTimeout, handleApiError, isAggregatedInboxMode, isTempEmailGroup, setModalVisible, showToast */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, buildEmailDetailRequestUrl, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentFolder, currentGroupId, currentMethod, DOMPurify, escapeHtml, fetchWithTimeout, formatDate, handleApiError, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, rewriteEmailHtmlInlineImages, setModalVisible, showToast */
 
         const COMPOSE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
         const COMPOSE_ATTACHMENT_TOTAL_MAX_BYTES = 25 * 1024 * 1024;
@@ -20,6 +20,18 @@
             replyText: '',
             replyTextZh: '',
         };
+        let composeHistoryState = {
+            requestSeq: 0,
+            contact: '',
+            emails: [],
+            offset: 0,
+            total: 0,
+            hasMore: false,
+            loading: false,
+            reason: '',
+            threadKey: '',
+        };
+        const COMPOSE_HISTORY_PAGE_SIZE = 20;
         const COMPOSE_AI_ACTION_BUTTON_IDS = [
             'composeAiAnalyzeBtn',
             'composeAiShorterBtn',
@@ -498,6 +510,7 @@
             if (fileInput) fileInput.value = '';
             renderComposeAttachmentList();
             resetComposeAiPanel();
+            resetComposeHistoryPanel();
         }
 
         function openComposeModal(mode = 'new') {
@@ -601,6 +614,10 @@
             closeAllModals?.();
             setModalVisible('composeEmailModal', true);
             prepareComposeAiPanel(mode);
+            if (mode === 'reply' || mode === 'reply_all') {
+                setComposeSidebarTab('history');
+                void loadComposeContactHistory({ reset: true });
+            }
             document.getElementById(mode === 'forward' || mode === 'new' ? 'composeTo' : 'composeBodyEditor')?.focus();
         }
 
@@ -720,6 +737,322 @@
                 }
                 const cancelBtn = document.getElementById('composeCancelBtn');
                 if (cancelBtn) cancelBtn.disabled = false;
+            }
+        }
+
+        function resetComposeHistoryPanel() {
+            composeHistoryState = {
+                requestSeq: composeHistoryState.requestSeq + 1,
+                contact: '',
+                emails: [],
+                offset: 0,
+                total: 0,
+                hasMore: false,
+                loading: false,
+                reason: '',
+                threadKey: '',
+            };
+            hideComposeHistoryPreview();
+            const list = document.getElementById('composeHistoryList');
+            if (list) list.innerHTML = '';
+            const moreBtn = document.getElementById('composeHistoryMoreBtn');
+            if (moreBtn) moreBtn.style.display = 'none';
+            const hint = document.getElementById('composeHistoryHint');
+            if (hint) hint.textContent = '仅显示当前账号本地已保留的往来，不远程搜信。';
+            const historyTab = document.querySelector('input[name="composeSidebarTab"][value="history"]');
+            if (historyTab) historyTab.checked = true;
+            applyComposeSidebarTab('history');
+        }
+
+        function getComposeSidebarTab() {
+            const checked = document.querySelector('input[name="composeSidebarTab"]:checked');
+            return checked?.value === 'ai' ? 'ai' : 'history';
+        }
+
+        function setComposeSidebarTab(tab) {
+            const target = tab === 'ai' ? 'ai' : 'history';
+            const input = document.querySelector(`input[name="composeSidebarTab"][value="${target}"]`);
+            if (input) input.checked = true;
+            applyComposeSidebarTab(target);
+        }
+
+        function onComposeSidebarTabChange() {
+            applyComposeSidebarTab(getComposeSidebarTab());
+        }
+
+        function applyComposeSidebarTab(tab) {
+            const isAi = tab === 'ai';
+            const historyPanel = document.getElementById('composeHistoryPanel');
+            const aiPanel = document.getElementById('composeAiPanelBody');
+            const title = document.getElementById('composeSidebarTitle');
+            const manageLink = document.getElementById('composeAiManageLink');
+            if (historyPanel) historyPanel.style.display = isAi ? 'none' : 'flex';
+            if (aiPanel) aiPanel.style.display = isAi ? '' : 'none';
+            if (title) title.textContent = isAi ? 'AI 智能回复' : '相关往来';
+            if (manageLink) manageLink.style.display = isAi ? '' : 'none';
+        }
+
+        function buildComposeHistoryCurrentItem() {
+            const detail = currentEmailDetail || composeQuotedDetail || {};
+            const messageId = String(detail.id || document.getElementById('composeMessageId')?.value || '').trim();
+            if (!messageId) return null;
+            const bodyPreview = String(detail.body_preview || detail.bodyPreview || '')
+                || String(detail.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
+            return {
+                id: messageId,
+                subject: detail.subject || '无主题',
+                from: detail.from || '',
+                to: detail.to || '',
+                cc: detail.cc || '',
+                date: detail.date || detail.received_at || '',
+                folder: detail.folder || document.getElementById('composeFolder')?.value || 'inbox',
+                id_mode: detail.id_mode || '',
+                direction: 'inbound',
+                body_preview: bodyPreview,
+                body_cached: !!detail.body,
+                is_current: true,
+                thread_key: composeHistoryState.threadKey,
+            };
+        }
+
+        function mergeComposeHistoryEmails(remoteEmails) {
+            const seen = new Set();
+            const merged = [];
+            const currentItem = buildComposeHistoryCurrentItem();
+            const currentId = String(currentItem?.id || '').trim();
+            (remoteEmails || []).forEach((item) => {
+                const id = String(item?.id || '').trim();
+                if (!id || seen.has(id)) return;
+                seen.add(id);
+                if (currentId && id === currentId) {
+                    merged.push({ ...item, is_current: true });
+                    return;
+                }
+                merged.push(item);
+            });
+            if (currentItem && !seen.has(currentId)) {
+                merged.unshift(currentItem);
+            }
+            return merged;
+        }
+
+        function renderComposeHistoryList() {
+            const list = document.getElementById('composeHistoryList');
+            const moreBtn = document.getElementById('composeHistoryMoreBtn');
+            const hint = document.getElementById('composeHistoryHint');
+            if (!list) return;
+            const emails = composeHistoryState.emails || [];
+            if (!emails.length) {
+                let empty = '本地没有找到该客户的其他往来。';
+                if (composeHistoryState.reason === 'local_retention_disabled') {
+                    empty = '未开启普通邮件本地保留，目前只能看到本封。开启后可查看更多往来。';
+                } else if (composeHistoryState.reason === 'contact_missing') {
+                    empty = '无法识别客户邮箱，所以没有相关往来。';
+                } else if (!composeHistoryState.contact) {
+                    empty = '无法识别客户邮箱，所以没有相关往来。';
+                }
+                list.innerHTML = `<div class="compose-history-empty">${escapeHtml(empty)}</div>`;
+            } else {
+                list.innerHTML = emails.map((item, index) => {
+                    const dir = item.direction === 'outbound' ? '发' : '收';
+                    const dirClass = item.direction === 'outbound' ? 'is-outbound' : 'is-inbound';
+                    const currentMark = item.is_current
+                        ? '<span class="compose-history-current">本封</span>'
+                        : '';
+                    return `
+                        <button type="button" class="compose-history-item${item.is_current ? ' is-current' : ''}" onclick="openComposeHistoryPreview(${index})">
+                            <div class="compose-history-item-top">
+                                <span class="compose-history-dir ${dirClass}">${dir}</span>
+                                ${currentMark}
+                                <span class="compose-history-time">${escapeHtml(formatDate(item.date) || '')}</span>
+                            </div>
+                            <div class="compose-history-subject">${escapeHtml(item.subject || '无主题')}</div>
+                            <div class="compose-history-from">${escapeHtml(item.from || '')}</div>
+                            <div class="compose-history-preview">${escapeHtml(item.body_preview || '')}</div>
+                        </button>
+                    `;
+                }).join('');
+            }
+            if (moreBtn) {
+                moreBtn.style.display = composeHistoryState.hasMore ? '' : 'none';
+                moreBtn.disabled = !!composeHistoryState.loading;
+            }
+            if (hint) {
+                const contact = composeHistoryState.contact;
+                if (contact) {
+                    const onlyCurrent = emails.length === 1 && emails[0]?.is_current;
+                    hint.textContent = onlyCurrent
+                        ? `客户 ${contact} · 没有其他本地往来。`
+                        : `客户 ${contact} · 本地 ${emails.length} 封往来。`;
+                }
+            }
+        }
+
+        async function loadComposeContactHistory({ reset = true } = {}) {
+            const mode = document.getElementById('composeMode')?.value || 'new';
+            if (mode !== 'reply' && mode !== 'reply_all') {
+                return;
+            }
+            const accountEmail = document.getElementById('composeFromEmail')?.value?.trim() || '';
+            const messageId = document.getElementById('composeMessageId')?.value?.trim() || '';
+            const detail = currentEmailDetail || composeQuotedDetail || {};
+            const contact = resolveComposeReplyTo(detail)
+                || parseComposeAddressList(document.getElementById('composeTo')?.value || '')[0]
+                || '';
+            if (reset) {
+                composeHistoryState.emails = [];
+                composeHistoryState.offset = 0;
+                composeHistoryState.hasMore = false;
+                composeHistoryState.total = 0;
+                composeHistoryState.reason = '';
+            }
+            composeHistoryState.contact = contact;
+            composeHistoryState.loading = true;
+            const requestSeq = ++composeHistoryState.requestSeq;
+            renderComposeHistoryList();
+            if (!accountEmail || !contact) {
+                composeHistoryState.loading = false;
+                composeHistoryState.reason = contact ? composeHistoryState.reason : 'contact_missing';
+                composeHistoryState.emails = mergeComposeHistoryEmails([]);
+                renderComposeHistoryList();
+                return;
+            }
+            try {
+                const params = new URLSearchParams({
+                    email: accountEmail,
+                    contact,
+                    message_id: messageId,
+                    folder: document.getElementById('composeFolder')?.value || 'inbox',
+                    limit: String(COMPOSE_HISTORY_PAGE_SIZE),
+                    offset: String(composeHistoryState.offset),
+                });
+                const idMode = detail.id_mode || '';
+                if (idMode) params.set('id_mode', idMode);
+                const response = await fetchWithTimeout(`/api/emails/contact-history?${params.toString()}`);
+                const data = await response.json().catch(() => ({}));
+                if (requestSeq !== composeHistoryState.requestSeq) return;
+                if (!response.ok || !data.success) {
+                    composeHistoryState.reason = 'load_failed';
+                    composeHistoryState.emails = mergeComposeHistoryEmails(composeHistoryState.emails);
+                    showToast(data.error || '加载相关往来失败', 'error');
+                    return;
+                }
+                const remote = Array.isArray(data.emails) ? data.emails : [];
+                composeHistoryState.threadKey = data.thread_key || '';
+                composeHistoryState.reason = data.reason || '';
+                composeHistoryState.total = Number(data.total || remote.length);
+                composeHistoryState.hasMore = !!data.has_more;
+                composeHistoryState.offset = composeHistoryState.offset + remote.length;
+                composeHistoryState.emails = mergeComposeHistoryEmails(
+                    reset ? remote : composeHistoryState.emails.concat(remote)
+                );
+            } catch (error) {
+                if (requestSeq !== composeHistoryState.requestSeq) return;
+                composeHistoryState.reason = 'load_failed';
+                composeHistoryState.emails = mergeComposeHistoryEmails(composeHistoryState.emails);
+                showToast(error?.message || '加载相关往来失败', 'error');
+            } finally {
+                if (requestSeq === composeHistoryState.requestSeq) {
+                    composeHistoryState.loading = false;
+                    renderComposeHistoryList();
+                }
+            }
+        }
+
+        function loadMoreComposeContactHistory() {
+            if (composeHistoryState.loading || !composeHistoryState.hasMore) return;
+            void loadComposeContactHistory({ reset: false });
+        }
+
+        function hideComposeHistoryPreview() {
+            const preview = document.getElementById('composeHistoryPreview');
+            if (preview) {
+                preview.hidden = true;
+            }
+            const body = document.getElementById('composeHistoryPreviewBody');
+            if (body) body.innerHTML = '';
+        }
+
+        function sanitizeComposeHistoryPreviewHtml(html, email) {
+            let bodyHtml = String(html || '');
+            if (typeof rewriteEmailHtmlInlineImages === 'function') {
+                bodyHtml = rewriteEmailHtmlInlineImages(bodyHtml, email);
+            }
+            if (typeof DOMPurify !== 'undefined' && DOMPurify.sanitize) {
+                return DOMPurify.sanitize(bodyHtml, {
+                    ALLOWED_TAGS: ['a', 'b', 'i', 'u', 'strong', 'em', 'p', 'br', 'div', 'span', 'img', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'code'],
+                    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'style', 'class', 'width', 'height', 'align', 'border', 'cellpadding', 'cellspacing'],
+                    ALLOW_DATA_ATTR: false,
+                    FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button'],
+                });
+            }
+            return escapeHtml(bodyHtml);
+        }
+
+        async function openComposeHistoryPreview(index) {
+            const item = composeHistoryState.emails[index];
+            if (!item?.id) return;
+            const accountEmail = document.getElementById('composeFromEmail')?.value?.trim() || '';
+            const preview = document.getElementById('composeHistoryPreview');
+            const body = document.getElementById('composeHistoryPreviewBody');
+            const title = document.getElementById('composeHistoryPreviewTitle');
+            if (!preview || !body) return;
+            if (!preview.dataset.bound) {
+                preview.addEventListener('mousedown', (event) => {
+                    if (event.target === preview) hideComposeHistoryPreview();
+                });
+                preview.dataset.bound = '1';
+            }
+            if (title) title.textContent = item.subject || '邮件预览';
+            body.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
+            preview.hidden = false;
+            try {
+                const folder = item.folder || document.getElementById('composeFolder')?.value || 'inbox';
+                const url = typeof buildEmailDetailRequestUrl === 'function'
+                    ? buildEmailDetailRequestUrl(item.id, folder, {
+                        account_email: accountEmail,
+                        id_mode: item.id_mode || '',
+                    })
+                    : `/api/email/${encodeURIComponent(accountEmail)}/${encodeURIComponent(item.id)}?folder=${encodeURIComponent(folder)}&prefer_local=1`;
+                const response = await fetchWithTimeout(url, {
+                    timeoutMessage: '加载邮件详情超时，请稍后重试',
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || !data.success || !data.email) {
+                    body.innerHTML = `<div class="compose-history-empty">${escapeHtml(data.error || '加载邮件详情失败')}</div>`;
+                    return;
+                }
+                const email = data.email;
+                const isHtml = email.body_type === 'html'
+                    || (email.body && (String(email.body).includes('<html') || String(email.body).includes('<div') || String(email.body).includes('<p>')));
+                const bodyContent = isHtml
+                    ? '<iframe id="composeHistoryPreviewFrame" class="compose-history-preview-frame" sandbox="allow-same-origin"></iframe>'
+                    : `<div class="email-body-text">${escapeHtml(email.body || '')}</div>`;
+                body.innerHTML = `
+                    <div class="email-detail-subject">${escapeHtml(email.subject || item.subject || '无主题')}</div>
+                    <div class="compose-history-preview-meta">
+                        <div><strong>发件人</strong> ${escapeHtml(email.from || item.from || '-')}</div>
+                        <div><strong>收件人</strong> ${escapeHtml(email.to || item.to || '-')}</div>
+                        <div><strong>时间</strong> ${escapeHtml(formatDate(email.date || item.date) || '-')}</div>
+                    </div>
+                    ${bodyContent}
+                `;
+                if (isHtml) {
+                    const iframe = document.getElementById('composeHistoryPreviewFrame');
+                    if (iframe) {
+                        const sanitizedBody = sanitizeComposeHistoryPreviewHtml(email.body || '', email);
+                        iframe.srcdoc = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px;line-height:1.6;color:#333;margin:0;padding:0;}img{max-width:100%;height:auto;}</style></head><body>${sanitizedBody}</body></html>`;
+                        iframe.onload = () => {
+                            try {
+                                const doc = iframe.contentDocument;
+                                const height = Math.max(doc?.body?.scrollHeight || 0, 240);
+                                iframe.style.height = `${height + 24}px`;
+                            } catch (_error) {}
+                        };
+                    }
+                }
+            } catch (error) {
+                body.innerHTML = `<div class="compose-history-empty">${escapeHtml(error?.message || '加载邮件详情失败')}</div>`;
             }
         }
 

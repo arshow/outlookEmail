@@ -26,6 +26,18 @@ class ComposeReplyFrontendTests(unittest.TestCase):
         self.assertIn('address !== replyTo', source)
         self.assertIn('new customer message on', source)
 
+    def test_reply_sidebar_loads_related_history_and_preview(self):
+        source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
+        html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-primary.html').read_text(encoding='utf-8')
+
+        self.assertIn('function loadComposeContactHistory', source)
+        self.assertIn('function openComposeHistoryPreview', source)
+        self.assertIn('/api/emails/contact-history', source)
+        self.assertIn('setComposeSidebarTab(\'history\')', source)
+        self.assertIn('id="composeHistoryList"', html)
+        self.assertIn('id="composeHistoryPreview"', html)
+        self.assertIn('相关往来', html)
+
     def test_quoted_html_is_sanitized_and_cleared_on_close(self):
         source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
 

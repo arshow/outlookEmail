@@ -825,12 +825,27 @@
                         <div id="composeAttachmentList" class="compose-attachment-list"></div>
                     </div>
                 </div>
-                <aside class="compose-ai-sidebar" id="composeAiPanel" style="display: none;" aria-label="AI 智能回复">
+                <aside class="compose-ai-sidebar" id="composeAiPanel" style="display: none;" aria-label="回复助手">
                     <div class="compose-ai-sidebar-head">
-                        <h4 class="compose-ai-sidebar-title">AI 智能回复</h4>
-                        <a class="btn btn-sm btn-secondary" href="/ai" target="_blank" rel="noopener">管理</a>
+                        <h4 class="compose-ai-sidebar-title" id="composeSidebarTitle">相关往来</h4>
+                        <a class="btn btn-sm btn-secondary" href="/ai" target="_blank" rel="noopener" id="composeAiManageLink" style="display: none;">管理</a>
                     </div>
-                    <div class="compose-ai-panel">
+                    <div class="provider-tabs compose-sidebar-tabs" id="composeSidebarTabs">
+                        <label class="provider-tab-item">
+                            <input type="radio" name="composeSidebarTab" value="history" checked onchange="onComposeSidebarTabChange()">
+                            <span class="provider-tab-label">相关往来</span>
+                        </label>
+                        <label class="provider-tab-item">
+                            <input type="radio" name="composeSidebarTab" value="ai" onchange="onComposeSidebarTabChange()">
+                            <span class="provider-tab-label">AI 智能回复</span>
+                        </label>
+                    </div>
+                    <div class="compose-history-panel" id="composeHistoryPanel">
+                        <div class="form-hint" id="composeHistoryHint">仅显示当前账号本地已保留的往来，不远程搜信。</div>
+                        <div class="compose-history-list" id="composeHistoryList"></div>
+                        <button type="button" class="btn btn-sm btn-secondary compose-history-more-btn" id="composeHistoryMoreBtn" onclick="loadMoreComposeContactHistory()" style="display: none;">加载更多</button>
+                    </div>
+                    <div class="compose-ai-panel" id="composeAiPanelBody" style="display: none;">
                         <div class="compose-ai-controls">
                             <div class="compose-ai-scope provider-tabs">
                                 <label class="provider-tab-item">
@@ -890,6 +905,15 @@
                 <span class="form-hint" id="composeSendStatus" style="margin-right: auto; display: none;" aria-live="polite"></span>
                 <button class="btn btn-secondary" type="button" id="composeCancelBtn" onclick="hideComposeModal()">取消</button>
                 <button class="btn btn-primary" type="button" id="composeSendBtn" onclick="submitComposeEmail()">发送</button>
+            </div>
+            <div class="compose-history-preview" id="composeHistoryPreview" hidden>
+                <div class="compose-history-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="composeHistoryPreviewTitle">
+                    <div class="modal-header">
+                        <h3 id="composeHistoryPreviewTitle">邮件预览</h3>
+                        <button class="modal-close" type="button" onclick="hideComposeHistoryPreview()">&times;</button>
+                    </div>
+                    <div class="modal-body compose-history-preview-body" id="composeHistoryPreviewBody"></div>
+                </div>
             </div>
         </div>
     </div>

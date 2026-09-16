@@ -12,6 +12,7 @@ from outlook_web.ai.constants import (
     HISTORY_BODY_MAX_CHARS,
     HISTORY_MAX_MESSAGES,
 )
+from outlook_web.mail_contact_history import fetch_local_contact_history
 from outlook_web.mail_reply_address import resolve_preferred_reply_address
 
 EMAIL_RE = re.compile(r'[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}', re.I)
@@ -149,47 +150,31 @@ def load_contact_local_history(
     exclude_message_id: str = '',
     limit: int = HISTORY_MAX_MESSAGES,
 ) -> List[Dict[str, Any]]:
-    contact = str(contact_email or '').strip().lower()
-    if not contact or not account_id:
-        return []
-    like = f'%{contact}%'
-    rows = db.execute(
-        '''
-        SELECT provider_message_id, subject, sender, recipients, received_at, body, body_type, body_preview, body_cached
-        FROM retained_normal_mail_messages
-        WHERE account_id = ?
-          AND (
-            LOWER(COALESCE(sender, '')) LIKE ?
-            OR LOWER(COALESCE(recipients, '')) LIKE ?
-          )
-        ORDER BY received_at_sort DESC, id DESC
-        LIMIT ?
-        ''',
-        (account_id, like, like, max(1, min(int(limit or HISTORY_MAX_MESSAGES), HISTORY_MAX_MESSAGES))),
-    ).fetchall()
-
-    account = str(account_email or '').strip().lower()
-    exclude = str(exclude_message_id or '').strip()
+    result = fetch_local_contact_history(
+        db,
+        account_id=account_id,
+        account_email=account_email,
+        contact_email=contact_email,
+        current_message_id=exclude_message_id,
+        limit=max(1, min(int(limit or HISTORY_MAX_MESSAGES), HISTORY_MAX_MESSAGES)),
+        offset=0,
+        include_current=False,
+        include_body=True,
+        max_limit=HISTORY_MAX_MESSAGES,
+    )
     messages: List[Dict[str, Any]] = []
-    for row in rows:
-        item = dict(row)
-        message_id = str(item.get('provider_message_id') or '')
-        if exclude and message_id == exclude:
-            continue
-        sender = extract_email_address(item.get('sender'))
+    for item in result.get('emails') or []:
         body = item.get('body') if item.get('body_cached') else (item.get('body_preview') or '')
         body_type = str(item.get('body_type') or 'text').lower()
         body_text = html_to_text(body) if 'html' in body_type else str(body or '')
-        direction = 'inbound' if sender == contact else ('outbound' if sender == account else 'unknown')
         messages.append({
-            'id': message_id,
+            'id': str(item.get('id') or ''),
             'subject': str(item.get('subject') or '无主题'),
-            'from': sender or str(item.get('sender') or ''),
-            'received_at': str(item.get('received_at') or ''),
-            'direction': direction,
+            'from': extract_email_address(item.get('from')) or str(item.get('from') or ''),
+            'received_at': str(item.get('date') or ''),
+            'direction': str(item.get('direction') or 'unknown'),
             'body_text': truncate_text(body_text),
         })
-    # Chronological order for the prompt.
     messages.reverse()
     return messages
 

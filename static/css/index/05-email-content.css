@@ -149,6 +149,7 @@
             max-height: 90vh;
             display: flex;
             flex-direction: column;
+            position: relative;
         }
 
         /* Keep overall modal width unchanged; AI sidebar takes a larger share. */
@@ -214,6 +215,7 @@
             flex-direction: column;
             gap: 10px;
             background: linear-gradient(180deg, var(--skin-surface-soft) 0%, var(--skin-surface) 48%);
+            position: relative;
         }
 
         .compose-ai-sidebar-head {
@@ -233,6 +235,161 @@
             font-size: 15px;
             font-weight: 650;
             color: var(--skin-text);
+        }
+
+        .compose-sidebar-tabs {
+            flex: 0 0 auto;
+            margin: 0;
+        }
+
+        .compose-history-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-height: 0;
+            flex: 1 1 auto;
+        }
+
+        .compose-history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-height: 0;
+            overflow: auto;
+        }
+
+        .compose-history-item {
+            width: 100%;
+            text-align: left;
+            border: 1px solid var(--skin-border);
+            background: var(--skin-surface);
+            border-radius: 10px;
+            padding: 10px 12px;
+            cursor: pointer;
+            color: inherit;
+        }
+
+        .compose-history-item:hover,
+        .compose-history-item.is-current {
+            border-color: var(--skin-border-strong);
+            background: var(--skin-surface-soft);
+        }
+
+        .compose-history-item-top {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 4px;
+        }
+
+        .compose-history-dir,
+        .compose-history-current {
+            font-size: 11px;
+            line-height: 1;
+            padding: 3px 6px;
+            border-radius: 999px;
+            background: var(--skin-surface-soft);
+            color: var(--skin-text-soft);
+            flex: 0 0 auto;
+        }
+
+        .compose-history-dir.is-inbound {
+            background: #e8f1ff;
+            color: #1d4f91;
+        }
+
+        .compose-history-dir.is-outbound {
+            background: #ecf8ef;
+            color: #1f6b3a;
+        }
+
+        .compose-history-current {
+            background: #fff4d6;
+            color: #8a5a00;
+        }
+
+        .compose-history-time {
+            margin-left: auto;
+            font-size: 11px;
+            color: var(--skin-text-soft);
+            white-space: nowrap;
+        }
+
+        .compose-history-subject {
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.35;
+            margin-bottom: 2px;
+            word-break: break-word;
+        }
+
+        .compose-history-from,
+        .compose-history-preview {
+            font-size: 12px;
+            color: var(--skin-text-soft);
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .compose-history-empty {
+            font-size: 13px;
+            color: var(--skin-text-soft);
+            padding: 18px 8px;
+            text-align: center;
+        }
+
+        .compose-history-more-btn {
+            align-self: stretch;
+        }
+
+        .compose-history-preview {
+            position: absolute;
+            inset: 0;
+            z-index: 8;
+            display: flex;
+            align-items: stretch;
+            justify-content: center;
+            padding: 12px;
+            background: rgba(17, 24, 39, 0.42);
+        }
+
+        .compose-history-preview[hidden] {
+            display: none !important;
+        }
+
+        .compose-history-preview-dialog {
+            width: min(720px, 100%);
+            max-height: 100%;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            background: var(--skin-surface);
+            border-radius: 12px;
+            border: 1px solid var(--skin-border-strong);
+        }
+
+        .compose-history-preview-body {
+            overflow: auto;
+            min-height: 0;
+            flex: 1 1 auto;
+            padding: 16px;
+        }
+
+        .compose-history-preview-meta {
+            display: grid;
+            gap: 6px;
+            margin: 8px 0 14px;
+            font-size: 13px;
+        }
+
+        .compose-history-preview-frame {
+            width: 100%;
+            min-height: 240px;
+            border: 0;
+            background: #fff;
         }
 
         .compose-header-fields {
