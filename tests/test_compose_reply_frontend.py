@@ -42,6 +42,16 @@ class ComposeReplyFrontendTests(unittest.TestCase):
         self.assertNotIn('class="compose-history-preview"', html)
         self.assertIn('相关往来', html)
 
+    def test_history_preview_has_ai_translate(self):
+        source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
+        html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-primary.html').read_text(encoding='utf-8')
+
+        self.assertIn('function toggleComposeHistoryAiTranslation', source)
+        self.assertIn("fetchWithTimeout('/api/ai/translate'", source)
+        self.assertIn('id="composeHistoryTranslatePanel"', source)
+        self.assertIn('id="composeHistoryAiTranslateBtn"', html)
+        self.assertIn('onclick="toggleComposeHistoryAiTranslation()"', html)
+
     def test_reply_window_has_email_note_field(self):
         source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
         html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-primary.html').read_text(encoding='utf-8')

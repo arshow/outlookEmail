@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, buildEmailDetailRequestUrl, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentFolder, currentGroupId, currentMethod, DOMPurify, escapeHtml, fetchWithTimeout, formatDate, handleApiError, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, resolveEmailNoteAccountEmail, rewriteEmailHtmlInlineImages, saveEmailNote, setModalVisible, showToast */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, buildEmailDetailRequestUrl, buildEmailTranslateRequestPayload, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentFolder, currentGroupId, currentMethod, DOMPurify, emailTranslateCache, ensureAiTranslateReady, escapeHtml, fetchWithTimeout, formatDate, getEmailTranslateBucket, getEmailTranslateCacheKey, handleApiError, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, providerDisplayName, resolveEmailNoteAccountEmail, rewriteEmailHtmlInlineImages, saveEmailNote, setModalVisible, showToast, stripEmbeddedMediaForTranslate */
 
         const COMPOSE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
         const COMPOSE_ATTACHMENT_TOTAL_MAX_BYTES = 25 * 1024 * 1024;
@@ -31,6 +31,9 @@
             reason: '',
             threadKey: '',
         };
+        let composeHistoryPreviewEmail = null;
+        let composeHistoryTranslateView = 'original';
+        let composeHistoryTranslateBusy = false;
         const COMPOSE_HISTORY_PAGE_SIZE = 20;
         const COMPOSE_AI_ACTION_BUTTON_IDS = [
             'composeAiAnalyzeBtn',
@@ -1023,6 +1026,182 @@
             }
             const body = document.getElementById('composeHistoryPreviewBody');
             if (body) body.innerHTML = '';
+            composeHistoryPreviewEmail = null;
+            composeHistoryTranslateView = 'original';
+            composeHistoryTranslateBusy = false;
+            updateComposeHistoryTranslateButton();
+        }
+
+        function getComposeHistoryAiTranslationCache() {
+            const email = composeHistoryPreviewEmail;
+            if (!email || typeof getEmailTranslateCacheKey !== 'function') {
+                return null;
+            }
+            const cacheKey = getEmailTranslateCacheKey(email);
+            if (!cacheKey) {
+                return null;
+            }
+            if (typeof getEmailTranslateBucket === 'function') {
+                return getEmailTranslateBucket(cacheKey)?.ai || null;
+            }
+            return emailTranslateCache?.[cacheKey]?.ai || null;
+        }
+
+        function updateComposeHistoryTranslateButton() {
+            const btn = document.getElementById('composeHistoryAiTranslateBtn');
+            if (!btn) return;
+            if (!composeHistoryPreviewEmail) {
+                btn.disabled = true;
+                btn.textContent = 'AI翻译';
+                return;
+            }
+            if (composeHistoryTranslateBusy) {
+                btn.disabled = true;
+                btn.textContent = 'AI翻译中…';
+                return;
+            }
+            btn.disabled = false;
+            const cached = getComposeHistoryAiTranslationCache();
+            if (cached && composeHistoryTranslateView === 'translation') {
+                btn.textContent = '显示原文';
+                return;
+            }
+            if (cached) {
+                btn.textContent = '显示译文';
+                return;
+            }
+            btn.textContent = 'AI翻译';
+        }
+
+        function setComposeHistoryOriginalVisible(visible) {
+            const frame = document.getElementById('composeHistoryPreviewFrame');
+            const text = document.querySelector('#composeHistoryPreviewBody .email-body-text');
+            if (frame) frame.style.display = visible ? '' : 'none';
+            if (text) text.style.display = visible ? '' : 'none';
+        }
+
+        function applyComposeHistoryTranslateView() {
+            const panel = document.getElementById('composeHistoryTranslatePanel');
+            const showing = composeHistoryTranslateView === 'translation';
+            if (panel) {
+                panel.style.display = showing ? '' : 'none';
+                const toggleBtn = panel.querySelector('#composeHistoryTranslateToggleBtn');
+                if (toggleBtn) {
+                    toggleBtn.textContent = showing ? '显示原文' : '显示译文';
+                }
+            }
+            setComposeHistoryOriginalVisible(!showing);
+            updateComposeHistoryTranslateButton();
+        }
+
+        function renderComposeHistoryTranslatePanel(payload) {
+            const panel = document.getElementById('composeHistoryTranslatePanel');
+            if (!panel) return;
+            const subjectEl = document.getElementById('composeHistoryTranslateSubject');
+            const bodyEl = document.getElementById('composeHistoryTranslateBody');
+            const foot = panel.querySelector('.email-translate-panel__foot');
+            const subjectZh = String(payload?.subject_translation || '').trim();
+            const bodyZh = String(payload?.body_translation || payload?.translation || '').trim();
+            if (subjectEl) {
+                if (subjectZh) {
+                    subjectEl.style.display = '';
+                    subjectEl.textContent = subjectZh;
+                } else {
+                    subjectEl.style.display = 'none';
+                    subjectEl.textContent = '';
+                }
+            }
+            if (bodyEl) {
+                bodyEl.textContent = bodyZh || '（译文为空）';
+            }
+            if (foot) {
+                const notes = [];
+                if (typeof providerDisplayName === 'function') {
+                    notes.push(providerDisplayName(payload?.provider || 'ai', payload?.model));
+                } else {
+                    notes.push('AI 翻译');
+                }
+                if (payload?.truncated) notes.push('原文过长已截断');
+                foot.textContent = notes.join(' · ');
+            }
+            composeHistoryTranslateView = 'translation';
+            applyComposeHistoryTranslateView();
+        }
+
+        async function toggleComposeHistoryAiTranslation() {
+            if (!composeHistoryPreviewEmail) {
+                showToast('请先打开一封往来邮件', 'warning');
+                return;
+            }
+            if (composeHistoryTranslateBusy) return;
+
+            const cached = getComposeHistoryAiTranslationCache();
+            if (cached) {
+                if (composeHistoryTranslateView === 'translation') {
+                    composeHistoryTranslateView = 'original';
+                    applyComposeHistoryTranslateView();
+                } else {
+                    renderComposeHistoryTranslatePanel(cached);
+                }
+                return;
+            }
+
+            if (typeof ensureAiTranslateReady === 'function') {
+                const ready = await ensureAiTranslateReady();
+                if (!ready) return;
+            }
+
+            const payload = typeof buildEmailTranslateRequestPayload === 'function'
+                ? buildEmailTranslateRequestPayload(composeHistoryPreviewEmail)
+                : {
+                    subject: String(composeHistoryPreviewEmail.subject || '').trim(),
+                    html: '',
+                    text: String(composeHistoryPreviewEmail.body || ''),
+                    attachments: [],
+                    source_lang: 'en',
+                };
+            if (!payload.subject && !payload.html && !payload.text) {
+                showToast('当前邮件没有可翻译内容', 'warning');
+                return;
+            }
+
+            composeHistoryTranslateBusy = true;
+            updateComposeHistoryTranslateButton();
+            try {
+                const response = await fetchWithTimeout('/api/ai/translate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    timeoutMs: 90000,
+                    timeoutMessage: '翻译超时，请稍后重试',
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || !data.success) {
+                    handleApiError(data, data.error || '翻译失败');
+                    return;
+                }
+                const stored = {
+                    translation: data.translation || '',
+                    subject_translation: data.subject_translation || '',
+                    body_translation: data.body_translation || '',
+                    provider: data.provider || 'ai',
+                    model: data.model || '',
+                    truncated: !!data.truncated,
+                };
+                if (typeof getEmailTranslateCacheKey === 'function' && typeof getEmailTranslateBucket === 'function') {
+                    const cacheKey = getEmailTranslateCacheKey(composeHistoryPreviewEmail);
+                    if (cacheKey) {
+                        getEmailTranslateBucket(cacheKey).ai = stored;
+                    }
+                }
+                renderComposeHistoryTranslatePanel(stored);
+                showToast(data.truncated ? '已翻译（原文过长已截断）' : '翻译完成', 'success');
+            } catch (error) {
+                showToast(error?.message || '翻译失败', 'error');
+            } finally {
+                composeHistoryTranslateBusy = false;
+                updateComposeHistoryTranslateButton();
+            }
         }
 
         function sanitizeComposeHistoryPreviewHtml(html, email) {
@@ -1056,6 +1235,10 @@
                 preview.dataset.bound = '1';
             }
             if (title) title.textContent = item.subject || '邮件预览';
+            composeHistoryPreviewEmail = null;
+            composeHistoryTranslateView = 'original';
+            composeHistoryTranslateBusy = false;
+            updateComposeHistoryTranslateButton();
             body.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
             preview.hidden = false;
             try {
@@ -1071,10 +1254,18 @@
                 });
                 const data = await response.json().catch(() => ({}));
                 if (!response.ok || !data.success || !data.email) {
+                    composeHistoryPreviewEmail = null;
+                    updateComposeHistoryTranslateButton();
                     body.innerHTML = `<div class="compose-history-empty">${escapeHtml(data.error || '加载邮件详情失败')}</div>`;
                     return;
                 }
                 const email = data.email;
+                composeHistoryPreviewEmail = {
+                    ...email,
+                    account_email: accountEmail || email.account_email || currentAccount || '',
+                    folder: email.folder || folder,
+                    id_mode: email.id_mode || item.id_mode || '',
+                };
                 const isHtml = email.body_type === 'html'
                     || (email.body && (String(email.body).includes('<html') || String(email.body).includes('<div') || String(email.body).includes('<p>')));
                 const bodyContent = isHtml
@@ -1087,8 +1278,25 @@
                         <div><strong>收件人</strong> ${escapeHtml(email.to || item.to || '-')}</div>
                         <div><strong>时间</strong> ${escapeHtml(formatDate(email.date || item.date) || '-')}</div>
                     </div>
+                    <div class="email-translate-panel" id="composeHistoryTranslatePanel" style="display: none;">
+                        <div class="email-translate-panel__head">
+                            <div class="email-translate-panel__title">中文译文</div>
+                            <button type="button" class="email-translate-panel__toggle" id="composeHistoryTranslateToggleBtn">显示原文</button>
+                        </div>
+                        <div class="email-translate-panel__subject" id="composeHistoryTranslateSubject"></div>
+                        <div class="email-translate-panel__body" id="composeHistoryTranslateBody"></div>
+                        <div class="email-translate-panel__foot"></div>
+                    </div>
                     ${bodyContent}
                 `;
+                const toggleBtn = document.getElementById('composeHistoryTranslateToggleBtn');
+                if (toggleBtn) {
+                    toggleBtn.addEventListener('click', () => {
+                        composeHistoryTranslateView = composeHistoryTranslateView === 'translation' ? 'original' : 'translation';
+                        applyComposeHistoryTranslateView();
+                    });
+                }
+                updateComposeHistoryTranslateButton();
                 if (isHtml) {
                     const iframe = document.getElementById('composeHistoryPreviewFrame');
                     if (iframe) {
@@ -1104,6 +1312,8 @@
                     }
                 }
             } catch (error) {
+                composeHistoryPreviewEmail = null;
+                updateComposeHistoryTranslateButton();
                 body.innerHTML = `<div class="compose-history-empty">${escapeHtml(error?.message || '加载邮件详情失败')}</div>`;
             }
         }

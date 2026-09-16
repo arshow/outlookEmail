@@ -3928,17 +3928,17 @@
                 .replace(/[A-Za-z0-9+/]{400,}={0,2}/g, '[附件内容已省略]');
         }
 
-        function buildEmailTranslateRequestPayload() {
-            const body = stripEmbeddedMediaForTranslate(currentEmailDetail?.body || '');
-            const isHtml = currentEmailDetail?.body_type === 'html'
+        function buildEmailTranslateRequestPayload(email = currentEmailDetail) {
+            const body = stripEmbeddedMediaForTranslate(email?.body || '');
+            const isHtml = email?.body_type === 'html'
                 || (body && (body.includes('<html') || body.includes('<div') || body.includes('<p>')));
-            const attachments = Array.isArray(currentEmailDetail?.attachments)
-                ? currentEmailDetail.attachments
+            const attachments = Array.isArray(email?.attachments)
+                ? email.attachments
                     .map(item => String(item?.name || item?.filename || '').trim())
                     .filter(Boolean)
                 : [];
             return {
-                subject: String(currentEmailDetail?.subject || '').trim(),
+                subject: String(email?.subject || '').trim(),
                 html: isHtml ? body : '',
                 text: isHtml ? '' : body,
                 attachments,
