@@ -116,6 +116,7 @@ def apply_output_guards(
     *,
     source_text: str,
     matched_rules: Sequence[Dict[str, Any]],
+    operator_instruction: str = '',
 ) -> Dict[str, Any]:
     pre = preclassify(source_text)
     rule_risk = 'green'
@@ -139,7 +140,8 @@ def apply_output_guards(
     contains_commitment = any(pattern.search(reply_text) for pattern in COMMITMENT_PATTERNS)
     facts_missing = bool(missing_facts)
 
-    if contains_forbidden or (facts_missing and contains_commitment):
+    operator_confirmed = bool(str(operator_instruction or '').strip())
+    if contains_forbidden or (facts_missing and contains_commitment and not operator_confirmed):
         reply_text = SAFE_REPLY_EN
         reply_text_zh = SAFE_REPLY_ZH
         internal = (internal + '\n安全守卫已替换包含未经确认承诺或禁止短语的草稿。').strip()

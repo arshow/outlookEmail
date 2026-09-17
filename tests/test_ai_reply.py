@@ -445,6 +445,53 @@ class AiReplyTestCase(unittest.TestCase):
         self.assertEqual(payload['body_translation'], '你好吗？')
         self.assertEqual(payload['translation'], '你好\n\n你好吗？')
 
+    def test_operator_instruction_is_not_rewritten_as_check_first(self):
+        from outlook_web.ai.prompts import build_analysis_prompt, build_refine_prompt
+        from outlook_web.ai.rules import apply_output_guards
+
+        analysis_prompt = build_analysis_prompt(
+            context={'currentEmail': {'subject': 'Where is my order'}},
+            rules=[],
+            knowledge_entries=[],
+            operator_instruction='核实了物流情况，我会为 bronze cat 办理退款',
+        )
+        self.assertIn('Operator instruction: 核实了物流情况，我会为 bronze cat 办理退款', analysis_prompt)
+        self.assertIn('Do not replace it with a generic "I will check first" investigation reply.', analysis_prompt)
+        self.assertNotIn('must never claim unverified refunds', analysis_prompt)
+
+        refine_prompt = build_refine_prompt(
+            mode='custom',
+            current_text='Let me check the details first.',
+            target_language='en',
+            analysis={'riskLevel': 'yellow', 'missingFacts': ['tracking']},
+            instruction='核实了物流情况，我会为 bronze cat 办理退款',
+        )
+        self.assertIn('operator-confirmed', refine_prompt)
+        self.assertNotIn('If the instruction asks for an unverified commitment', refine_prompt)
+
+        guarded = apply_output_guards(
+            {
+                'replyText': 'Your full refund has been approved already.',
+                'replyTextZh': '已批准退款',
+                'riskLevel': 'yellow',
+                'riskReasons': [],
+                'matchedRuleIds': [],
+                'matchedKnowledgeIds': [],
+                'missingFacts': ['tracking'],
+                'internalAdviceZh': '',
+                'intent': 'refund',
+                'requiresHumanConfirmation': True,
+                'summaryZh': '退款',
+                'sourceLanguage': 'en',
+                'replyLanguage': 'en',
+                'confidence': 0.9,
+            },
+            source_text='I want a refund',
+            matched_rules=[],
+            operator_instruction='核实了物流情况，我会办理退款',
+        )
+        self.assertIn('refund has been approved', guarded['replyText'].lower())
+
 
 if __name__ == '__main__':
     unittest.main()

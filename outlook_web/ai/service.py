@@ -205,6 +205,7 @@ def analyze_email(
     current_detail: Dict[str, Any],
     context_scope: str = CONTEXT_SCOPE_CURRENT,
     force_refresh: bool = False,
+    operator_instruction: str = '',
 ) -> Dict[str, Any]:
     if not settings.get('enabled'):
         raise ValueError('AI 智能回复未启用，请先在 /ai 配置并开启')
@@ -236,6 +237,7 @@ def analyze_email(
         [entry.get('id') for entry in knowledge_entries],
         context.get('currentEmail'),
         [(m.get('id'), m.get('body_text')) for m in (context.get('historyMessages') or [])],
+        str(operator_instruction or '').strip(),
     )
 
     if not force_refresh:
@@ -270,6 +272,7 @@ def analyze_email(
         ],
         knowledge_entries=knowledge_entries,
         system_persona=credentials.get('system_persona') or '',
+        operator_instruction=operator_instruction,
     )
 
     started = time.time()
@@ -292,7 +295,12 @@ def analyze_email(
         parsed = parse_json_text(raw_text, f"{credentials['provider']} 返回了无效分析 JSON")
         analysis = normalize_analysis(parsed)
         analysis['matchedKnowledgeIds'] = [str(entry.get('id')) for entry in knowledge_entries]
-        analysis = apply_output_guards(analysis, source_text=haystack, matched_rules=matched_rules)
+        analysis = apply_output_guards(
+            analysis,
+            source_text=haystack,
+            matched_rules=matched_rules,
+            operator_instruction=operator_instruction,
+        )
         if not analysis.get('replyTextZh'):
             analysis['replyTextZh'] = _translate_reply_zh(credentials, analysis['replyText'])
     except Exception as exc:

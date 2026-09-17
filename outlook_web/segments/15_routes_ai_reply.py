@@ -555,6 +555,7 @@ def api_ai_analyze():
     message_id = str(data.get('message_id') or '').strip()
     context_scope = str(data.get('context_scope') or CONTEXT_SCOPE_CURRENT).strip().lower()
     force_refresh = bool(data.get('force_refresh'))
+    operator_instruction = str(data.get('instruction') or data.get('operator_instruction') or '').strip()[:2000]
     if not email_addr or not message_id:
         return jsonify({'success': False, 'error': 'email 与 message_id 必填'}), 400
     if context_scope not in CONTEXT_SCOPES:
@@ -594,6 +595,7 @@ def api_ai_analyze():
             current_detail=email_detail,
             context_scope=context_scope,
             force_refresh=force_refresh,
+            operator_instruction=operator_instruction,
         )
         if detail_result.get('warning'):
             result['warning'] = detail_result['warning']

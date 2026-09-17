@@ -1425,9 +1425,30 @@
             if (statusHint) statusHint.textContent = '';
         }
 
+        function getComposeAiInstruction() {
+            return String(document.getElementById('composeAiCustomInstruction')?.value || '').trim();
+        }
+
+        function syncComposeAiCustomButton() {
+            const btn = document.getElementById('composeAiCustomBtn');
+            if (!btn) return;
+            const canUse = !!getComposeAiInstruction() && !composeAiState.busy && composeAiState.ready;
+            btn.disabled = !canUse;
+            btn.setAttribute('aria-disabled', canUse ? 'false' : 'true');
+        }
+
+        function bindComposeAiInstructionInput() {
+            const input = document.getElementById('composeAiCustomInstruction');
+            if (!input || input.dataset.instructionBound === '1') {
+                return;
+            }
+            input.dataset.instructionBound = '1';
+            input.addEventListener('input', syncComposeAiCustomButton);
+        }
+
         function setComposeAiActionEnabled(enabled) {
             const canUse = !!enabled && !composeAiState.busy;
-            ['composeAiShorterBtn', 'composeAiPoliterBtn', 'composeAiRegenBtn', 'composeAiCustomBtn', 'composeAiInsertBtn']
+            ['composeAiShorterBtn', 'composeAiPoliterBtn', 'composeAiRegenBtn', 'composeAiInsertBtn']
                 .forEach((id) => {
                     const btn = document.getElementById(id);
                     if (!btn) return;
@@ -1441,6 +1462,7 @@
             }
             const insertBlock = document.getElementById('composeAiInsertBlock');
             if (insertBlock && enabled) insertBlock.style.display = '';
+            syncComposeAiCustomButton();
         }
 
         function restoreComposeAiButtonLabel(btn) {
@@ -1597,6 +1619,7 @@
                 return;
             }
             setComposeAiSidebarVisible(true);
+            bindComposeAiInstructionInput();
             const statusHint = document.getElementById('composeAiStatusHint');
             try {
                 const response = await fetchWithTimeout('/api/ai/status');
@@ -1617,9 +1640,11 @@
                     // Open reply with any existing draft for this mail+scope immediately.
                     await loadComposeAiLatest({ silent: true, clearIfMissing: false });
                 }
+                syncComposeAiCustomButton();
             } catch (error) {
                 composeAiState.ready = false;
                 if (statusHint) statusHint.textContent = '无法读取 AI 状态';
+                syncComposeAiCustomButton();
             }
         }
 
@@ -1717,7 +1742,7 @@
             setComposeAiActionEnabled(!!analysis.replyText);
         }
 
-        async function analyzeComposeAiReply(forceRefresh = false) {
+        async function analyzeComposeAiReply(forceRefresh = false, options = {}) {
             if (composeAiState.busy) {
                 showToast('正在处理中，请稍候', 'info');
                 return;
@@ -1732,7 +1757,12 @@
                 showToast('缺少发件账号或原邮件 ID', 'error');
                 return;
             }
-            if (!beginComposeAiBusy('composeAiAnalyzeBtn', '生成中…')) return;
+            const instruction = getComposeAiInstruction();
+            const fromCustom = !!options.fromCustom;
+            if (!beginComposeAiBusy(
+                fromCustom ? 'composeAiCustomBtn' : 'composeAiAnalyzeBtn',
+                fromCustom ? '按指令生成中…' : '生成中…'
+            )) return;
             try {
                 // Prefer the already-opened detail so AI does not depend on a second IMAP/Graph fetch.
                 const openedDetail = currentEmailDetail || composeQuotedDetail || null;
@@ -1760,6 +1790,7 @@
                         id_mode: currentEmailDetail?.id_mode || '',
                         context_scope: getComposeAiContextScope(),
                         force_refresh: !!forceRefresh,
+                        instruction,
                         email_detail: emailDetail,
                     }),
                 });
@@ -1772,7 +1803,7 @@
                 if (data.warning) {
                     showToast(data.warning, 'info');
                 } else {
-                    showToast(data.cached ? '已加载缓存建议' : 'AI 建议已生成', 'success');
+                    showToast(data.cached ? '已加载缓存建议' : (fromCustom ? '已按指令生成' : 'AI 建议已生成'), 'success');
                 }
             } catch (error) {
                 showToast(error?.message || 'AI 生成失败', 'error');
@@ -1786,13 +1817,17 @@
                 showToast('正在处理中，请稍候', 'info');
                 return;
             }
-            if (!composeAiState.replyText) {
+            const instruction = getComposeAiInstruction();
+            if (mode === 'custom') {
+                if (!instruction) {
+                    showToast('请先填写要回复的意思', 'error');
+                    return;
+                }
+                if (!composeAiState.replyText) {
+                    return analyzeComposeAiReply(true, { fromCustom: true });
+                }
+            } else if (!composeAiState.replyText) {
                 showToast('请先生成建议', 'error');
-                return;
-            }
-            const instruction = document.getElementById('composeAiCustomInstruction')?.value || '';
-            if (mode === 'custom' && !instruction.trim()) {
-                showToast('请填写自定义改写指令', 'error');
                 return;
             }
             const modeBtnMap = {
@@ -1805,7 +1840,7 @@
                 shorter: '改写中…',
                 politer: '改写中…',
                 regenerate: '重写中…',
-                custom: '改写中…',
+                custom: '按指令生成中…',
             };
             if (!beginComposeAiBusy(modeBtnMap[mode] || 'composeAiCustomBtn', loadingTextMap[mode] || '改写中…')) return;
             try {
@@ -1844,7 +1879,7 @@
                     provider: data.provider,
                     model: data.model,
                 });
-                showToast('改写完成', 'success');
+                showToast(mode === 'custom' ? '已按指令生成' : '改写完成', 'success');
             } catch (error) {
                 showToast(error?.message || '改写失败', 'error');
             } finally {

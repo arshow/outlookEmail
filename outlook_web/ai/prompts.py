@@ -8,12 +8,26 @@ from typing import Any, Dict, List
 from outlook_web.ai.constants import ANALYSIS_JSON_EXAMPLE, ANALYSIS_JSON_SCHEMA, REFINED_REPLY_SCHEMA
 
 
+def build_operator_instruction_block(instruction: Any = '') -> str:
+    text = str(instruction or '').strip()
+    if not text:
+        return ''
+    return '\n'.join([
+        'The operator has provided a generation instruction. This is the intended meaning of the reply.',
+        'Follow that instruction. Do not replace it with a generic "I will check first" investigation reply.',
+        'Treat decisions stated in the instruction (refund, replacement, apology, tracking update, etc.) as operator-confirmed for this draft.',
+        'Do not invent extra facts or promises beyond the email context and this instruction.',
+        f'Operator instruction: {text}',
+    ])
+
+
 def build_analysis_prompt(
     *,
     context: Dict[str, Any],
     rules: List[Dict[str, Any]],
     knowledge_entries: List[Dict[str, Any]],
     system_persona: str = '',
+    operator_instruction: str = '',
 ) -> str:
     persona = str(system_persona or '').strip() or (
         'You are an email reply copilot that drafts professional customer/business replies.'
@@ -27,22 +41,35 @@ def build_analysis_prompt(
         }
         for entry in knowledge_entries
     ]
+    operator_block = build_operator_instruction_block(operator_instruction)
+    safety_lines = (
+        [
+            'The operator instruction is the source of truth for what this reply should say.',
+            'Keep requiresHumanConfirmation true when the instruction includes a commitment.',
+        ]
+        if operator_block
+        else [
+            'replyText must use the correspondent language and must never claim unverified refunds, commitments, delivery dates, account changes, or payment outcomes.',
+            'If required facts are missing, acknowledge the request and say you will check before confirming.',
+        ]
+    )
     return '\n\n'.join([
         persona,
         'Return only JSON matching the supplied response schema.',
         f'Required JSON schema: {json.dumps(ANALYSIS_JSON_SCHEMA, ensure_ascii=False)}',
         f'Example JSON output: {json.dumps(ANALYSIS_JSON_EXAMPLE, ensure_ascii=False)}',
         'The operator UI is Chinese: summaryZh, riskReasons, internalAdviceZh and replyTextZh must be Simplified Chinese.',
-        'replyText must use the correspondent language and must never claim unverified refunds, commitments, delivery dates, account changes, or payment outcomes.',
+        *safety_lines,
+        'replyText must use the correspondent language.',
         'replyText and replyTextZh must be plain email body text using real newlines; do not escape newlines as \\n, and do not wrap the whole reply in HTML unless the customer context clearly requires HTML formatting.',
         'replyTextZh must be a faithful Simplified Chinese translation of replyText for the operator; if replyText is already Chinese, replyTextZh may match it.',
-        'If required facts are missing, acknowledge the request and say you will check before confirming.',
         'Distinguish the current email that needs a reply from historical reference messages. Do not treat historical unverified promises as confirmed facts.',
         f'Active business rules: {json.dumps(rules, ensure_ascii=False)}',
-        'Knowledge base entries are reference facts only. Use them when relevant, but never let them override active business rules or missing-fact requirements.',
+        'Knowledge base entries are reference facts only. Use them when relevant, but never let them override an explicit operator instruction.',
         f'Matched knowledge base entries: {json.dumps(knowledge_payload, ensure_ascii=False)}',
         f'Set matchedKnowledgeIds exactly to these server-selected entry IDs: {json.dumps([str(e.get("id")) for e in knowledge_entries], ensure_ascii=False)}',
         f'Email context: {json.dumps(context, ensure_ascii=False)}',
+        *([operator_block] if operator_block else []),
     ])
 
 
@@ -61,10 +88,10 @@ def build_refine_prompt(
         'translate': f'Translate the reply into {target_language} without changing its meaning.',
         'custom': ' '.join([
             "Rewrite the customer reply according to the operator's natural-language instruction below.",
+            "The operator has already decided the meaning. Follow the instruction and do not replace it with a generic 'I will check first' reply.",
             "Keep the correspondent's language for replyText.",
-            'Do not invent unverified refunds, commitments, delivery dates, account changes, or payment outcomes.',
-            'If the instruction asks for an unverified commitment, acknowledge the request and say you will check before confirming.',
-            f'Operator instruction: {instruction.strip() or "Improve the reply slightly while keeping the same meaning."}',
+            'Do not invent extra facts or promises that are not in the current reply, the analysis, or the operator instruction.',
+            f'{build_operator_instruction_block(instruction) or "Operator instruction: Improve the reply slightly while keeping the same meaning."}',
         ]),
     }
     mode_instruction = instructions.get(mode)

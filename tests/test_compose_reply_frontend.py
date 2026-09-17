@@ -88,6 +88,18 @@ class ComposeReplyFrontendTests(unittest.TestCase):
         self.assertIn('resetComposeForm();', source)
         self.assertIn('引用里的 <style> 会漏到整页', source)
 
+    def test_ai_custom_instruction_drives_generation(self):
+        source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
+        html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-primary.html').read_text(encoding='utf-8')
+
+        self.assertIn('function getComposeAiInstruction()', source)
+        self.assertIn('instruction,', source)
+        self.assertIn("analyzeComposeAiReply(true, { fromCustom: true })", source)
+        self.assertIn('按指令生成', html)
+        self.assertIn('id="composeAiInstructionHint"', html)
+        self.assertIn('id="composeAiCustomInstruction"', html)
+        self.assertIn('<textarea', html)
+
 
 if __name__ == '__main__':
     unittest.main()
