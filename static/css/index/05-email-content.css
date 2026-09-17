@@ -690,7 +690,7 @@
         .compose-ai-zh {
             font-size: 13px;
             color: var(--skin-text);
-            white-space: normal;
+            white-space: pre-wrap;
             word-break: break-word;
             line-height: 1.5;
         }
@@ -705,7 +705,7 @@
 
         .compose-ai-text {
             margin: 0;
-            white-space: normal;
+            white-space: pre-wrap;
             word-break: break-word;
             font-family: inherit;
             font-size: 13px;

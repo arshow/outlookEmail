@@ -62,6 +62,7 @@ def build_analysis_prompt(
         *safety_lines,
         'replyText must use the correspondent language.',
         'replyText and replyTextZh must be plain email body text using real newlines; do not escape newlines as \\n, and do not wrap the whole reply in HTML unless the customer context clearly requires HTML formatting.',
+        'Format the email with readable line breaks: greeting, blank line, body paragraphs, each tracking/status event on its own line, blank line, then sign-off and signature. Never collapse a whole email into one paragraph.',
         'replyTextZh must be a faithful Simplified Chinese translation of replyText for the operator; if replyText is already Chinese, replyTextZh may match it.',
         'Distinguish the current email that needs a reply from historical reference messages. Do not treat historical unverified promises as confirmed facts.',
         f'Active business rules: {json.dumps(rules, ensure_ascii=False)}',

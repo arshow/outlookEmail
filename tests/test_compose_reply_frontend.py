@@ -88,6 +88,18 @@ class ComposeReplyFrontendTests(unittest.TestCase):
         self.assertIn('resetComposeForm();', source)
         self.assertIn('引用里的 <style> 会漏到整页', source)
 
+    def test_ai_reply_text_keeps_line_breaks(self):
+        source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
+        css = (ROOT_DIR / 'static' / 'css' / 'index' / '05-email-content.css').read_text(encoding='utf-8')
+
+        self.assertIn('function formatComposeAiPlainText(value)', source)
+        self.assertIn('unwrapTrivialComposeAiHtml', source)
+        self.assertIn('.replace(/\\n/g, \'<br>\')', source)
+        self.assertIn('each tracking/status event on its own line', (ROOT_DIR / 'outlook_web' / 'ai' / 'prompts.py').read_text(encoding='utf-8'))
+        self.assertIn('.compose-ai-text', css)
+        self.assertRegex(css, r'\.compose-ai-text\s*\{[^}]*white-space:\s*pre-wrap')
+        self.assertRegex(css, r'\.compose-ai-zh\s*\{[^}]*white-space:\s*pre-wrap')
+
     def test_ai_custom_instruction_drives_generation(self):
         source = COMPOSE_JS_PATH.read_text(encoding='utf-8')
         html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-primary.html').read_text(encoding='utf-8')

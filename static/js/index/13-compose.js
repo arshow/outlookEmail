@@ -1669,6 +1669,28 @@
             return text.trim();
         }
 
+        function unwrapTrivialComposeAiHtml(value) {
+            const trimmed = String(value || '').trim();
+            const match = trimmed.match(/^<(?:p|div)(?:\s[^>]*)?>([\s\S]*)<\/(?:p|div)>$/i);
+            if (match && !/<\/?[a-z][\s\S]*>/i.test(match[1])) {
+                return match[1].trim();
+            }
+            return trimmed;
+        }
+
+        function formatComposeAiPlainText(value) {
+            let text = unwrapTrivialComposeAiHtml(normalizeComposeAiText(value));
+            if (!text) return '';
+            text = text.replace(/\u00a0/g, ' ');
+            text = text.replace(/\s*;\s+(?=le\s+\d{1,2}\/\d{1,2}\/\d{2,4})/gi, '\n');
+            text = text.replace(/\s+(?=le\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+à\s+)/gi, '\n');
+            text = text.replace(/\.\s+(?=(?:Nous restons|N'hésitez|Please|If you have|We remain|Should you)\b)/gi, '.\n\n');
+            text = text.replace(/\s+(?=(?:Cordialement|Bien cordialement|Best regards|Kind regards|Regards|Sincerely|此致|祝好)\b)/gi, '\n\n');
+            text = text.replace(/\b(Cordialement|Bien cordialement|Best regards|Kind regards|Regards|Sincerely)\s*,\s*/gi, '$1,\n');
+            text = text.replace(/\n{3,}/g, '\n\n');
+            return text.trim();
+        }
+
         function composeAiLooksLikeHtml(value) {
             return /<\/?[a-z][\s\S]*>/i.test(String(value || ''));
         }
@@ -1684,10 +1706,10 @@
         }
 
         function formatComposeAiReplyHtml(value) {
-            const text = normalizeComposeAiText(value);
+            const text = formatComposeAiPlainText(value);
             if (!text) return '';
             if (composeAiLooksLikeHtml(text)) {
-                return sanitizeComposeAiHtml(text);
+                return sanitizeComposeAiHtml(text).replace(/\n/g, '<br>');
             }
             return escapeHtml(text).replace(/\n/g, '<br>');
         }
@@ -1698,8 +1720,8 @@
             composeAiState.runId = payload.run_id || null;
             composeAiState.analysis = analysis;
             composeAiState.meta = meta;
-            composeAiState.replyText = normalizeComposeAiText(analysis.replyText || '');
-            composeAiState.replyTextZh = normalizeComposeAiText(analysis.replyTextZh || '');
+            composeAiState.replyText = formatComposeAiPlainText(analysis.replyText || '');
+            composeAiState.replyTextZh = formatComposeAiPlainText(analysis.replyTextZh || '');
 
             const result = document.getElementById('composeAiResult');
             const metaEl = document.getElementById('composeAiMeta');
@@ -1892,7 +1914,7 @@
                 showToast('正在处理中，请稍候', 'info');
                 return;
             }
-            const text = normalizeComposeAiText(composeAiState.replyText || '');
+            const text = formatComposeAiPlainText(composeAiState.replyText || '');
             if (!text) {
                 showToast('没有可填入的草稿', 'error');
                 return;
