@@ -4085,6 +4085,9 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
     ).fetchall()
 
     emails = [retained_mail_row_to_list_item(row) for row in rows[:top]]
+    if keyword:
+        for item in emails:
+            item['keyword_hit'] = True
     return attach_email_notes_to_result({
         'success': True,
         'emails': emails,
@@ -4721,7 +4724,7 @@ def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: 
         try:
             if use_local:
                 result = fetch_retained_normal_mail_list(
-                    account, folder, skip, top, status=status, keyword=keyword
+                    account, folder, skip, top, include_body=bool(keyword), status=status, keyword=keyword
                 )
             else:
                 result = fetch_account_emails(account, folder, skip, top)

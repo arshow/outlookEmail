@@ -1574,6 +1574,7 @@ class NormalMailRetentionTests(unittest.TestCase):
         payload = response.get_json()
         self.assertTrue(payload['success'])
         self.assertEqual([item['id'] for item in payload['emails']], ['body-keyword-1'])
+        self.assertTrue(payload['emails'][0].get('keyword_hit'))
 
     def test_email_filter_uses_cached_body_without_remote_detail(self):
         account = {

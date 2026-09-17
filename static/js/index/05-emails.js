@@ -307,9 +307,21 @@
             return String(currentEmailKeyword || '').trim().toLowerCase();
         }
 
+        function stripEmailSearchText(value) {
+            return String(value || '')
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/&nbsp;/gi, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .toLowerCase();
+        }
+
         function emailMatchesKeyword(email, keyword = getEmailSearchKeyword()) {
             const needle = String(keyword || '').trim().toLowerCase();
             if (!needle) {
+                return true;
+            }
+            if (email?.keyword_hit === true) {
                 return true;
             }
             const haystack = [
@@ -317,12 +329,13 @@
                 email?.from,
                 email?.to,
                 email?.body_preview,
+                email?.body,
                 email?.note,
                 email?.contact_note,
                 email?.contact_email,
                 email?.account_email,
                 email?.accountEmail
-            ].map(value => String(value || '').toLowerCase()).join('\n');
+            ].map(stripEmailSearchText).join('\n');
             return haystack.includes(needle);
         }
 
