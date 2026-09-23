@@ -1576,6 +1576,48 @@ class NormalMailRetentionTests(unittest.TestCase):
         self.assertEqual([item['id'] for item in payload['emails']], ['body-keyword-1'])
         self.assertTrue(payload['emails'][0].get('keyword_hit'))
 
+    def test_local_retention_keyword_search_matches_sender_not_in_loaded_preview(self):
+        with self.app.app_context():
+            web_outlook_app.upsert_retained_normal_mail_list_items(
+                self.account,
+                'inbox',
+                [{
+                    'id': 'sender-keyword-1',
+                    'id_mode': 'graph',
+                    'subject': 'Weekly update',
+                    'from': 'unique-sender@example.com',
+                    'to': 'reader@example.com',
+                    'date': '2026-05-27T09:00:00Z',
+                    'is_read': True,
+                    'has_attachments': False,
+                    'body_preview': 'No target in the preview',
+                }, {
+                    'id': 'sender-keyword-2',
+                    'id_mode': 'graph',
+                    'subject': 'Other weekly update',
+                    'from': 'someone-else@example.com',
+                    'to': 'reader@example.com',
+                    'date': '2026-05-27T09:05:00Z',
+                    'is_read': True,
+                    'has_attachments': False,
+                    'body_preview': 'Still no target',
+                }]
+            )
+            self.assertTrue(web_outlook_app.set_setting(
+                'normal_mail_local_retention_enabled',
+                'true',
+            ))
+
+        response = self.client.get(
+            '/api/emails/retained@example.com?source=local&folder=inbox&keyword=unique-sender'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual([item['id'] for item in payload['emails']], ['sender-keyword-1'])
+        self.assertEqual(payload['count'], 1)
+
     def test_email_filter_uses_cached_body_without_remote_detail(self):
         account = {
             'id': self.account['id'],

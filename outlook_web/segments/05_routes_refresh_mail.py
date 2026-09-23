@@ -3921,6 +3921,7 @@ def email_matches_local_retention_filters(item: Dict[str, Any], subject_contains
                                           from_contains: str = '', keyword: str = '') -> bool:
     subject = str(item.get('subject', '') or '')
     sender = str(item.get('from', '') or '')
+    recipient = str(item.get('to', '') or '')
     preview = str(item.get('body_preview', '') or '')
     body = strip_html_content(str(item.get('body', '') or ''))
     if subject_contains and subject_contains not in subject.lower():
@@ -3929,7 +3930,7 @@ def email_matches_local_retention_filters(item: Dict[str, Any], subject_contains
         return False
     if not keyword:
         return True
-    return keyword in '\n'.join([subject, preview, body]).lower()
+    return keyword in '\n'.join([subject, sender, recipient, preview, body]).lower()
 
 
 def retained_mail_like_param(value: str) -> str:
@@ -3960,11 +3961,13 @@ def build_retained_mail_filter_sql(subject_contains: str = '',
         clauses.append(
             """(
                 LOWER(COALESCE(subject, '')) LIKE ? ESCAPE '\\'
+                OR LOWER(COALESCE(sender, '')) LIKE ? ESCAPE '\\'
+                OR LOWER(COALESCE(recipients, '')) LIKE ? ESCAPE '\\'
                 OR LOWER(COALESCE(body_preview, '')) LIKE ? ESCAPE '\\'
                 OR LOWER(retained_mail_strip_html(COALESCE(body, ''))) LIKE ? ESCAPE '\\'
             )"""
         )
-        params.extend([keyword_param, keyword_param, keyword_param])
+        params.extend([keyword_param, keyword_param, keyword_param, keyword_param, keyword_param])
     if not clauses:
         return '', []
     return 'AND ' + ' AND '.join(clauses), params

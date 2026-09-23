@@ -2394,6 +2394,12 @@ class FrontendEmailListSecurityTests(unittest.TestCase):
         self.assertIn('搜索主题、发件人、摘要、正文', layout)
         self.assertIn('EMAIL_FETCH_TOP_DEFAULT = 50', self.emails_js)
         self.assertIn('hydrateEmailSearchFromLocal()', self.emails_js)
+        self.assertIn('function isMailboxKeywordSearchActive()', self.emails_js)
+        self.assertIn('keywordSearchEmails', self.emails_js)
+        hydrate_start = self.emails_js.index('async function hydrateEmailSearchFromLocal(')
+        hydrate_source = self.emails_js[hydrate_start:self.emails_js.index('function initEmailKeywordSearch()', hydrate_start)]
+        self.assertIn("source: 'local'", hydrate_source)
+        self.assertNotIn('mergeWithCurrentList', hydrate_source)
         self.assertIn('function beginMailboxViewChange()', self.emails_js)
         self.assertIn('function getCurrentMailboxContext()', self.emails_js)
         fetch_recent_start = self.emails_js.index('async function fetchRecentEmails()')
@@ -2407,6 +2413,8 @@ class FrontendEmailListSecurityTests(unittest.TestCase):
         self.assertIn('initEmailKeywordSearch()', core_js)
         self.assertIn('initEmailFetchTopInput()', core_js)
         self.assertIn("query.set('keyword', keyword);", core_js)
+        self.assertIn('isMailboxKeywordSearchActive()', core_js)
+        self.assertIn('loadMoreMailboxKeywordSearch()', core_js)
         detail_url_start = self.emails_js.index('function buildEmailDetailRequestUrl(')
         detail_url_source = self.emails_js[detail_url_start:self.emails_js.index('function getRecipientDisplayLabel(', detail_url_start)]
         self.assertIn("query.set('prefer_local', '1')", detail_url_source)

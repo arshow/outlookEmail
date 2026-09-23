@@ -197,6 +197,10 @@
             mailboxViewSeq += 1;
             isFetchingRecentEmails = false;
             currentEmailTotalCount = 0;
+            if (typeof clearKeywordSearchResults === 'function') {
+                keywordSearchSeq += 1;
+                clearKeywordSearchResults();
+            }
             if (typeof setMailSyncStatus === 'function') {
                 setMailSyncStatus('');
             }
@@ -294,6 +298,13 @@
         }
 
         let currentEmailKeyword = '';
+        let keywordSearchEmails = null;
+        let keywordSearchSeq = 0;
+        let keywordSearchHasMore = false;
+        let keywordSearchNextSkip = 0;
+        let keywordSearchTotal = 0;
+        let keywordSearchLoading = false;
+        const EMAIL_KEYWORD_SEARCH_PAGE_SIZE = 50;
         let currentEmailTotalCount = 0;
         const EMAIL_FETCH_PAGE_SIZE = 50;
         const EMAIL_FETCH_TOP_DEFAULT = 50;
@@ -305,6 +316,32 @@
 
         function getEmailSearchKeyword() {
             return String(currentEmailKeyword || '').trim().toLowerCase();
+        }
+
+        function isMailboxKeywordSearchActive() {
+            return Boolean(getEmailSearchKeyword()) && Array.isArray(keywordSearchEmails);
+        }
+
+        function keywordSearchHasMoreResults() {
+            return isMailboxKeywordSearchActive() && keywordSearchHasMore === true;
+        }
+
+        function clearKeywordSearchResults() {
+            keywordSearchEmails = null;
+            keywordSearchHasMore = false;
+            keywordSearchNextSkip = 0;
+            keywordSearchTotal = 0;
+            keywordSearchLoading = false;
+        }
+
+        function getRenderedEmailListSource(emails = currentEmails) {
+            if (isMailboxKeywordSearchActive()) {
+                return keywordSearchEmails;
+            }
+            if (Array.isArray(statusFilterOverrideEmails)) {
+                return statusFilterOverrideEmails;
+            }
+            return emails;
         }
 
         function stripEmailSearchText(value) {
@@ -349,6 +386,9 @@
         function findEmailForListAction(messageId, index) {
             const id = String(messageId || '').trim();
             const lists = [];
+            if (Array.isArray(keywordSearchEmails) && keywordSearchEmails.length) {
+                lists.push(keywordSearchEmails);
+            }
             if (Array.isArray(statusFilterOverrideEmails) && statusFilterOverrideEmails.length) {
                 lists.push(statusFilterOverrideEmails);
             }
@@ -366,8 +406,9 @@
                     }
                 }
             }
-            if (Number.isInteger(index) && index >= 0 && currentEmails[index]) {
-                const fallback = currentEmails[index];
+            const indexSource = isMailboxKeywordSearchActive() ? keywordSearchEmails : currentEmails;
+            if (Number.isInteger(index) && index >= 0 && indexSource[index]) {
+                const fallback = indexSource[index];
                 if (!id || String(fallback.id || '') === id) {
                     return fallback;
                 }
@@ -376,7 +417,10 @@
         }
 
         function getVisibleEmailsForCurrentFilter(emails = currentEmails) {
-            let list = normalizeEmailListItems(Array.isArray(emails) ? emails : []);
+            const baseEmails = isMailboxKeywordSearchActive() && emails === currentEmails
+                ? keywordSearchEmails
+                : emails;
+            let list = normalizeEmailListItems(Array.isArray(baseEmails) ? baseEmails : []);
             const filter = String(currentEmailStatusFilter || 'all').trim().toLowerCase();
             if (filter === 'unread') {
                 list = list.filter(email => isEmailUnread(email));
@@ -479,9 +523,7 @@
         }
 
         function getDisplayedEmailCount() {
-            const source = Array.isArray(statusFilterOverrideEmails)
-                ? statusFilterOverrideEmails
-                : currentEmails;
+            const source = getRenderedEmailListSource(currentEmails);
             if (isTempEmailGroup || currentMethod === 'cloudflare-admin') {
                 return Array.isArray(source) ? source.length : 0;
             }
@@ -505,6 +547,13 @@
                 currentEmailTotalCount = 0;
                 emailCountEl.textContent = '';
                 emailCountEl.removeAttribute('title');
+                return;
+            }
+            if (isMailboxKeywordSearchActive()) {
+                const listed = getDisplayedEmailCount();
+                const total = Math.max(Number(keywordSearchTotal) || 0, listed);
+                emailCountEl.textContent = `(${listed}/${total})`;
+                emailCountEl.title = `搜索结果 ${listed} 封，共 ${total} 封`;
                 return;
             }
             if (Object.prototype.hasOwnProperty.call(options, 'total')) {
@@ -1841,19 +1890,21 @@
 
         function renderEmailList(emails) {
             const container = document.getElementById('emailList');
-            const sourceEmails = Array.isArray(statusFilterOverrideEmails)
-                ? normalizeEmailListItems(statusFilterOverrideEmails)
-                : normalizeEmailListItems(emails);
+            const renderedSource = getRenderedEmailListSource(emails);
+            const sourceEmails = normalizeEmailListItems(renderedSource);
             const visibleEmails = isTempEmailGroup || currentMethod === 'cloudflare-admin'
                 ? sourceEmails
                 : getVisibleEmailsForCurrentFilter(sourceEmails);
 
             if (visibleEmails.length === 0) {
+                const keyword = getEmailSearchKeyword();
                 const emptyStateText = isTempEmailGroup
                     ? '暂无邮件'
-                    : (currentEmailStatusFilter !== 'all' && sourceEmails.length > 0
-                        ? '当前筛选下没有邮件'
-                        : `${getFolderDisplayName(currentFolder)}为空`);
+                    : (keyword
+                        ? (keywordSearchLoading ? '正在搜索邮箱…' : '没有找到匹配的邮件')
+                        : (currentEmailStatusFilter !== 'all' && sourceEmails.length > 0
+                            ? '当前筛选下没有邮件'
+                            : `${getFolderDisplayName(currentFolder)}为空`));
                 const emptyPrefix = currentMethod === 'cloudflare-admin' && typeof renderCloudflareGlobalFilterBar === 'function'
                     ? renderCloudflareGlobalFilterBar()
                     : '';
@@ -4343,8 +4394,15 @@
                 input.value = currentEmailKeyword;
             }
             syncEmailSearchClearButton();
+            if (!currentEmailKeyword) {
+                keywordSearchSeq += 1;
+                clearKeywordSearchResults();
+            }
             if (options.search === false) {
                 return;
+            }
+            if (!currentEmailKeyword) {
+                setMailSyncStatus('');
             }
             if (typeof renderEmailList === 'function') {
                 renderEmailList(currentEmails);
@@ -4356,45 +4414,130 @@
             }
         }
 
-        async function hydrateEmailSearchFromLocal() {
+        function isCurrentKeywordSearchContext(context) {
+            if (!context || context.seq !== keywordSearchSeq) {
+                return false;
+            }
+            if (context.keyword !== getEmailSearchKeyword()) {
+                return false;
+            }
+            if (context.folder !== currentFolder) {
+                return false;
+            }
+            if (context.status !== String(currentEmailStatusFilter || 'all').trim().toLowerCase()) {
+                return false;
+            }
+            if (context.aggregated !== isAggregatedInboxMode()) {
+                return false;
+            }
+            return context.aggregated || context.account === currentAccount;
+        }
+
+        async function hydrateEmailSearchFromLocal(options = {}) {
+            const append = options.append === true;
             const keyword = getEmailSearchKeyword();
-            if (!keyword || isTempEmailGroup) {
+            if (!keyword || isTempEmailGroup || currentMethod === 'cloudflare-admin') {
                 return false;
             }
             if (typeof isNormalMailLocalRetentionEnabled !== 'function' || !isNormalMailLocalRetentionEnabled()) {
+                setMailSyncStatus('本地存储未启用，只能筛选已加载的邮件');
                 return false;
             }
             if (!isAggregatedInboxMode() && !currentAccount) {
                 return false;
             }
-            const account = currentAccount;
-            const folder = currentFolder;
-            try {
-                const data = await fetchRemoteEmails(
-                    isAggregatedInboxMode() ? AGGREGATED_INBOX_ACCOUNT_KEY : account,
-                    `${isAggregatedInboxMode() ? getAggregatedInboxCacheAccountKey() : account}_${folder}`,
-                    {
-                        aggregated: isAggregatedInboxMode(),
-                        source: 'local',
-                        folder,
-                        skip: 0,
-                        top: 200,
-                        keyword,
-                        mergeWithCurrentList: true,
-                        keepSyncStatus: true,
-                        method: isAggregatedInboxMode() ? 'aggregated' : 'local',
-                        methodLabel: 'Local Retention',
-                        context: {
-                            account: isAggregatedInboxMode() ? AGGREGATED_INBOX_ACCOUNT_KEY : account,
-                            folder,
-                            aggregated: isAggregatedInboxMode()
-                        }
-                    }
-                );
-                return Boolean(data && data.success);
-            } catch (error) {
+            if (append && !Array.isArray(keywordSearchEmails)) {
                 return false;
             }
+
+            if (!append) {
+                keywordSearchSeq += 1;
+                clearKeywordSearchResults();
+                keywordSearchLoading = true;
+                setMailSyncStatus('正在搜索邮箱…');
+                if (typeof renderEmailList === 'function') {
+                    renderEmailList(currentEmails);
+                }
+            }
+
+            const aggregated = isAggregatedInboxMode();
+            const status = String(currentEmailStatusFilter || 'all').trim().toLowerCase();
+            const skip = append ? keywordSearchNextSkip : 0;
+            const top = EMAIL_KEYWORD_SEARCH_PAGE_SIZE;
+            const context = {
+                seq: keywordSearchSeq,
+                keyword,
+                account: currentAccount,
+                folder: currentFolder,
+                status,
+                aggregated
+            };
+            const requestParams = {
+                source: 'local',
+                folder: context.folder,
+                skip,
+                top,
+                keyword
+            };
+            if (status && status !== 'all') {
+                requestParams.status = status;
+            }
+
+            try {
+                const url = aggregated
+                    ? buildAggregatedEmailsUrl(requestParams)
+                    : buildEmailListRequestUrl(context.account, requestParams);
+                const response = await fetchWithTimeout(url, {
+                    timeoutMs: EMAIL_LIST_REQUEST_TIMEOUT_MS,
+                    timeoutMessage: '搜索邮件超时'
+                });
+                const data = await response.json();
+                if (!isCurrentKeywordSearchContext(context)) {
+                    return false;
+                }
+                if (!data || data.success !== true) {
+                    keywordSearchLoading = false;
+                    setMailSyncStatus('搜索邮件失败');
+                    return false;
+                }
+
+                const page = normalizeEmailListItems(data.emails);
+                keywordSearchEmails = append
+                    ? (keywordSearchEmails || []).concat(page)
+                    : page;
+                keywordSearchHasMore = data.has_more === true;
+                keywordSearchNextSkip = aggregated ? skip + top : skip + page.length;
+                if (Object.prototype.hasOwnProperty.call(data, 'count')) {
+                    keywordSearchTotal = Number(data.count) || keywordSearchEmails.length;
+                } else {
+                    keywordSearchTotal = Math.max(keywordSearchTotal || 0, keywordSearchEmails.length);
+                }
+                keywordSearchLoading = false;
+                const found = keywordSearchTotal || keywordSearchEmails.length;
+                setMailSyncStatus(found ? `已在本地邮件中找到 ${found} 封` : '没有找到匹配的邮件');
+                renderEmailList(keywordSearchEmails);
+                if (typeof scheduleEmailListLoadCheck === 'function') {
+                    scheduleEmailListLoadCheck(80);
+                }
+                return page.length > 0;
+            } catch (error) {
+                if (!isCurrentKeywordSearchContext(context)) {
+                    return false;
+                }
+                keywordSearchLoading = false;
+                setMailSyncStatus(isTimeoutAbortError(error) ? '搜索邮件超时' : '搜索邮件失败');
+                if (!append && typeof renderEmailList === 'function') {
+                    renderEmailList(currentEmails);
+                }
+                return false;
+            }
+        }
+
+        async function loadMoreMailboxKeywordSearch() {
+            if (!keywordSearchHasMoreResults()) {
+                return false;
+            }
+            return hydrateEmailSearchFromLocal({ append: true });
         }
 
         function initEmailKeywordSearch() {

@@ -494,7 +494,9 @@
 
         function canLoadMoreEmails() {
             const isCloudflareGlobalList = currentMethod === 'cloudflare-admin';
-            if (isLoadingMore || !hasMoreEmails || !currentAccount || (isTempEmailGroup && !isCloudflareGlobalList)) {
+            const searching = typeof isMailboxKeywordSearchActive === 'function' && isMailboxKeywordSearchActive();
+            const moreAvailable = searching ? keywordSearchHasMoreResults() : hasMoreEmails;
+            if (isLoadingMore || !moreAvailable || !currentAccount || (isTempEmailGroup && !isCloudflareGlobalList)) {
                 return false;
             }
 
@@ -1708,6 +1710,38 @@
         }
 
         async function loadMoreEmails() {
+            if (typeof isMailboxKeywordSearchActive === 'function' && isMailboxKeywordSearchActive()) {
+                if (isLoadingMore || typeof keywordSearchHasMoreResults !== 'function' || !keywordSearchHasMoreResults()) {
+                    return;
+                }
+                isLoadingMore = true;
+                const emailList = document.getElementById('emailList');
+                const loadingDiv = document.createElement('div');
+                loadingDiv.className = 'loading loading-small';
+                loadingDiv.id = 'loadingMore';
+                loadingDiv.innerHTML = '<div class="loading-spinner"></div>';
+                if (emailList) {
+                    emailList.appendChild(loadingDiv);
+                }
+                try {
+                    const loaded = await loadMoreMailboxKeywordSearch();
+                    const loadingEl = document.getElementById('loadingMore');
+                    if (loaded) {
+                        if (loadingEl) {
+                            loadingEl.remove();
+                        }
+                    } else if (loadingEl) {
+                        loadingEl.innerHTML = '<div style="text-align:center;padding:20px;color:#999;font-size:13px;">没有更多邮件了</div>';
+                    }
+                } catch (error) {
+                    const loadingEl = document.getElementById('loadingMore');
+                    if (loadingEl) loadingEl.remove();
+                    showToast(isTimeoutAbortError(error) ? '搜索更多邮件超时' : '搜索失败', 'error');
+                } finally {
+                    isLoadingMore = false;
+                }
+                return;
+            }
             if (isLoadingMore || !hasMoreEmails) return;
             if (currentMethod === 'cloudflare-admin') {
                 if (typeof loadMoreCloudflareGlobalMessages === 'function') {
@@ -1908,6 +1942,9 @@
             if (currentEmailStatusFilter !== 'all' && typeof hydrateEmailStatusFilterIfNeeded === 'function') {
                 void hydrateEmailStatusFilterIfNeeded();
             }
+            if (typeof getEmailSearchKeyword === 'function' && getEmailSearchKeyword() && typeof hydrateEmailSearchFromLocal === 'function') {
+                void hydrateEmailSearchFromLocal();
+            }
         }
 
         function switchEmailStatusFilter(filter) {
@@ -1927,6 +1964,9 @@
             }
             if (currentEmailStatusFilter !== 'all' && typeof hydrateEmailStatusFilterIfNeeded === 'function') {
                 void hydrateEmailStatusFilterIfNeeded();
+            }
+            if (typeof getEmailSearchKeyword === 'function' && getEmailSearchKeyword() && typeof hydrateEmailSearchFromLocal === 'function') {
+                void hydrateEmailSearchFromLocal();
             }
         }
 
