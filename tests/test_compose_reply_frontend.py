@@ -112,6 +112,7 @@ class ComposeReplyFrontendTests(unittest.TestCase):
         self.assertIn('id="composeAiCustomInstruction"', html)
         self.assertIn('id="composeAiPresetActions"', html)
         self.assertIn('compose-ai-instruction-footer', html)
+        self.assertIn('item.label', source)
         self.assertIn('function renderComposeAiQuickInstructions', source)
         self.assertIn('function clearComposeAiInstruction', source)
         self.assertIn('<textarea', html)

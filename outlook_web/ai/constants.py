@@ -51,10 +51,11 @@ SETTING_QUICK_INSTRUCTIONS = 'ai_reply_quick_instructions'
 
 # Used when the setting has never been saved. An explicit empty list stays empty.
 DEFAULT_QUICK_INSTRUCTIONS = (
-    '根据邮箱和姓名无法匹配订单',
+    {'label': '指令一', 'text': '根据邮箱和姓名无法匹配订单'},
 )
 QUICK_INSTRUCTION_MAX_COUNT = 12
 QUICK_INSTRUCTION_MAX_CHARS = 500
+QUICK_INSTRUCTION_LABEL_MAX_CHARS = 24
 
 ANALYSIS_JSON_SCHEMA = {
     'type': 'object',

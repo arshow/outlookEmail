@@ -112,23 +112,25 @@ class AiReplyTestCase(unittest.TestCase):
 
     def test_quick_instructions_default_and_save(self):
         status = self.client.get('/api/ai/status').get_json()
-        self.assertEqual(status['quick_instructions'], ['根据邮箱和姓名无法匹配订单'])
+        self.assertEqual(status['quick_instructions'], [
+            {'label': '指令一', 'text': '根据邮箱和姓名无法匹配订单'},
+        ])
 
         saved = self.client.put('/api/ai/settings', json={
             'quick_instructions': [
-                '根据邮箱和姓名无法匹配订单',
-                'xxxxx',
-                '  ',
+                {'label': '无法匹配', 'text': '根据邮箱和姓名无法匹配订单'},
+                {'label': '', 'text': 'xxxxx'},
+                {'label': '空内容', 'text': '  '},
             ],
         }).get_json()
         self.assertEqual(saved['settings']['quick_instructions'], [
-            '根据邮箱和姓名无法匹配订单',
-            'xxxxx',
+            {'label': '无法匹配', 'text': '根据邮箱和姓名无法匹配订单'},
+            {'label': '指令二', 'text': 'xxxxx'},
         ])
         status = self.client.get('/api/ai/status').get_json()
         self.assertEqual(status['quick_instructions'], [
-            '根据邮箱和姓名无法匹配订单',
-            'xxxxx',
+            {'label': '无法匹配', 'text': '根据邮箱和姓名无法匹配订单'},
+            {'label': '指令二', 'text': 'xxxxx'},
         ])
 
         cleared = self.client.put('/api/ai/settings', json={'quick_instructions': []}).get_json()

@@ -27,6 +27,7 @@ from outlook_web.ai.constants import (
     SETTING_QUICK_INSTRUCTIONS,
     SETTING_SYSTEM_PERSONA,
     DEFAULT_QUICK_INSTRUCTIONS,
+    QUICK_INSTRUCTION_LABEL_MAX_CHARS,
     QUICK_INSTRUCTION_MAX_CHARS,
     QUICK_INSTRUCTION_MAX_COUNT,
 )
@@ -71,14 +72,25 @@ def parse_socks5(value: Any) -> Dict[str, Any]:
     }
 
 
+def _default_quick_instructions() -> list:
+    return [dict(item) for item in DEFAULT_QUICK_INSTRUCTIONS]
+
+
+def _default_quick_instruction_label(index: int) -> str:
+    numerals = '一二三四五六七八九十'
+    if 0 <= index < len(numerals):
+        return f'指令{numerals[index]}'
+    return f'指令{index + 1}'
+
+
 def normalize_quick_instructions(value: Any) -> list:
-    """Return instruction texts. Blank/missing uses the built-in default; [] is explicit empty."""
+    """Return {label, text} items. Blank/missing uses the built-in default; [] is explicit empty."""
     if value is None:
-        return list(DEFAULT_QUICK_INSTRUCTIONS)
+        return _default_quick_instructions()
     if isinstance(value, str):
         text = value.strip()
         if not text:
-            return list(DEFAULT_QUICK_INSTRUCTIONS)
+            return _default_quick_instructions()
         try:
             parsed = json.loads(text)
         except Exception:
@@ -86,16 +98,23 @@ def normalize_quick_instructions(value: Any) -> list:
     else:
         parsed = value
     if not isinstance(parsed, list):
-        return list(DEFAULT_QUICK_INSTRUCTIONS)
+        return _default_quick_instructions()
     result = []
     for item in parsed:
         if isinstance(item, dict):
             instruction = str(item.get('text') or item.get('instruction') or '').strip()
+            label = str(item.get('label') or '').strip()
         else:
             instruction = str(item or '').strip()
+            label = ''
         if not instruction:
             continue
-        result.append(instruction[:QUICK_INSTRUCTION_MAX_CHARS])
+        if not label:
+            label = _default_quick_instruction_label(len(result))
+        result.append({
+            'label': label[:QUICK_INSTRUCTION_LABEL_MAX_CHARS],
+            'text': instruction[:QUICK_INSTRUCTION_MAX_CHARS],
+        })
         if len(result) >= QUICK_INSTRUCTION_MAX_COUNT:
             break
     return result

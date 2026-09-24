@@ -77,7 +77,7 @@
         renderQuickInstructionEditor(s.quick_instructions);
     }
 
-    function quickInstructionLabel(index) {
+    function quickInstructionFallbackLabel(index) {
         const numerals = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
         return numerals[index] ? `指令${numerals[index]}` : `指令${index + 1}`;
     }
@@ -85,50 +85,53 @@
     function renderQuickInstructionEditor(items) {
         const list = document.getElementById('quickInstructionList');
         if (!list) return;
-        const values = Array.isArray(items) ? items.map((item) => String(item || '')) : [];
-        if (!values.length) values.push('');
+        const values = Array.isArray(items) ? items : [];
         list.replaceChildren();
-        values.forEach((value) => appendQuickInstructionRow(value));
+        if (!values.length) {
+            appendQuickInstructionRow({ label: '', text: '' });
+            return;
+        }
+        values.forEach((item, index) => appendQuickInstructionRow(item, index));
     }
 
-    function appendQuickInstructionRow(value = '') {
+    function appendQuickInstructionRow(item = {}, index = null) {
         const list = document.getElementById('quickInstructionList');
         if (!list) return;
+        const rowIndex = index == null ? list.querySelectorAll('.quick-instruction-row').length : index;
+        const source = item && typeof item === 'object' ? item : { text: item };
         const row = document.createElement('div');
         row.className = 'quick-instruction-row';
-        const label = document.createElement('span');
+        const label = document.createElement('input');
+        label.type = 'text';
         label.className = 'quick-instruction-label';
+        label.maxLength = 24;
+        label.placeholder = quickInstructionFallbackLabel(rowIndex);
+        label.value = String(source.label || '');
         const input = document.createElement('textarea');
         input.className = 'quick-instruction-text';
         input.placeholder = '写下点击后填入回复窗口的指令';
-        input.value = value;
+        input.value = String(source.text || source.instruction || (typeof item === 'string' ? item : '') || '');
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.className = 'btn';
         removeBtn.textContent = '删除';
         removeBtn.addEventListener('click', () => {
             row.remove();
-            refreshQuickInstructionLabels();
             if (!list.querySelector('.quick-instruction-row')) {
-                appendQuickInstructionRow('');
+                appendQuickInstructionRow({ label: '', text: '' });
             }
         });
         row.append(label, input, removeBtn);
         list.appendChild(row);
-        refreshQuickInstructionLabels();
-    }
-
-    function refreshQuickInstructionLabels() {
-        document.querySelectorAll('#quickInstructionList .quick-instruction-row').forEach((row, index) => {
-            const label = row.querySelector('.quick-instruction-label');
-            if (label) label.textContent = quickInstructionLabel(index);
-        });
     }
 
     function collectQuickInstructions() {
-        return Array.from(document.querySelectorAll('#quickInstructionList .quick-instruction-text'))
-            .map((input) => input.value.trim())
-            .filter(Boolean);
+        return Array.from(document.querySelectorAll('#quickInstructionList .quick-instruction-row'))
+            .map((row) => ({
+                label: row.querySelector('.quick-instruction-label')?.value.trim() || '',
+                text: row.querySelector('.quick-instruction-text')?.value.trim() || '',
+            }))
+            .filter((item) => item.text);
     }
 
     async function saveSettings(extra = {}) {

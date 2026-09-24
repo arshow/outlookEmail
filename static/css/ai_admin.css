@@ -208,7 +208,7 @@ textarea { min-height: 96px; resize: vertical; }
 
 .quick-instruction-row {
     display: grid;
-    grid-template-columns: 72px minmax(0, 1fr) auto;
+    grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) auto;
     gap: 8px;
     align-items: start;
 }

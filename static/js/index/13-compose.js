@@ -36,7 +36,9 @@
         let composeHistoryTranslateBusy = false;
         const COMPOSE_HISTORY_PAGE_SIZE = 20;
         const COMPOSE_AI_PRESET_NUMERALS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
-        const COMPOSE_AI_DEFAULT_PRESETS = ['根据邮箱和姓名无法匹配订单'];
+        const COMPOSE_AI_DEFAULT_PRESETS = [
+            { label: '指令一', text: '根据邮箱和姓名无法匹配订单' },
+        ];
         const COMPOSE_AI_ACTION_BUTTON_IDS = [
             'composeAiAnalyzeBtn',
             'composeAiShorterBtn',
@@ -1473,15 +1475,23 @@
             const col = document.getElementById('composeAiPresetActions');
             if (!col) return;
             const source = Array.isArray(items) ? items : COMPOSE_AI_DEFAULT_PRESETS;
-            const list = source.map((item) => String(item || '').trim()).filter(Boolean);
+            const list = source.map((item, index) => {
+                if (item && typeof item === 'object') {
+                    const text = String(item.text || item.instruction || '').trim();
+                    const label = String(item.label || '').trim() || composeAiPresetLabel(index);
+                    return text ? { label, text } : null;
+                }
+                const text = String(item || '').trim();
+                return text ? { label: composeAiPresetLabel(index), text } : null;
+            }).filter(Boolean);
             col.replaceChildren();
-            list.forEach((text, index) => {
+            list.forEach((item) => {
                 const btn = document.createElement('button');
                 btn.type = 'button';
                 btn.className = 'btn btn-sm btn-secondary compose-ai-preset-btn';
-                btn.textContent = composeAiPresetLabel(index);
-                btn.title = text;
-                btn.addEventListener('click', () => applyComposeAiPreset(text));
+                btn.textContent = item.label;
+                btn.title = item.text;
+                btn.addEventListener('click', () => applyComposeAiPreset(item.text));
                 col.appendChild(btn);
             });
             const clearBtn = document.createElement('button');
