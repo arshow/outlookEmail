@@ -515,8 +515,8 @@
         .compose-ai-custom-row .form-textarea {
             width: 100%;
             min-width: 0;
-            min-height: 88px;
-            height: 88px;
+            min-height: 168px;
+            height: 168px;
             padding: 8px 10px;
             font-family: inherit;
             line-height: 1.45;
