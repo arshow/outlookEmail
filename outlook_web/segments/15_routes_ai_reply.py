@@ -777,4 +777,5 @@ def api_ai_status():
         'ready': ready,
         'provider': settings.get('provider'),
         'model': settings.get('model'),
+        'quick_instructions': list(settings.get('quick_instructions') or []),
     })

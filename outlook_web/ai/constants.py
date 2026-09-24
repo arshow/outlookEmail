@@ -47,6 +47,14 @@ SETTING_GEMINI_BASE_URL = 'ai_reply_gemini_base_url'
 SETTING_DEEPSEEK_BASE_URL = 'ai_reply_deepseek_base_url'
 SETTING_GEMINI_SOCKS5 = 'ai_reply_gemini_socks5'
 SETTING_SYSTEM_PERSONA = 'ai_reply_system_persona'
+SETTING_QUICK_INSTRUCTIONS = 'ai_reply_quick_instructions'
+
+# Used when the setting has never been saved. An explicit empty list stays empty.
+DEFAULT_QUICK_INSTRUCTIONS = (
+    '根据邮箱和姓名无法匹配订单',
+)
+QUICK_INSTRUCTION_MAX_COUNT = 12
+QUICK_INSTRUCTION_MAX_CHARS = 500
 
 ANALYSIS_JSON_SCHEMA = {
     'type': 'object',

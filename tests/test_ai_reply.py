@@ -49,6 +49,7 @@ class AiReplyTestCase(unittest.TestCase):
                 'ai_reply_deepseek_base_url',
                 'ai_reply_gemini_socks5',
                 'ai_reply_system_persona',
+                'ai_reply_quick_instructions',
             ):
                 db.execute("UPDATE settings SET value = '' WHERE key = ?", (key,))
             db.execute("UPDATE settings SET value = 'false' WHERE key = 'ai_reply_enabled'")
@@ -108,6 +109,32 @@ class AiReplyTestCase(unittest.TestCase):
         remark_settings = remarks.get_json()['settings']
         self.assertEqual(remark_settings['gemini_remark'], '主 Key / gemini-3.8-flash')
         self.assertEqual(remark_settings['deepseek_remark'], '备用')
+
+    def test_quick_instructions_default_and_save(self):
+        status = self.client.get('/api/ai/status').get_json()
+        self.assertEqual(status['quick_instructions'], ['根据邮箱和姓名无法匹配订单'])
+
+        saved = self.client.put('/api/ai/settings', json={
+            'quick_instructions': [
+                '根据邮箱和姓名无法匹配订单',
+                'xxxxx',
+                '  ',
+            ],
+        }).get_json()
+        self.assertEqual(saved['settings']['quick_instructions'], [
+            '根据邮箱和姓名无法匹配订单',
+            'xxxxx',
+        ])
+        status = self.client.get('/api/ai/status').get_json()
+        self.assertEqual(status['quick_instructions'], [
+            '根据邮箱和姓名无法匹配订单',
+            'xxxxx',
+        ])
+
+        cleared = self.client.put('/api/ai/settings', json={'quick_instructions': []}).get_json()
+        self.assertEqual(cleared['settings']['quick_instructions'], [])
+        status = self.client.get('/api/ai/status').get_json()
+        self.assertEqual(status['quick_instructions'], [])
 
     def test_list_available_models_endpoint(self):
         self.client.put('/api/ai/settings', json={

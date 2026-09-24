@@ -110,6 +110,10 @@ class ComposeReplyFrontendTests(unittest.TestCase):
         self.assertIn('按指令生成', html)
         self.assertIn('id="composeAiInstructionHint"', html)
         self.assertIn('id="composeAiCustomInstruction"', html)
+        self.assertIn('id="composeAiPresetActions"', html)
+        self.assertIn('compose-ai-instruction-footer', html)
+        self.assertIn('function renderComposeAiQuickInstructions', source)
+        self.assertIn('function clearComposeAiInstruction', source)
         self.assertIn('<textarea', html)
 
 

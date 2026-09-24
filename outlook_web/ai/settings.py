@@ -24,7 +24,11 @@ from outlook_web.ai.constants import (
     SETTING_MODEL,
     SETTING_PROVIDER,
     SETTING_DEEPSEEK_REMARK,
+    SETTING_QUICK_INSTRUCTIONS,
     SETTING_SYSTEM_PERSONA,
+    DEFAULT_QUICK_INSTRUCTIONS,
+    QUICK_INSTRUCTION_MAX_CHARS,
+    QUICK_INSTRUCTION_MAX_COUNT,
 )
 
 
@@ -67,6 +71,36 @@ def parse_socks5(value: Any) -> Dict[str, Any]:
     }
 
 
+def normalize_quick_instructions(value: Any) -> list:
+    """Return instruction texts. Blank/missing uses the built-in default; [] is explicit empty."""
+    if value is None:
+        return list(DEFAULT_QUICK_INSTRUCTIONS)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return list(DEFAULT_QUICK_INSTRUCTIONS)
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            parsed = [part.strip() for part in text.splitlines() if part.strip()]
+    else:
+        parsed = value
+    if not isinstance(parsed, list):
+        return list(DEFAULT_QUICK_INSTRUCTIONS)
+    result = []
+    for item in parsed:
+        if isinstance(item, dict):
+            instruction = str(item.get('text') or item.get('instruction') or '').strip()
+        else:
+            instruction = str(item or '').strip()
+        if not instruction:
+            continue
+        result.append(instruction[:QUICK_INSTRUCTION_MAX_CHARS])
+        if len(result) >= QUICK_INSTRUCTION_MAX_COUNT:
+            break
+    return result
+
+
 def get_ai_reply_settings(
     *,
     get_setting: Callable[[str, str], str],
@@ -98,6 +132,7 @@ def get_ai_reply_settings(
         'gemini_base_url': str(get_setting(SETTING_GEMINI_BASE_URL, DEFAULT_GEMINI_BASE_URL) or DEFAULT_GEMINI_BASE_URL).strip(),
         'deepseek_base_url': str(get_setting(SETTING_DEEPSEEK_BASE_URL, DEFAULT_DEEPSEEK_BASE_URL) or DEFAULT_DEEPSEEK_BASE_URL).strip(),
         'system_persona': str(get_setting(SETTING_SYSTEM_PERSONA, '') or ''),
+        'quick_instructions': normalize_quick_instructions(get_setting(SETTING_QUICK_INSTRUCTIONS, '')),
         'gemini_api_key_configured': bool(gemini_key),
         'deepseek_api_key_configured': bool(deepseek_key),
         'gemini_api_key_masked': '********' if gemini_key else '',
@@ -120,6 +155,7 @@ def public_ai_reply_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         'gemini_base_url': settings.get('gemini_base_url'),
         'deepseek_base_url': settings.get('deepseek_base_url'),
         'system_persona': settings.get('system_persona'),
+        'quick_instructions': list(settings.get('quick_instructions') or []),
         'gemini_api_key_configured': bool(settings.get('gemini_api_key_configured')),
         'deepseek_api_key_configured': bool(settings.get('deepseek_api_key_configured')),
         'gemini_api_key_masked': settings.get('gemini_api_key_masked') or '',
@@ -208,6 +244,13 @@ def save_ai_reply_settings(
     if 'system_persona' in data:
         if set_setting(SETTING_SYSTEM_PERSONA, str(data.get('system_persona') or '')):
             updated.append(SETTING_SYSTEM_PERSONA)
+
+    if 'quick_instructions' in data:
+        instructions = normalize_quick_instructions(data.get('quick_instructions'))
+        # Persist an explicit list, including [], so a cleared config does not fall back to defaults.
+        payload = json.dumps(instructions, ensure_ascii=False)
+        if set_setting(SETTING_QUICK_INSTRUCTIONS, payload):
+            updated.append(SETTING_QUICK_INSTRUCTIONS)
 
     if 'gemini_remark' in data:
         if set_setting(SETTING_GEMINI_REMARK, str(data.get('gemini_remark') or '')):

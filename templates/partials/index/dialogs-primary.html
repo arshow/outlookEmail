@@ -909,9 +909,12 @@
                             </div>
                             <div class="compose-ai-custom-row">
                                 <textarea class="form-textarea" id="composeAiCustomInstruction" rows="4" placeholder="写下你要回复的意思"></textarea>
+                                <div class="compose-ai-preset-col" id="composeAiPresetActions"></div>
+                            </div>
+                            <div class="compose-ai-instruction-footer">
+                                <div class="form-hint" id="composeAiInstructionHint">填写后，「生成建议」和「按指令生成」都会按这段话起草，不会再改成先核实。</div>
                                 <button type="button" class="btn btn-sm btn-secondary" id="composeAiCustomBtn" onclick="refineComposeAiReply('custom')" disabled data-default-label="按指令生成">按指令生成</button>
                             </div>
-                            <div class="form-hint" id="composeAiInstructionHint">填写后，「生成建议」和「按指令生成」都会按这段话起草，不会再改成先核实。</div>
                         </div>
                         <div class="compose-ai-result" id="composeAiResult" style="display: none;">
                             <section class="compose-ai-result-section compose-ai-result-section--meta">

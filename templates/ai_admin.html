@@ -84,6 +84,12 @@
                     系统人设（可选）
                     <textarea id="systemPersona" placeholder="例如：你是品牌客服，语气专业简洁。"></textarea>
                 </label>
+                <div class="full quick-instruction-editor">
+                    <div>快捷指令</div>
+                    <span class="hint">回复窗口按顺序显示为「指令一」「指令二」。点击填入指令框，可再点「按指令生成」。</span>
+                    <div id="quickInstructionList"></div>
+                    <button class="btn" type="button" id="addQuickInstructionBtn">添加指令</button>
+                </div>
                 <label class="inline-check full">
                     <input type="checkbox" id="geminiSocksEnabled">
                     <span>启用 Gemini SOCKS5 代理</span>

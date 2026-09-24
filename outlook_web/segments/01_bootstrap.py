@@ -2253,6 +2253,10 @@ def init_db():
         INSERT OR IGNORE INTO settings (key, value)
         VALUES ('ai_reply_system_persona', '')
     ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_quick_instructions', '')
+    ''')
 
     cursor.execute('SELECT COUNT(*) FROM cloudflare_channels')
     cloudflare_channel_count = cursor.fetchone()[0]

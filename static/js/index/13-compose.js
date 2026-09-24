@@ -35,6 +35,8 @@
         let composeHistoryTranslateView = 'original';
         let composeHistoryTranslateBusy = false;
         const COMPOSE_HISTORY_PAGE_SIZE = 20;
+        const COMPOSE_AI_PRESET_NUMERALS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+        const COMPOSE_AI_DEFAULT_PRESETS = ['根据邮箱和姓名无法匹配订单'];
         const COMPOSE_AI_ACTION_BUTTON_IDS = [
             'composeAiAnalyzeBtn',
             'composeAiShorterBtn',
@@ -1446,6 +1448,52 @@
             input.addEventListener('input', syncComposeAiCustomButton);
         }
 
+        function composeAiPresetLabel(index) {
+            const numeral = COMPOSE_AI_PRESET_NUMERALS[index];
+            return numeral ? `指令${numeral}` : `指令${index + 1}`;
+        }
+
+        function setComposeAiInstructionValue(value) {
+            const input = document.getElementById('composeAiCustomInstruction');
+            if (!input || input.disabled) return;
+            input.value = value;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.focus();
+        }
+
+        function applyComposeAiPreset(text) {
+            setComposeAiInstructionValue(String(text || '').trim());
+        }
+
+        function clearComposeAiInstruction() {
+            setComposeAiInstructionValue('');
+        }
+
+        function renderComposeAiQuickInstructions(items) {
+            const col = document.getElementById('composeAiPresetActions');
+            if (!col) return;
+            const source = Array.isArray(items) ? items : COMPOSE_AI_DEFAULT_PRESETS;
+            const list = source.map((item) => String(item || '').trim()).filter(Boolean);
+            col.replaceChildren();
+            list.forEach((text, index) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'btn btn-sm btn-secondary compose-ai-preset-btn';
+                btn.textContent = composeAiPresetLabel(index);
+                btn.title = text;
+                btn.addEventListener('click', () => applyComposeAiPreset(text));
+                col.appendChild(btn);
+            });
+            const clearBtn = document.createElement('button');
+            clearBtn.type = 'button';
+            clearBtn.className = 'btn btn-sm btn-secondary';
+            clearBtn.id = 'composeAiClearInstructionBtn';
+            clearBtn.textContent = '清空';
+            clearBtn.title = '清空指令';
+            clearBtn.addEventListener('click', clearComposeAiInstruction);
+            col.appendChild(clearBtn);
+        }
+
         function setComposeAiActionEnabled(enabled) {
             const canUse = !!enabled && !composeAiState.busy;
             ['composeAiShorterBtn', 'composeAiPoliterBtn', 'composeAiRegenBtn', 'composeAiInsertBtn']
@@ -1475,6 +1523,10 @@
         function lockComposeAiControls(locked) {
             const customInput = document.getElementById('composeAiCustomInstruction');
             if (customInput) customInput.disabled = !!locked;
+            document.querySelectorAll('#composeAiPresetActions button').forEach((btn) => {
+                btn.disabled = !!locked;
+                btn.setAttribute('aria-disabled', locked ? 'true' : 'false');
+            });
             document.querySelectorAll('input[name="composeAiContextScope"]').forEach((input) => {
                 input.disabled = !!locked;
             });
@@ -1620,11 +1672,15 @@
             }
             setComposeAiSidebarVisible(true);
             bindComposeAiInstructionInput();
+            renderComposeAiQuickInstructions(COMPOSE_AI_DEFAULT_PRESETS);
             const statusHint = document.getElementById('composeAiStatusHint');
             try {
                 const response = await fetchWithTimeout('/api/ai/status');
                 const data = await response.json().catch(() => ({}));
                 composeAiState.ready = !!(data.success && data.ready);
+                if (Array.isArray(data.quick_instructions)) {
+                    renderComposeAiQuickInstructions(data.quick_instructions);
+                }
                 if (!data.enabled) {
                     if (statusHint) {
                         statusHint.innerHTML = 'AI 未启用。可前往 <a href="/ai" target="_blank" rel="noopener">/ai</a> 配置 Gemini / DeepSeek。';

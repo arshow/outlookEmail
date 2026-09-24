@@ -74,6 +74,61 @@
         document.getElementById('geminiSocksUser').value = socks.username || '';
         document.getElementById('geminiSocksPass').value = '';
         document.getElementById('geminiSocksPassHint').textContent = socks.has_password ? '已保存密码' : '未设置密码';
+        renderQuickInstructionEditor(s.quick_instructions);
+    }
+
+    function quickInstructionLabel(index) {
+        const numerals = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+        return numerals[index] ? `指令${numerals[index]}` : `指令${index + 1}`;
+    }
+
+    function renderQuickInstructionEditor(items) {
+        const list = document.getElementById('quickInstructionList');
+        if (!list) return;
+        const values = Array.isArray(items) ? items.map((item) => String(item || '')) : [];
+        if (!values.length) values.push('');
+        list.replaceChildren();
+        values.forEach((value) => appendQuickInstructionRow(value));
+    }
+
+    function appendQuickInstructionRow(value = '') {
+        const list = document.getElementById('quickInstructionList');
+        if (!list) return;
+        const row = document.createElement('div');
+        row.className = 'quick-instruction-row';
+        const label = document.createElement('span');
+        label.className = 'quick-instruction-label';
+        const input = document.createElement('textarea');
+        input.className = 'quick-instruction-text';
+        input.placeholder = '写下点击后填入回复窗口的指令';
+        input.value = value;
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'btn';
+        removeBtn.textContent = '删除';
+        removeBtn.addEventListener('click', () => {
+            row.remove();
+            refreshQuickInstructionLabels();
+            if (!list.querySelector('.quick-instruction-row')) {
+                appendQuickInstructionRow('');
+            }
+        });
+        row.append(label, input, removeBtn);
+        list.appendChild(row);
+        refreshQuickInstructionLabels();
+    }
+
+    function refreshQuickInstructionLabels() {
+        document.querySelectorAll('#quickInstructionList .quick-instruction-row').forEach((row, index) => {
+            const label = row.querySelector('.quick-instruction-label');
+            if (label) label.textContent = quickInstructionLabel(index);
+        });
+    }
+
+    function collectQuickInstructions() {
+        return Array.from(document.querySelectorAll('#quickInstructionList .quick-instruction-text'))
+            .map((input) => input.value.trim())
+            .filter(Boolean);
     }
 
     async function saveSettings(extra = {}) {
@@ -84,6 +139,7 @@
             gemini_base_url: document.getElementById('geminiBaseUrl').value.trim(),
             deepseek_base_url: document.getElementById('deepseekBaseUrl').value.trim(),
             system_persona: document.getElementById('systemPersona').value,
+            quick_instructions: collectQuickInstructions(),
             gemini_remark: document.getElementById('geminiRemark').value.trim(),
             deepseek_remark: document.getElementById('deepseekRemark').value.trim(),
             gemini_socks5: {
@@ -347,6 +403,9 @@
     function bindEvents() {
         document.querySelectorAll('.ai-tab').forEach((btn) => {
             btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+        });
+        document.getElementById('addQuickInstructionBtn').addEventListener('click', () => {
+            appendQuickInstructionRow('');
         });
         document.getElementById('saveSettingsBtn').addEventListener('click', () => {
             saveSettings().catch((err) => showToast(err.message, true));

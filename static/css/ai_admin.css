@@ -200,6 +200,23 @@ textarea { min-height: 96px; resize: vertical; }
     font-size: 0.85rem;
 }
 
+.quick-instruction-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.quick-instruction-row {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: start;
+}
+
+.quick-instruction-row textarea {
+    min-height: 64px;
+}
+
 .table {
     width: 100%;
     border-collapse: collapse;
