@@ -1315,6 +1315,7 @@
             overflow: hidden;
         }
 
+        .account-panel.minimal-mode .account-feature-markers .account-status-pill.success,
         .account-panel.minimal-mode .account-feature-markers .account-status-pill.info,
         .account-panel.minimal-mode .account-feature-markers .account-status-pill.discover {
             min-height: 20px;

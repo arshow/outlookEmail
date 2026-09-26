@@ -1330,6 +1330,7 @@
                 ? renderColoredRemarkMarkup(account.remark, 'account-remark')
                 : '';
             const markersHtml = [
+                showForwardStatusLabel(!!account?.forward_enabled),
                 showAggregatedInboxStatusLabel(!!account?.aggregated_inbox_enabled),
                 showInboxPollStatusLabel(account?.inbox_poll_enabled !== false),
             ].join('');
@@ -1666,7 +1667,6 @@
                                 style="--pill-accent: ${acc.account_type === 'imap' ? '#0ea5e9' : '#2563eb'}">
                                 ${escapeHtml(getProviderLabel(acc.provider || (acc.account_type === 'imap' ? 'custom' : 'outlook')))}
                             </span>
-                            ${showForwardStatusLabel(!!acc.forward_enabled)}
                             ${acc.status === 'inactive' ? '<span class="account-status-pill muted">已停用</span>' : ''}
                             ${acc.last_refresh_status === 'failed' ? '<span class="account-status-pill danger">刷新失败</span>' : ''}
                         </div>
