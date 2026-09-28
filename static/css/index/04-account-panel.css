@@ -1141,13 +1141,15 @@
             flex-shrink: 0;
         }
 
-        /* 邮件批量栏：紧凑单行，避免窄列折成多层 */
+        /* 邮件批量栏：紧凑单行；窄列横向滚动，避免 flex-end 把左侧裁掉 */
         #emailBatchActionBar {
             justify-content: flex-start;
             flex-wrap: nowrap;
             padding: 8px;
             gap: 8px;
             overflow-x: auto;
+            overflow-y: hidden;
+            -webkit-overflow-scrolling: touch;
         }
 
         #emailBatchActionBar .batch-action-bar__summary {
@@ -1175,12 +1177,12 @@
         }
 
         #emailBatchActionBar .batch-action-bar__controls {
-            flex: 0 1 auto;
+            flex: 0 0 auto;
             flex-wrap: nowrap;
-            justify-content: flex-end;
+            justify-content: flex-start;
             gap: 6px;
             margin-left: auto;
-            min-width: 0;
+            min-width: max-content;
         }
 
         #emailBatchActionBar .batch-action-group {

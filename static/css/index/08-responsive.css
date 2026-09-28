@@ -683,6 +683,7 @@
                 padding: 8px;
                 gap: 6px;
                 overflow-x: auto;
+                overflow-y: hidden;
             }
 
             #emailBatchActionBar .batch-action-bar__summary {
@@ -695,7 +696,7 @@
             #emailBatchActionBar .batch-action-group {
                 width: auto;
                 flex-wrap: nowrap;
-                justify-content: flex-end;
+                justify-content: flex-start;
             }
 
             #emailBatchActionBar .batch-btn,
