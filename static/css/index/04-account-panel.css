@@ -1326,6 +1326,26 @@
             line-height: 20px;
         }
 
+        .account-panel.minimal-mode .account-tags {
+            display: flex !important;
+            flex-wrap: wrap;
+            gap: 4px;
+            width: 100%;
+            max-width: 100%;
+        }
+
+        .account-panel.minimal-mode .account-tags .account-status-pill.tag,
+        .account-panel.minimal-mode .account-tags .account-status-pill.outline {
+            min-height: 20px;
+            max-width: 100%;
+            padding: 0 7px;
+            font-size: 12px;
+            line-height: 20px;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            overflow: hidden;
+        }
+
         .account-panel.minimal-mode .account-menu-trigger {
             width: 28px;
             height: 28px;
@@ -1335,7 +1355,6 @@
         .account-panel.minimal-mode .account-meta-row,
         .account-panel.minimal-mode .account-group-summary,
         .account-panel.minimal-mode .account-aliases,
-        .account-panel.minimal-mode .account-tags,
         .account-panel.minimal-mode .account-refresh-row {
             display: none !important;
         }
