@@ -72,6 +72,23 @@ SETTING_CLOUDFLARE_API_TOKEN = 'ai_reply_cloudflare_api_token'
 SETTING_CLOUDFLARE_MODEL = 'ai_reply_cloudflare_model'
 SETTING_CLOUDFLARE_REMARK = 'ai_reply_cloudflare_remark'
 
+PRECHECK_CUSTOMER_THRESHOLD = 0.6
+PRECHECK_BODY_MAX_CHARS = 4000
+PRECHECK_DECISION_SKIPPED_NOTIFICATION = 'skipped_notification'
+PRECHECK_DECISION_NOT_CUSTOMER = 'not_customer'
+PRECHECK_DECISION_CUSTOMER_ANALYZED = 'customer_analyzed'
+PRECHECK_DECISION_MISSING_CLEF = 'missing_clef'
+PRECHECK_DECISION_FAILED = 'failed'
+PRECHECK_CUSTOMER_QUESTIONS = {
+    'is_customer': {
+        'type': 'noul',
+        'instructions': (
+            'Is this a real customer message that needs a human customer-service reply? '
+            'Exclude marketing, shipping notifications, receipts, and automated system mail.'
+        ),
+    },
+}
+
 # Used when the setting has never been saved. An explicit empty list stays empty.
 DEFAULT_QUICK_INSTRUCTIONS = (
     {'label': '指令一', 'text': '根据邮箱和姓名无法匹配订单'},

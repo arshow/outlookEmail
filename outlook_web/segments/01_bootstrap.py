@@ -1462,6 +1462,7 @@ def init_db():
             inbox_poll_enabled INTEGER NOT NULL DEFAULT 1,
             inbox_poll_last_checked_at TIMESTAMP,
             aggregated_inbox_enabled INTEGER NOT NULL DEFAULT 0,
+            ai_precheck_enabled INTEGER NOT NULL DEFAULT 0,
             proxy_url TEXT DEFAULT '',
             fallback_proxy_url_1 TEXT DEFAULT '',
             fallback_proxy_url_2 TEXT DEFAULT '',
@@ -1982,6 +1983,8 @@ def init_db():
         cursor.execute('ALTER TABLE accounts ADD COLUMN inbox_poll_last_checked_at TIMESTAMP')
     if 'aggregated_inbox_enabled' not in columns:
         cursor.execute('ALTER TABLE accounts ADD COLUMN aggregated_inbox_enabled INTEGER NOT NULL DEFAULT 0')
+    if 'ai_precheck_enabled' not in columns:
+        cursor.execute('ALTER TABLE accounts ADD COLUMN ai_precheck_enabled INTEGER NOT NULL DEFAULT 0')
     if 'proxy_url' not in columns:
         cursor.execute('ALTER TABLE accounts ADD COLUMN proxy_url TEXT')
     if 'fallback_proxy_url_1' not in columns:
@@ -2656,6 +2659,11 @@ def init_db():
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_accounts_aggregated_inbox_enabled
         ON accounts(aggregated_inbox_enabled)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_accounts_ai_precheck_enabled
+        ON accounts(ai_precheck_enabled)
     ''')
 
     cursor.execute('''

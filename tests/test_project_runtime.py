@@ -2245,7 +2245,10 @@ class FrontendAccountUnreadBadgeTests(unittest.TestCase):
         self.assertIn('renderAccountRemarkRow(acc)', groups_js)
         self.assertIn('account-feature-markers', groups_js)
         self.assertIn('已开启自动发现', groups_js)
+        self.assertIn('showAiPrecheckStatusLabel', groups_js)
+        self.assertIn('已开启前置判断', groups_js)
         self.assertIn('.account-status-pill.discover', css)
+        self.assertIn('.account-status-pill.precheck', css)
         self.assertIn('.account-remark-row', css)
         self.assertIn('.account-feature-markers', css)
 

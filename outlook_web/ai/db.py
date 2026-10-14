@@ -82,6 +82,29 @@ def ensure_ai_schema(conn) -> None:
         ON ai_analysis_runs(account_email, message_id, created_at DESC)
     ''')
     cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ai_precheck_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id INTEGER NOT NULL,
+            account_email TEXT NOT NULL DEFAULT '',
+            folder TEXT NOT NULL DEFAULT 'inbox',
+            message_id TEXT NOT NULL,
+            id_mode TEXT NOT NULL DEFAULT '',
+            decision TEXT NOT NULL DEFAULT '',
+            sender TEXT NOT NULL DEFAULT '',
+            subject TEXT NOT NULL DEFAULT '',
+            clef_answers TEXT,
+            analyze_run_id INTEGER,
+            error_message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(account_id, folder, message_id)
+        )
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_ai_precheck_runs_lookup
+        ON ai_precheck_runs(account_id, folder, message_id)
+    ''')
+    cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_ai_knowledge_enabled
         ON ai_knowledge_entries(enabled, priority DESC)
     ''')

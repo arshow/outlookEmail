@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from outlook_web.ai.constants import CONTEXT_SCOPE_CURRENT, CONTEXT_SCOPES, PROVIDERS
@@ -15,6 +16,7 @@ from outlook_web.ai.knowledge import parse_keywords
 from outlook_web.ai.clef import resolve_clef_runtime, test_clef_connection
 from outlook_web.ai.llm import list_available_models, test_provider_connection
 from outlook_web.ai.rules import match_rules, parse_forbidden_phrases, preclassify
+from outlook_web.ai.precheck import collect_new_inbox_emails, process_inbox_precheck_item
 from outlook_web.ai.service import analyze_email, refine_reply, translate_email_to_zh
 from outlook_web.ai.settings import (
     admin_ai_reply_settings,
@@ -30,6 +32,51 @@ def _ensure_ai_tables():
     db = get_db()
     ensure_ai_schema(db)
     db.commit()
+
+
+_ai_precheck_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='ai-precheck')
+
+
+def _run_inbox_precheck_job(app_obj, account: Dict[str, Any], email_item: Dict[str, Any], folder: str) -> None:
+    with app_obj.app_context():
+        _ensure_ai_tables()
+        settings = _load_ai_settings()
+        process_inbox_precheck_item(
+            db=get_db(),
+            settings=settings,
+            account=account,
+            email_item=email_item,
+            folder=folder,
+        )
+
+
+def enqueue_inbox_mail_precheck(
+    account: Optional[Dict[str, Any]],
+    emails: Any,
+    new_message_ids: Any,
+    folder: str = 'inbox',
+) -> int:
+    """Queue Clef/analyze precheck for newly retained inbox messages. Non-blocking."""
+    if not isinstance(account, dict):
+        return 0
+    if not bool(account.get('ai_precheck_enabled')):
+        return 0
+    folder_name = normalize_folder_name(folder or 'inbox')
+    if folder_name != 'inbox':
+        return 0
+    matched = collect_new_inbox_emails(emails, new_message_ids)
+    if not matched:
+        return 0
+    snapshot = {
+        'id': int(account.get('id') or 0),
+        'email': str(account.get('email') or ''),
+        'ai_precheck_enabled': True,
+    }
+    if not snapshot['id'] or not snapshot['email']:
+        return 0
+    for email_item in matched:
+        _ai_precheck_executor.submit(_run_inbox_precheck_job, app, snapshot, email_item, folder_name)
+    return len(matched)
 
 
 def _load_ai_settings() -> Dict[str, Any]:

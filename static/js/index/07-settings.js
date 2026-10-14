@@ -1403,6 +1403,9 @@
                     if (document.getElementById('editAggregatedInboxEnabled')) {
                         document.getElementById('editAggregatedInboxEnabled').checked = !!acc.aggregated_inbox_enabled;
                     }
+                    if (document.getElementById('editAiPrecheckEnabled')) {
+                        document.getElementById('editAiPrecheckEnabled').checked = !!acc.ai_precheck_enabled;
+                    }
                     if (document.getElementById('editProviderSelect')) {
                         document.getElementById('editProviderSelect').value = acc.provider || (acc.account_type === 'imap' ? 'custom' : 'outlook');
                     }
@@ -1462,6 +1465,9 @@
                     : true,
                 aggregated_inbox_enabled: document.getElementById('editAggregatedInboxEnabled')
                     ? !!document.getElementById('editAggregatedInboxEnabled').checked
+                    : false,
+                ai_precheck_enabled: document.getElementById('editAiPrecheckEnabled')
+                    ? !!document.getElementById('editAiPrecheckEnabled').checked
                     : false,
                 tag_ids: getEditSelectedTagIds()
             };

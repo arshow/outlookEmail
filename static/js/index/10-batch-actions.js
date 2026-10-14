@@ -223,6 +223,8 @@
             const batchEnableForwardingBtn = document.getElementById('batchEnableForwardingBtn');
             const batchEnableInboxPollBtn = document.getElementById('batchEnableInboxPollBtn');
             const batchDisableInboxPollBtn = document.getElementById('batchDisableInboxPollBtn');
+            const batchEnableAiPrecheckBtn = document.getElementById('batchEnableAiPrecheckBtn');
+            const batchDisableAiPrecheckBtn = document.getElementById('batchDisableAiPrecheckBtn');
             const batchEnableAggregatedInboxBtn = document.getElementById('batchEnableAggregatedInboxBtn');
             const batchDisableAggregatedInboxBtn = document.getElementById('batchDisableAggregatedInboxBtn');
             const batchDisableForwardingBtn = document.getElementById('batchDisableForwardingBtn');
@@ -238,10 +240,14 @@
             const disableForwardingChecked = checked.filter(cb => cb.dataset.forwardEnabled === 'true');
             const enableAggregatedInboxChecked = checked.filter(cb => cb.dataset.aggregatedInboxEnabled !== 'true');
             const disableAggregatedInboxChecked = checked.filter(cb => cb.dataset.aggregatedInboxEnabled === 'true');
+            const enableAiPrecheckChecked = checked.filter(cb => cb.dataset.aiPrecheckEnabled !== 'true');
+            const disableAiPrecheckChecked = checked.filter(cb => cb.dataset.aiPrecheckEnabled === 'true');
             const isForwardingUpdating = batchEnableForwardingBtn?.dataset.loading === 'true'
                 || batchDisableForwardingBtn?.dataset.loading === 'true';
             const isAggregatedInboxUpdating = batchEnableAggregatedInboxBtn?.dataset.loading === 'true'
                 || batchDisableAggregatedInboxBtn?.dataset.loading === 'true';
+            const isAiPrecheckUpdating = batchEnableAiPrecheckBtn?.dataset.loading === 'true'
+                || batchDisableAiPrecheckBtn?.dataset.loading === 'true';
             const isTempContext = !!isTempEmailGroup;
             const loadedAccountCount = allCheckboxes.length;
             const totalAccountCount = Number(accountPaginationState?.total) || loadedAccountCount;
@@ -256,6 +262,8 @@
             if (batchEnableForwardingBtn) batchEnableForwardingBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchEnableInboxPollBtn) batchEnableInboxPollBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchDisableInboxPollBtn) batchDisableInboxPollBtn.style.display = isTempContext ? 'none' : 'inline-flex';
+            if (batchEnableAiPrecheckBtn) batchEnableAiPrecheckBtn.style.display = isTempContext ? 'none' : 'inline-flex';
+            if (batchDisableAiPrecheckBtn) batchDisableAiPrecheckBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchEnableAggregatedInboxBtn) batchEnableAggregatedInboxBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchDisableAggregatedInboxBtn) batchDisableAggregatedInboxBtn.style.display = isTempContext ? 'none' : 'inline-flex';
             if (batchDisableForwardingBtn) batchDisableForwardingBtn.style.display = isTempContext ? 'none' : 'inline-flex';
@@ -346,6 +354,28 @@
                             : '取消转发';
                     }
                 }
+                if (batchEnableAiPrecheckBtn) {
+                    batchEnableAiPrecheckBtn.disabled = enableAiPrecheckChecked.length === 0 || isAiPrecheckUpdating;
+                    batchEnableAiPrecheckBtn.title = enableAiPrecheckChecked.length === 0
+                        ? '所选账号已全部开启前置判断'
+                        : '';
+                    if (batchEnableAiPrecheckBtn.dataset.loading !== 'true') {
+                        batchEnableAiPrecheckBtn.textContent = enableAiPrecheckChecked.length > 0
+                            ? `开启前置判断${enableAiPrecheckChecked.length !== checked.length ? ` (${enableAiPrecheckChecked.length})` : ''}`
+                            : '开启前置判断';
+                    }
+                }
+                if (batchDisableAiPrecheckBtn) {
+                    batchDisableAiPrecheckBtn.disabled = disableAiPrecheckChecked.length === 0 || isAiPrecheckUpdating;
+                    batchDisableAiPrecheckBtn.title = disableAiPrecheckChecked.length === 0
+                        ? '所选账号已全部关闭前置判断'
+                        : '';
+                    if (batchDisableAiPrecheckBtn.dataset.loading !== 'true') {
+                        batchDisableAiPrecheckBtn.textContent = disableAiPrecheckChecked.length > 0
+                            ? `关闭前置判断${disableAiPrecheckChecked.length !== checked.length ? ` (${disableAiPrecheckChecked.length})` : ''}`
+                            : '关闭前置判断';
+                    }
+                }
                 if (batchEnableAggregatedInboxBtn) {
                     batchEnableAggregatedInboxBtn.disabled = enableAggregatedInboxChecked.length === 0 || isAggregatedInboxUpdating;
                     batchEnableAggregatedInboxBtn.title = enableAggregatedInboxChecked.length === 0
@@ -421,6 +451,18 @@
                     batchDisableForwardingBtn.textContent = '取消转发';
                     batchDisableForwardingBtn.title = '';
                 }
+                if (batchEnableAiPrecheckBtn) {
+                    batchEnableAiPrecheckBtn.disabled = false;
+                    batchEnableAiPrecheckBtn.dataset.loading = 'false';
+                    batchEnableAiPrecheckBtn.textContent = '开启前置判断';
+                    batchEnableAiPrecheckBtn.title = '';
+                }
+                if (batchDisableAiPrecheckBtn) {
+                    batchDisableAiPrecheckBtn.disabled = false;
+                    batchDisableAiPrecheckBtn.dataset.loading = 'false';
+                    batchDisableAiPrecheckBtn.textContent = '关闭前置判断';
+                    batchDisableAiPrecheckBtn.title = '';
+                }
                 if (batchEnableAggregatedInboxBtn) {
                     batchEnableAggregatedInboxBtn.disabled = false;
                     batchEnableAggregatedInboxBtn.dataset.loading = 'false';
@@ -483,6 +525,9 @@
                         aggregated_inbox_enabled: typeof sourceAccount.aggregated_inbox_enabled === 'boolean'
                             ? sourceAccount.aggregated_inbox_enabled
                             : checkbox.dataset.aggregatedInboxEnabled === 'true',
+                        ai_precheck_enabled: typeof sourceAccount.ai_precheck_enabled === 'boolean'
+                            ? sourceAccount.ai_precheck_enabled
+                            : checkbox.dataset.aiPrecheckEnabled === 'true',
                     };
                 })
                 .filter(Boolean);
@@ -979,6 +1024,78 @@
 
         async function disableInboxPollForSelectedAccounts() {
             await updateInboxPollForSelectedAccounts(false);
+        }
+
+        async function updateAiPrecheckForSelectedAccounts(targetEnabled) {
+            const context = getCurrentAccountBatchSelectionContext();
+            const btn = document.getElementById(targetEnabled ? 'batchEnableAiPrecheckBtn' : 'batchDisableAiPrecheckBtn');
+            if (!btn || btn.disabled || context.isTempContext) return;
+
+            const selectedAccounts = getAccountBatchSelectedAccounts(context);
+            const accountIds = getAccountBatchSelectedIds(context);
+            const eligibleCount = selectedAccounts.filter(account => {
+                const enabled = !!account.ai_precheck_enabled;
+                return enabled !== targetEnabled;
+            }).length;
+            const actionLabel = targetEnabled ? '开启前置判断' : '关闭前置判断';
+            const loadingLabel = targetEnabled ? '开启中...' : '关闭中...';
+            const finishedLabel = targetEnabled ? '已全部开启前置判断' : '已全部关闭前置判断';
+            const skippedLabel = targetEnabled ? '已开启' : '已关闭';
+
+            if (!accountIds.length) {
+                showToast(`请先选择要${actionLabel}的邮箱`, 'error');
+                return;
+            }
+            if (!eligibleCount) {
+                showToast(`所选账号${finishedLabel}`, 'error');
+                return;
+            }
+
+            const skippedCount = accountIds.length - eligibleCount;
+            const confirmMessage = skippedCount > 0
+                ? `确定要为所选 ${accountIds.length} 个邮箱${actionLabel}吗？其中 ${skippedCount} 个${skippedLabel}账号会自动跳过。`
+                : `确定要为所选 ${accountIds.length} 个邮箱${actionLabel}吗？`;
+            if (!(await showConfirmModal(confirmMessage, { title: actionLabel, confirmText: '确认', danger: false }))) {
+                return;
+            }
+
+            btn.disabled = true;
+            btn.dataset.loading = 'true';
+            btn.textContent = loadingLabel;
+
+            try {
+                const response = await fetch('/api/accounts/batch-update-ai-precheck', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        account_ids: accountIds,
+                        ai_precheck_enabled: targetEnabled
+                    })
+                });
+                const data = await response.json();
+
+                if (!data.success) {
+                    handleApiError(data, `批量${actionLabel}失败`);
+                    return;
+                }
+
+                showToast(data.message || `已为 ${eligibleCount} 个账号${actionLabel}`, 'success');
+                await afterSuccessfulAccountBatchMutation(context);
+            } catch (error) {
+                showToast(`批量${actionLabel}失败`, 'error');
+            } finally {
+                btn.dataset.loading = 'false';
+                btn.textContent = actionLabel;
+                updateAccountBatchControls(context);
+            }
+        }
+
+        async function enableAiPrecheckForSelectedAccounts() {
+            await updateAiPrecheckForSelectedAccounts(true);
+        }
+
+        async function disableAiPrecheckForSelectedAccounts() {
+            await updateAiPrecheckForSelectedAccounts(false);
         }
 
         async function updateAggregatedInboxForSelectedAccounts(targetEnabled) {

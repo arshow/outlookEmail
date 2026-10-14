@@ -272,6 +272,8 @@ def discover_account_inbox_mail(account: Dict[str, Any], top: int) -> Dict[str, 
     emails = list(fetch_result.get('emails') or [])
     new_message_ids = find_new_retained_normal_mail_identifiers(account, 'inbox', emails)
     upsert_retained_normal_mail_list_items(account, 'inbox', emails)
+    if new_message_ids:
+        enqueue_inbox_mail_precheck(account, emails, new_message_ids, folder='inbox')
     strip_email_list_bodies(emails)
     set_account_inbox_poll_last_checked_at(account_id)
 

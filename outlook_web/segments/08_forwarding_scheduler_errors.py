@@ -1579,6 +1579,14 @@ def api_update_account_v2(account_id):
             aggregated_inbox_enabled = bool(raw_aggregated)
     else:
         aggregated_inbox_enabled = bool(current_account.get('aggregated_inbox_enabled'))
+    if 'ai_precheck_enabled' in data:
+        raw_precheck = data.get('ai_precheck_enabled')
+        if isinstance(raw_precheck, str):
+            ai_precheck_enabled = raw_precheck.strip().lower() in {'1', 'true', 'yes', 'on'}
+        else:
+            ai_precheck_enabled = bool(raw_precheck)
+    else:
+        ai_precheck_enabled = bool(current_account.get('ai_precheck_enabled'))
     proxy_url = str(data.get('proxy_url', current_account.get('proxy_url', '')) or '').strip()
     fallback_proxy_url_1 = str(
         data.get('fallback_proxy_url_1', current_account.get('fallback_proxy_url_1', '')) or ''
@@ -1653,6 +1661,7 @@ def api_update_account_v2(account_id):
         fallback_proxy_url_2,
         inbox_poll_enabled=inbox_poll_enabled,
         aggregated_inbox_enabled=aggregated_inbox_enabled,
+        ai_precheck_enabled=ai_precheck_enabled,
         authorization_type=authorization_type,
     ):
         cleaned_aliases = get_account_aliases(account_id)
@@ -1786,6 +1795,10 @@ def handle_remote_email_list_request(account: Dict[str, Any], requested_email: s
                 result['new_count'] = len(new_message_ids)
                 result['new_message_ids'] = new_message_ids
             upsert_retained_normal_mail_list_items(account, storage_folder, result.get('emails', []))
+            if skip == 0 and new_message_ids:
+                enqueue_inbox_mail_precheck(
+                    account, result.get('emails', []), new_message_ids, folder=storage_folder
+                )
         apply_email_list_filters(
             account, result, False, subject_contains, from_contains, keyword
         )

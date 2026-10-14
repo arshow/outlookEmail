@@ -1217,6 +1217,49 @@ def api_batch_update_account_inbox_poll():
     })
 
 
+@app.route('/api/accounts/batch-update-ai-precheck', methods=['POST'])
+@login_required
+def api_batch_update_account_ai_precheck():
+    """批量更新账号新邮件前置判断状态"""
+    data = request.json or {}
+    account_ids = data.get('account_ids', [])
+
+    if 'ai_precheck_enabled' not in data:
+        return jsonify({'success': False, 'error': '缺少前置判断状态参数'})
+
+    raw_enabled = data.get('ai_precheck_enabled')
+    if isinstance(raw_enabled, str):
+        ai_precheck_enabled = raw_enabled.strip().lower() in {'1', 'true', 'yes', 'on'}
+    else:
+        ai_precheck_enabled = bool(raw_enabled)
+
+    result = update_accounts_ai_precheck_by_ids(account_ids, ai_precheck_enabled)
+    if not result.get('success'):
+        return jsonify(result)
+
+    action_label = '开启' if ai_precheck_enabled else '关闭'
+    updated_count = result.get('updated_count', 0)
+    unchanged_count = result.get('unchanged_count', 0)
+
+    if updated_count and unchanged_count:
+        message = f'已为 {updated_count} 个账号{action_label}前置判断，{unchanged_count} 个账号已处于该状态'
+    elif updated_count:
+        message = f'已为 {updated_count} 个账号{action_label}前置判断'
+    elif unchanged_count:
+        message = f'所选 {unchanged_count} 个账号已处于{action_label}前置判断状态'
+    else:
+        message = '没有可更新的账号'
+
+    return jsonify({
+        'success': True,
+        'message': message,
+        'updated_count': updated_count,
+        'updated_accounts': result.get('updated_accounts', []),
+        'unchanged_count': unchanged_count,
+        'missing_ids': result.get('missing_ids', []),
+    })
+
+
 @app.route('/api/accounts/batch-update-aggregated-inbox', methods=['POST'])
 @login_required
 def api_batch_update_account_aggregated_inbox():
@@ -1387,6 +1430,7 @@ def api_get_account(account_id):
             'inbox_poll_enabled': bool(account['inbox_poll_enabled']) if account.get('inbox_poll_enabled') is not None else True,
             'inbox_poll_last_checked_at': account.get('inbox_poll_last_checked_at', '') or '',
             'aggregated_inbox_enabled': bool(account.get('aggregated_inbox_enabled')),
+            'ai_precheck_enabled': bool(account.get('ai_precheck_enabled')),
             'proxy_url': account.get('proxy_url', '') or '',
             'fallback_proxy_url_1': account.get('fallback_proxy_url_1', '') or '',
             'fallback_proxy_url_2': account.get('fallback_proxy_url_2', '') or '',
@@ -1594,6 +1638,14 @@ def api_update_account(account_id):
             aggregated_inbox_enabled = bool(raw_aggregated)
     else:
         aggregated_inbox_enabled = bool(current_account.get('aggregated_inbox_enabled'))
+    if 'ai_precheck_enabled' in data:
+        raw_precheck = data.get('ai_precheck_enabled')
+        if isinstance(raw_precheck, str):
+            ai_precheck_enabled = raw_precheck.strip().lower() in {'1', 'true', 'yes', 'on'}
+        else:
+            ai_precheck_enabled = bool(raw_precheck)
+    else:
+        ai_precheck_enabled = bool(current_account.get('ai_precheck_enabled'))
     proxy_url = str(data.get('proxy_url', current_account.get('proxy_url', '')) or '').strip()
     fallback_proxy_url_1 = str(
         data.get('fallback_proxy_url_1', current_account.get('fallback_proxy_url_1', '')) or ''
@@ -1648,6 +1700,7 @@ def api_update_account(account_id):
         smtp_host, smtp_port, smtp_use_tls, smtp_use_ssl,
         inbox_poll_enabled=inbox_poll_enabled,
         aggregated_inbox_enabled=aggregated_inbox_enabled,
+        ai_precheck_enabled=ai_precheck_enabled,
         authorization_type=authorization_type,
     ):
         cleaned_aliases = get_account_aliases(account_id)

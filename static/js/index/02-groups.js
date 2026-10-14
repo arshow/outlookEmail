@@ -1325,6 +1325,12 @@
                 : '';
         }
 
+        function showAiPrecheckStatusLabel(enabled) {
+            return enabled
+                ? '<span class="account-status-pill precheck" title="已开启前置判断">智</span>'
+                : '';
+        }
+
         function renderAccountRemarkRow(account) {
             const remarkHtml = account?.remark && String(account.remark).trim()
                 ? renderColoredRemarkMarkup(account.remark, 'account-remark')
@@ -1333,6 +1339,7 @@
                 showForwardStatusLabel(!!account?.forward_enabled),
                 showAggregatedInboxStatusLabel(!!account?.aggregated_inbox_enabled),
                 showInboxPollStatusLabel(account?.inbox_poll_enabled !== false),
+                showAiPrecheckStatusLabel(!!account?.ai_precheck_enabled),
             ].join('');
             if (!remarkHtml && !markersHtml) {
                 return '';
@@ -1652,6 +1659,7 @@
                            data-refreshable="${acc.account_type !== 'imap' ? 'true' : 'false'}"
                            data-forward-enabled="${acc.forward_enabled ? 'true' : 'false'}"
                            data-aggregated-inbox-enabled="${acc.aggregated_inbox_enabled ? 'true' : 'false'}"
+                           data-ai-precheck-enabled="${acc.ai_precheck_enabled ? 'true' : 'false'}"
                            onclick="handleAccountSelectionCheckboxClick(event)">
                     <div class="account-body">
                         <div class="account-title-row">

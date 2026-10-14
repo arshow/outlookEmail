@@ -332,6 +332,13 @@
                                 <div class="form-hint">默认关闭。开启后，该账号才会出现在分组「聚合收件箱」中。</div>
                             </div>
                             <div class="form-group edit-account-span-2">
+                                <label class="settings-toggle settings-toggle--inline">
+                                    <input type="checkbox" id="editAiPrecheckEnabled">
+                                    <span class="form-label">新邮件前置判断</span>
+                                </label>
+                                <div class="form-hint">默认关闭。开启后，新 inbox 邮件会先判断是否真客户，是则自动生成一版智能回复草稿（不发送）。</div>
+                            </div>
+                            <div class="form-group edit-account-span-2">
                                 <label class="form-label">标签</label>
                                 <div class="tag-filter-dropdown" id="editTagFilterDropdown">
                                     <button class="tag-filter-trigger" type="button" onclick="toggleEditTagDropdown(event)">

@@ -811,6 +811,11 @@
             color: #047857;
         }
 
+        .account-status-pill.precheck {
+            background-color: #f5f3ff;
+            color: #6d28d9;
+        }
+
         .account-status-pill.danger {
             background-color: #fdebec;
             color: #b42318;
@@ -1319,7 +1324,8 @@
 
         .account-panel.minimal-mode .account-feature-markers .account-status-pill.success,
         .account-panel.minimal-mode .account-feature-markers .account-status-pill.info,
-        .account-panel.minimal-mode .account-feature-markers .account-status-pill.discover {
+        .account-panel.minimal-mode .account-feature-markers .account-status-pill.discover,
+        .account-panel.minimal-mode .account-feature-markers .account-status-pill.precheck {
             min-height: 20px;
             padding: 0 7px;
             font-size: 12px;

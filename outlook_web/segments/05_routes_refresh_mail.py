@@ -4770,6 +4770,8 @@ def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: 
                     account, storage_folder, raw_emails
                 )
             upsert_retained_normal_mail_list_items(account, storage_folder, raw_emails)
+            if skip == 0 and new_message_ids:
+                enqueue_inbox_mail_precheck(account, raw_emails, new_message_ids, folder=storage_folder)
 
         emails = [
             annotate_aggregated_email_item(email_item, account)

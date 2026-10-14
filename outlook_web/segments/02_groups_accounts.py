@@ -1444,6 +1444,7 @@ def serialize_account_summary(account: Dict[str, Any], last_refresh_log: Optiona
         'inbox_poll_enabled': bool(account['inbox_poll_enabled']) if account.get('inbox_poll_enabled') is not None else True,
         'inbox_poll_last_checked_at': account.get('inbox_poll_last_checked_at', '') or '',
         'aggregated_inbox_enabled': bool(account.get('aggregated_inbox_enabled')),
+        'ai_precheck_enabled': bool(account.get('ai_precheck_enabled')),
         'proxy_override_enabled': account_has_proxy_override(account),
         'last_refresh_at': refresh_state['last_refresh_at'],
         'last_refresh_status': refresh_state['last_refresh_status'],
@@ -2160,6 +2161,7 @@ def update_account(account_id: int, email_addr: str, password: str, client_id: s
                    smtp_host: str = '', smtp_port: Any = 0, smtp_use_tls: Any = False,
                    smtp_use_ssl: Any = False, inbox_poll_enabled: bool = True,
                    aggregated_inbox_enabled: bool = False,
+                   ai_precheck_enabled: bool = False,
                    authorization_type: Optional[str] = None) -> bool:
     """更新邮箱账号"""
     db = get_db()
@@ -2177,6 +2179,7 @@ def update_account(account_id: int, email_addr: str, password: str, client_id: s
         )
         inbox_poll_value = 1 if inbox_poll_enabled else 0
         aggregated_inbox_value = 1 if aggregated_inbox_enabled else 0
+        ai_precheck_value = 1 if ai_precheck_enabled else 0
 
         current_account = db.execute(
             'SELECT forward_enabled, forward_last_checked_at, account_type, authorization_type FROM accounts WHERE id = ?',
@@ -2203,6 +2206,7 @@ def update_account(account_id: int, email_addr: str, password: str, client_id: s
                     smtp_host = ?, smtp_port = ?, smtp_use_tls = ?, smtp_use_ssl = ?,
                     forward_enabled = ?,
                     forward_last_checked_at = ?, inbox_poll_enabled = ?, aggregated_inbox_enabled = ?,
+                    ai_precheck_enabled = ?,
                     proxy_url = ?, fallback_proxy_url_1 = ?,
                     fallback_proxy_url_2 = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
@@ -2213,6 +2217,7 @@ def update_account(account_id: int, email_addr: str, password: str, client_id: s
                 smtp_fields['smtp_host'], smtp_fields['smtp_port'],
                 smtp_fields['smtp_use_tls'], smtp_fields['smtp_use_ssl'], 1,
                 datetime.now(timezone.utc).isoformat(), inbox_poll_value, aggregated_inbox_value,
+                ai_precheck_value,
                 normalized_proxy_url,
                 normalized_fallback_proxy_url_1, normalized_fallback_proxy_url_2, account_id
             ))
@@ -2225,6 +2230,7 @@ def update_account(account_id: int, email_addr: str, password: str, client_id: s
                     imap_host = ?, imap_port = ?, imap_password = ?,
                     smtp_host = ?, smtp_port = ?, smtp_use_tls = ?, smtp_use_ssl = ?,
                     forward_enabled = ?, inbox_poll_enabled = ?, aggregated_inbox_enabled = ?,
+                    ai_precheck_enabled = ?,
                     proxy_url = ?, fallback_proxy_url_1 = ?, fallback_proxy_url_2 = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
@@ -2235,6 +2241,7 @@ def update_account(account_id: int, email_addr: str, password: str, client_id: s
                 smtp_fields['smtp_host'], smtp_fields['smtp_port'],
                 smtp_fields['smtp_use_tls'], smtp_fields['smtp_use_ssl'],
                 1 if forward_enabled else 0, inbox_poll_value, aggregated_inbox_value,
+                ai_precheck_value,
                 normalized_proxy_url, normalized_fallback_proxy_url_1, normalized_fallback_proxy_url_2, account_id
             ))
         db.commit()
@@ -3523,6 +3530,66 @@ def update_accounts_inbox_poll_by_ids(account_ids: List[int], inbox_poll_enabled
                 f'''
                 UPDATE accounts
                 SET inbox_poll_enabled = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id IN ({update_placeholders})
+                ''',
+                [target_value] + updated_ids
+            )
+            db.commit()
+
+        return {
+            'success': True,
+            'updated_count': len(updated_ids),
+            'updated_accounts': updated_accounts,
+            'unchanged_count': unchanged_count,
+            'missing_ids': missing_ids,
+        }
+    except Exception as e:
+        db.rollback()
+        return {'success': False, 'error': str(e)}
+
+
+def update_accounts_ai_precheck_by_ids(account_ids: List[int], ai_precheck_enabled: bool) -> Dict[str, Any]:
+    """批量更新账号新邮件前置判断开关。"""
+    db = get_db()
+    normalized_ids = normalize_account_ids(account_ids)
+
+    if not normalized_ids:
+        return {'success': False, 'error': '请选择要修改的账号'}
+
+    placeholders = ','.join('?' * len(normalized_ids))
+    rows = db.execute(
+        f'''
+        SELECT id, email, COALESCE(ai_precheck_enabled, 0) AS ai_precheck_enabled
+        FROM accounts
+        WHERE id IN ({placeholders})
+        ORDER BY email COLLATE NOCASE ASC
+        ''',
+        normalized_ids
+    ).fetchall()
+
+    if not rows:
+        return {'success': False, 'error': '未找到可修改的账号'}
+
+    target_value = 1 if ai_precheck_enabled else 0
+    existing_ids = [row['id'] for row in rows]
+    existing_id_set = set(existing_ids)
+    missing_ids = [account_id for account_id in normalized_ids if account_id not in existing_id_set]
+    updated_rows = [
+        row for row in rows
+        if int(row['ai_precheck_enabled'] if row['ai_precheck_enabled'] is not None else 0) != target_value
+    ]
+    updated_ids = [row['id'] for row in updated_rows]
+    updated_accounts = [{'id': row['id'], 'email': row['email']} for row in updated_rows]
+    unchanged_count = len(rows) - len(updated_rows)
+
+    try:
+        if updated_ids:
+            update_placeholders = ','.join('?' * len(updated_ids))
+            db.execute(
+                f'''
+                UPDATE accounts
+                SET ai_precheck_enabled = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id IN ({update_placeholders})
                 ''',
