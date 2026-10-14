@@ -1618,6 +1618,51 @@ class NormalMailRetentionTests(unittest.TestCase):
         self.assertEqual([item['id'] for item in payload['emails']], ['sender-keyword-1'])
         self.assertEqual(payload['count'], 1)
 
+    def test_local_retention_keyword_search_decodes_plus_as_spaces(self):
+        with self.app.app_context():
+            web_outlook_app.upsert_retained_normal_mail_list_items(
+                self.account,
+                'inbox',
+                [{
+                    'id': 'etsy-sale-1',
+                    'id_mode': 'graph',
+                    'subject': 'You made a sale on Etsy - Ship by Jun 21 - [USD 22.50, Order #4087578904]',
+                    'from': 'transaction@etsy.com',
+                    'to': 'retained@example.com',
+                    'date': '2026-06-14T02:03:00Z',
+                    'is_read': True,
+                    'has_attachments': False,
+                    'body_preview': 'Congratulations on your Etsy sale of 1 item.',
+                }, {
+                    'id': 'other-mail-1',
+                    'id_mode': 'graph',
+                    'subject': 'Unrelated newsletter',
+                    'from': 'news@example.com',
+                    'to': 'retained@example.com',
+                    'date': '2026-06-14T03:00:00Z',
+                    'is_read': True,
+                    'has_attachments': False,
+                    'body_preview': 'Hello',
+                }]
+            )
+            self.assertTrue(web_outlook_app.set_setting(
+                'normal_mail_local_retention_enabled',
+                'true',
+            ))
+
+        # URLSearchParams encodes spaces as "+", which must become real spaces.
+        response = self.client.get(
+            '/api/emails/retained@example.com'
+            '?source=local&folder=all&keyword=You+made+a+sale+on+Etsy'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual([item['id'] for item in payload['emails']], ['etsy-sale-1'])
+        self.assertEqual(payload['count'], 1)
+        self.assertTrue(payload['emails'][0].get('keyword_hit'))
+
     def test_email_filter_uses_cached_body_without_remote_detail(self):
         account = {
             'id': self.account['id'],

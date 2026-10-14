@@ -1697,10 +1697,13 @@ def add_resolved_account_metadata(result: Dict[str, Any], requested_email: str,
 
 
 def get_email_filter_args() -> tuple[str, str, str]:
+    # Use request.args (unquote_plus) so URLSearchParams spaces encoded as "+"
+    # become real spaces. preserve_plus is only for email addresses that may
+    # contain literal "+" without %2B encoding.
     return (
-        get_query_arg_preserve_plus('subject_contains', '').strip().lower(),
-        get_query_arg_preserve_plus('from_contains', '').strip().lower(),
-        get_query_arg_preserve_plus('keyword', '').strip().lower(),
+        str(request.args.get('subject_contains') or '').strip().lower(),
+        str(request.args.get('from_contains') or '').strip().lower(),
+        str(request.args.get('keyword') or '').strip().lower(),
     )
 
 
@@ -1872,9 +1875,9 @@ def api_external_get_emails_v2():
     folder = normalize_folder_name(request.args.get('folder', 'inbox'))
     skip = parse_non_negative_int(request.args.get('skip', 0), 0)
     top = parse_non_negative_int(request.args.get('top', 1), 1, 50)
-    subject_contains = get_query_arg_preserve_plus('subject_contains', '').strip().lower()
-    from_contains = get_query_arg_preserve_plus('from_contains', '').strip().lower()
-    keyword = get_query_arg_preserve_plus('keyword', '').strip().lower()
+    subject_contains = str(request.args.get('subject_contains') or '').strip().lower()
+    from_contains = str(request.args.get('from_contains') or '').strip().lower()
+    keyword = str(request.args.get('keyword') or '').strip().lower()
 
     if not email_addr:
         return jsonify({'success': False, 'error': '缺少 email 参数'}), 400
