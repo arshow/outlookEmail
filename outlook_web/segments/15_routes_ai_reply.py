@@ -16,7 +16,12 @@ from outlook_web.ai.knowledge import parse_keywords
 from outlook_web.ai.clef import resolve_clef_runtime, test_clef_connection
 from outlook_web.ai.llm import list_available_models, test_provider_connection
 from outlook_web.ai.rules import match_rules, parse_forbidden_phrases, preclassify
-from outlook_web.ai.precheck import collect_new_inbox_emails, process_inbox_precheck_item
+from outlook_web.ai.precheck import (
+    collect_new_inbox_emails,
+    is_precheck_folder,
+    normalize_precheck_folder,
+    process_inbox_precheck_item,
+)
 from outlook_web.ai.service import analyze_email, refine_reply, translate_email_to_zh
 from outlook_web.ai.settings import (
     admin_ai_reply_settings,
@@ -56,13 +61,13 @@ def enqueue_inbox_mail_precheck(
     new_message_ids: Any,
     folder: str = 'inbox',
 ) -> int:
-    """Queue Clef/analyze precheck for newly retained inbox messages. Non-blocking."""
+    """Queue Clef/analyze precheck for newly retained inbox/junk messages. Non-blocking."""
     if not isinstance(account, dict):
         return 0
     if not bool(account.get('ai_precheck_enabled')):
         return 0
-    folder_name = normalize_folder_name(folder or 'inbox')
-    if folder_name != 'inbox':
+    folder_name = normalize_precheck_folder(normalize_folder_name(folder or 'inbox'))
+    if not is_precheck_folder(folder_name):
         return 0
     matched = collect_new_inbox_emails(emails, new_message_ids)
     if not matched:

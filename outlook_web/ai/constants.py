@@ -74,6 +74,13 @@ SETTING_CLOUDFLARE_REMARK = 'ai_reply_cloudflare_remark'
 
 PRECHECK_CUSTOMER_THRESHOLD = 0.6
 PRECHECK_BODY_MAX_CHARS = 4000
+PRECHECK_FOLDERS = ('inbox', 'junkemail')
+PRECHECK_FOLDER_ALIASES = {
+    'inbox': 'inbox',
+    'junkemail': 'junkemail',
+    'junk': 'junkemail',
+    'spam': 'junkemail',
+}
 PRECHECK_DECISION_SKIPPED_NOTIFICATION = 'skipped_notification'
 PRECHECK_DECISION_NOT_CUSTOMER = 'not_customer'
 PRECHECK_DECISION_CUSTOMER_ANALYZED = 'customer_analyzed'

@@ -733,5 +733,58 @@ class ClefClientTestCase(unittest.TestCase):
         self.assertIn('鉴权失败', str(raised.exception))
 
 
+class AiDraftFlagTests(unittest.TestCase):
+    def test_attach_flags_only_when_nonempty_draft_exists(self):
+        import sqlite3
+        from outlook_web.ai.db import ensure_ai_schema
+        from outlook_web.ai.draft_flags import attach_ai_draft_flags_to_email_items
+
+        db = sqlite3.connect(':memory:')
+        db.row_factory = sqlite3.Row
+        ensure_ai_schema(db)
+        cursor = db.execute(
+            '''
+            INSERT INTO ai_analysis_runs (
+                account_email, message_id, context_scope, provider, model,
+                input_fingerprint, status, duration_ms, history_count, contact_email, result_json
+            ) VALUES ('User@example.com', 'msg-1', 'current', 'deepseek', 'deepseek-chat',
+                      'fp', 'succeeded', 10, 0, '', '{}')
+            '''
+        )
+        db.execute(
+            'INSERT INTO ai_drafts (run_id, kind, reply_text, reply_text_zh) VALUES (?, ?, ?, ?)',
+            (cursor.lastrowid, 'initial', 'Thanks, we will check.', '感谢'),
+        )
+        empty_run = db.execute(
+            '''
+            INSERT INTO ai_analysis_runs (
+                account_email, message_id, context_scope, provider, model,
+                input_fingerprint, status, duration_ms, history_count, contact_email, result_json
+            ) VALUES ('user@example.com', 'msg-2', 'current', 'deepseek', 'deepseek-chat',
+                      'fp2', 'succeeded', 10, 0, '', '{}')
+            '''
+        )
+        db.execute(
+            'INSERT INTO ai_drafts (run_id, kind, reply_text, reply_text_zh) VALUES (?, ?, ?, ?)',
+            (empty_run.lastrowid, 'initial', '  ', ''),
+        )
+        db.commit()
+
+        items = attach_ai_draft_flags_to_email_items(
+            db,
+            [
+                {'id': 'msg-1'},
+                {'id': 'msg-2'},
+                {'id': 'msg-3'},
+            ],
+            default_account_email='user@example.com',
+        )
+        flags = {item['id']: item['has_ai_draft'] for item in items}
+        self.assertTrue(flags['msg-1'])
+        self.assertFalse(flags['msg-2'])
+        self.assertFalse(flags['msg-3'])
+
+
 if __name__ == '__main__':
     unittest.main()
+

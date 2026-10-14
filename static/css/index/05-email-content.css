@@ -1246,6 +1246,14 @@
             border-color: #e2e8f0;
         }
 
+        .email-subject-row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 8px;
+            min-width: 0;
+        }
+
         .email-subject {
             font-size: 14px;
             color: #111827;
@@ -1254,6 +1262,25 @@
             display: -webkit-box;
             -webkit-box-orient: vertical;
             -webkit-line-clamp: 2;
+            min-width: 0;
+            flex: 1;
+        }
+
+        .email-ai-draft-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 20px;
+            padding: 0 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 1;
+            color: #6d28d9;
+            background: #f5f3ff;
+            border: 1px solid #ddd6fe;
+            white-space: nowrap;
+            flex: 0 0 auto;
         }
 
         .email-preview {

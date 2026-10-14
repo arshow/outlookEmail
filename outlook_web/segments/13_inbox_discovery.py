@@ -20,6 +20,7 @@ INBOX_POLL_CONCURRENCY_MIN = 1
 INBOX_POLL_CONCURRENCY_MAX = 20
 INBOX_POLL_TOP_DEFAULT = 20
 INBOX_POLL_TOP_MAX = 50
+INBOX_DISCOVERY_FOLDERS = ('inbox', 'junkemail')
 INBOX_DISCOVERY_SSE_HEARTBEAT_SECONDS = 20
 INBOX_DISCOVERY_SSE_QUEUE_MAXSIZE = 64
 
@@ -239,7 +240,7 @@ def set_account_inbox_poll_last_checked_at(account_id: int, checked_at: Optional
 
 
 def discover_account_inbox_mail(account: Dict[str, Any], top: int) -> Dict[str, Any]:
-    """抓取单账号 inbox 列表，upsert 本地保留，并在有新信时发布 SSE。"""
+    """抓取单账号 inbox / junkemail 列表，upsert 本地保留，并在有新信时发布 SSE。"""
     account_id = int(account.get('id') or 0)
     account_email = str(account.get('email') or '')
     result: Dict[str, Any] = {
@@ -250,6 +251,7 @@ def discover_account_inbox_mail(account: Dict[str, Any], top: int) -> Dict[str, 
         'new_message_ids': [],
         'emails': [],
         'error': '',
+        'folder_errors': {},
     }
     if not account_id or not account_email:
         result['error'] = '账号无效'
@@ -257,58 +259,77 @@ def discover_account_inbox_mail(account: Dict[str, Any], top: int) -> Dict[str, 
 
     proxy_url = get_account_proxy_url(account)
     fallback_proxy_urls = get_account_proxy_failover_urls(account)
-    fetch_result = fetch_account_folder_emails(
-        account,
-        'inbox',
-        0,
-        top,
-        proxy_url=proxy_url,
-        fallback_proxy_urls=fallback_proxy_urls,
-    )
-    if not fetch_result.get('success'):
-        result['error'] = fetch_result.get('error') or '抓取收件箱失败'
+    all_new_message_ids: List[Dict[str, str]] = []
+    all_new_emails: List[Dict[str, Any]] = []
+    fetched_count = 0
+    folder_errors: Dict[str, str] = {}
+    any_success = False
+
+    for folder_name in INBOX_DISCOVERY_FOLDERS:
+        fetch_result = fetch_account_folder_emails(
+            account,
+            folder_name,
+            0,
+            top,
+            proxy_url=proxy_url,
+            fallback_proxy_urls=fallback_proxy_urls,
+        )
+        if not fetch_result.get('success'):
+            folder_errors[folder_name] = fetch_result.get('error') or f'抓取 {folder_name} 失败'
+            continue
+
+        any_success = True
+        emails = list(fetch_result.get('emails') or [])
+        new_message_ids = find_new_retained_normal_mail_identifiers(account, folder_name, emails)
+        upsert_retained_normal_mail_list_items(account, folder_name, emails)
+        if new_message_ids:
+            enqueue_inbox_mail_precheck(account, emails, new_message_ids, folder=folder_name)
+        strip_email_list_bodies(emails)
+        fetched_count += len(emails)
+
+        new_id_set = {
+            str(item.get('id') or item.get('message_id') or '').strip()
+            for item in new_message_ids
+            if str(item.get('id') or item.get('message_id') or '').strip()
+        }
+        new_emails = []
+        for email in emails:
+            if str(email.get('id') or '').strip() not in new_id_set:
+                continue
+            annotated = dict(email)
+            annotated['account_id'] = account_id
+            annotated['account_email'] = account_email
+            annotated['folder'] = folder_name
+            new_emails.append(annotated)
+
+        all_new_message_ids.extend(new_message_ids)
+        all_new_emails.extend(new_emails)
+        if new_message_ids:
+            publish_inbox_discovery_event({
+                'type': 'new_mail',
+                'account_id': account_id,
+                'account_email': account_email,
+                'folder': folder_name,
+                'new_count': len(new_message_ids),
+                'new_message_ids': new_message_ids,
+                'emails': new_emails,
+            })
+
+    if not any_success:
+        result['error'] = folder_errors.get('inbox') or next(iter(folder_errors.values()), '抓取邮件失败')
+        result['folder_errors'] = folder_errors
         return result
 
-    emails = list(fetch_result.get('emails') or [])
-    new_message_ids = find_new_retained_normal_mail_identifiers(account, 'inbox', emails)
-    upsert_retained_normal_mail_list_items(account, 'inbox', emails)
-    if new_message_ids:
-        enqueue_inbox_mail_precheck(account, emails, new_message_ids, folder='inbox')
-    strip_email_list_bodies(emails)
     set_account_inbox_poll_last_checked_at(account_id)
-
-    new_id_set = {
-        str(item.get('id') or item.get('message_id') or '').strip()
-        for item in new_message_ids
-        if str(item.get('id') or item.get('message_id') or '').strip()
-    }
-    new_emails = []
-    for email in emails:
-        if str(email.get('id') or '').strip() not in new_id_set:
-            continue
-        annotated = dict(email)
-        annotated['account_id'] = account_id
-        annotated['account_email'] = account_email
-        new_emails.append(annotated)
-
     result.update({
         'success': True,
-        'new_count': len(new_message_ids),
-        'new_message_ids': new_message_ids,
-        'emails': new_emails,
-        'fetched_count': len(emails),
+        'new_count': len(all_new_message_ids),
+        'new_message_ids': all_new_message_ids,
+        'emails': all_new_emails,
+        'fetched_count': fetched_count,
+        'folder_errors': folder_errors,
+        'error': folder_errors.get('junkemail') or '',
     })
-
-    if new_message_ids:
-        publish_inbox_discovery_event({
-            'type': 'new_mail',
-            'account_id': account_id,
-            'account_email': account_email,
-            'folder': 'inbox',
-            'new_count': len(new_message_ids),
-            'new_message_ids': new_message_ids,
-            'emails': new_emails,
-        })
     return result
 
 

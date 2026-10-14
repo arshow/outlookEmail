@@ -105,6 +105,29 @@ class InboxDiscoveryTests(unittest.TestCase):
         self.assertEqual(result.get('accounts_total'), 0)
         fetch_mock.assert_not_called()
 
+    def _folder_fetch_result(self, emails):
+        return {
+            'success': True,
+            'emails': emails,
+            'method': 'Graph API',
+            'has_more': False,
+        }
+
+    def _fake_folder_fetch(self, inbox_emails=None, junk_emails=None, junk_error=None):
+        inbox_emails = list(inbox_emails or [])
+        junk_emails = list(junk_emails or [])
+
+        def fake_fetch(account, folder, skip, top, **kwargs):
+            if folder == 'inbox':
+                return self._folder_fetch_result(inbox_emails)
+            if folder == 'junkemail':
+                if junk_error:
+                    return {'success': False, 'error': junk_error, 'emails': []}
+                return self._folder_fetch_result(junk_emails)
+            return {'success': False, 'error': f'unexpected folder {folder}', 'emails': []}
+
+        return fake_fetch
+
     def test_discover_account_upserts_and_publishes_event(self):
         remote_emails = [{
             'id': 'msg-new-1',
@@ -120,28 +143,30 @@ class InboxDiscoveryTests(unittest.TestCase):
             'folder': 'inbox',
         }]
         events = []
+        fetched_folders = []
 
         def capture_event(event):
             events.append(event)
             return 1
 
+        def fake_fetch(account, folder, skip, top, **kwargs):
+            fetched_folders.append(folder)
+            return self._fake_folder_fetch(inbox_emails=remote_emails)(account, folder, skip, top, **kwargs)
+
         with self.app.app_context():
             with patch.object(
                 web_outlook_app,
                 'fetch_account_folder_emails',
-                return_value={
-                    'success': True,
-                    'emails': remote_emails,
-                    'method': 'Graph API',
-                    'has_more': False,
-                },
+                side_effect=fake_fetch,
             ), patch.object(web_outlook_app, 'publish_inbox_discovery_event', side_effect=capture_event):
                 result = web_outlook_app.discover_account_inbox_mail(self.account, top=20)
 
         self.assertTrue(result['success'])
         self.assertEqual(result['new_count'], 1)
+        self.assertEqual(fetched_folders, ['inbox', 'junkemail'])
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]['type'], 'new_mail')
+        self.assertEqual(events[0]['folder'], 'inbox')
         self.assertEqual(events[0]['account_email'], 'poll@example.com')
         self.assertEqual(events[0]['emails'][0]['id'], 'msg-new-1')
 
@@ -162,6 +187,83 @@ class InboxDiscoveryTests(unittest.TestCase):
 
         self.assertIsNotNone(row)
         self.assertIsNotNone(account_row['inbox_poll_last_checked_at'])
+
+    def test_discover_account_also_fetches_junkemail(self):
+        junk_emails = [{
+            'id': 'msg-junk-1',
+            'id_mode': 'graph',
+            'subject': 'Maybe spam',
+            'from': 'promo@example.com',
+            'to': 'poll@example.com',
+            'date': '2026-08-11T12:05:00Z',
+            'is_read': False,
+            'is_flagged': False,
+            'has_attachments': False,
+            'body_preview': 'sale',
+            'folder': 'junkemail',
+        }]
+        events = []
+
+        def capture_event(event):
+            events.append(event)
+            return 1
+
+        with self.app.app_context():
+            with patch.object(
+                web_outlook_app,
+                'fetch_account_folder_emails',
+                side_effect=self._fake_folder_fetch(junk_emails=junk_emails),
+            ), patch.object(web_outlook_app, 'publish_inbox_discovery_event', side_effect=capture_event):
+                result = web_outlook_app.discover_account_inbox_mail(self.account, top=20)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['new_count'], 1)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['folder'], 'junkemail')
+        self.assertEqual(events[0]['emails'][0]['id'], 'msg-junk-1')
+
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            row = db.execute(
+                '''
+                SELECT folder, provider_message_id
+                FROM retained_normal_mail_messages
+                WHERE account_id = ? AND provider_message_id = ?
+                ''',
+                (self.account['id'], 'msg-junk-1')
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(str(row['folder']).lower(), 'junkemail')
+
+    def test_discover_continues_when_junkemail_fetch_fails(self):
+        inbox_emails = [{
+            'id': 'msg-inbox-ok',
+            'id_mode': 'graph',
+            'subject': 'Hello',
+            'from': 'sender@example.com',
+            'to': 'poll@example.com',
+            'date': '2026-08-11T12:00:00Z',
+            'is_read': False,
+            'is_flagged': False,
+            'has_attachments': False,
+            'body_preview': 'preview',
+            'folder': 'inbox',
+        }]
+
+        with self.app.app_context():
+            with patch.object(
+                web_outlook_app,
+                'fetch_account_folder_emails',
+                side_effect=self._fake_folder_fetch(
+                    inbox_emails=inbox_emails,
+                    junk_error='junk mailbox missing',
+                ),
+            ):
+                result = web_outlook_app.discover_account_inbox_mail(self.account, top=20)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['new_count'], 1)
+        self.assertIn('junkemail', result.get('folder_errors') or {})
 
     def test_trigger_api_requires_retention(self):
         with self.app.app_context():
@@ -209,6 +311,7 @@ class InboxDiscoveryTests(unittest.TestCase):
 
         self.assertIn('startInboxDiscoveryEventSource', emails_js)
         self.assertIn('handleInboxDiscoveryNewMailEvent', emails_js)
+        self.assertIn("viewFolder === 'junkemail' && eventFolder !== 'junkemail'", emails_js)
         self.assertIn('queuePendingNewMailSync', emails_js)
         self.assertIn("invalidateEmailListCache(accountEmail, 'all')", emails_js)
         self.assertIn('inboxPollSchedulerEnabled', settings_html)

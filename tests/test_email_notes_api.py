@@ -32,6 +32,8 @@ class EmailNotesApiTests(unittest.TestCase):
             db = web_outlook_app.get_db()
             db.execute("DELETE FROM email_notes")
             db.execute("DELETE FROM contact_notes")
+            db.execute("DELETE FROM ai_drafts")
+            db.execute("DELETE FROM ai_analysis_runs")
             db.execute("DELETE FROM retained_normal_mail_messages")
             db.execute("DELETE FROM accounts WHERE email = ?", ('notes@example.com',))
             db.execute(
@@ -116,6 +118,36 @@ class EmailNotesApiTests(unittest.TestCase):
         self.assertEqual(listed_payload['emails'][0]['note'], '已答应补发')
         self.assertEqual(listed_payload['emails'][0]['contact_email'], 'buyer@example.com')
         self.assertEqual(listed_payload['emails'][0]['contact_note'], '已答应补发')
+        self.assertFalse(listed_payload['emails'][0].get('has_ai_draft'))
+
+    def test_list_marks_emails_with_ai_draft(self):
+        self._insert_retained('note-msg-2', 'other@example.com', 'Another mail')
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            cursor = db.execute(
+                '''
+                INSERT INTO ai_analysis_runs (
+                    account_email, message_id, context_scope, provider, model,
+                    input_fingerprint, status, duration_ms, history_count, contact_email, result_json
+                ) VALUES (?, ?, 'current', 'deepseek', 'deepseek-chat', 'fp', 'succeeded', 8, 0, '', '{}')
+                ''',
+                ('notes@example.com', 'note-msg-1'),
+            )
+            db.execute(
+                'INSERT INTO ai_drafts (run_id, kind, reply_text, reply_text_zh) VALUES (?, ?, ?, ?)',
+                (cursor.lastrowid, 'initial', 'Thanks, we will check.', '感谢，我们会核实。'),
+            )
+            db.commit()
+
+        listed = self.client.get(
+            '/api/emails/notes@example.com',
+            query_string={'source': 'local', 'folder': 'inbox', 'skip': 0, 'top': 20},
+        )
+        payload = listed.get_json()
+        self.assertTrue(payload['success'], payload)
+        flags = {item['id']: bool(item.get('has_ai_draft')) for item in payload['emails']}
+        self.assertTrue(flags['note-msg-1'])
+        self.assertFalse(flags['note-msg-2'])
 
     def test_note_syncs_to_same_contact_other_emails(self):
         self._insert_retained('note-msg-2', 'buyer@example.com', 'Second order')
@@ -196,6 +228,10 @@ class EmailNotesFrontendTests(unittest.TestCase):
         self.assertIn('function editCurrentEmailNote()', emails_js)
         self.assertIn("fetch('/api/emails/note'", emails_js)
         self.assertIn('email-note-snippet', emails_js)
+        self.assertIn('email-ai-draft-badge', emails_js)
+        self.assertIn('function markEmailHasAiDraft(messageId)', emails_js)
+        self.assertIn('function emailHasAiDraft(email)', emails_js)
+        self.assertIn('markEmailHasAiDraft(messageId)', compose_js)
         self.assertIn('function resolveEmailNoteContact(email)', emails_js)
         self.assertIn('function isEmailNoteShopifyPlatformAddress(address)', emails_js)
         self.assertIn('function emailNoteContactMatchesItem(item, contactEmail, accountEmail)', emails_js)

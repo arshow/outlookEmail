@@ -273,17 +273,21 @@ class AiPrecheckPipelineTestCase(unittest.TestCase):
 
             enabled_account = dict(self.account)
             enabled_account['ai_precheck_enabled'] = True
-            junk = web_outlook_app.enqueue_inbox_mail_precheck(
-                enabled_account, emails, ['msg-customer-1'], folder='junk'
+            deleted = web_outlook_app.enqueue_inbox_mail_precheck(
+                enabled_account, emails, ['msg-customer-1'], folder='deleteditems'
             )
-            self.assertEqual(junk, 0)
+            self.assertEqual(deleted, 0)
             executor.submit.assert_not_called()
 
             queued = web_outlook_app.enqueue_inbox_mail_precheck(
                 enabled_account, emails, [{'id': 'msg-customer-1'}], folder='inbox'
             )
             self.assertEqual(queued, 1)
-            executor.submit.assert_called_once()
+            junk = web_outlook_app.enqueue_inbox_mail_precheck(
+                enabled_account, emails, ['msg-customer-1'], folder='junkemail'
+            )
+            self.assertEqual(junk, 1)
+            self.assertEqual(executor.submit.call_count, 2)
 
     def _inbox_fetch_payload(self):
         return {
@@ -301,6 +305,11 @@ class AiPrecheckPipelineTestCase(unittest.TestCase):
             'has_more': False,
         }
 
+    def _discovery_fetch(self, account, folder, skip, top, **kwargs):
+        if folder == 'junkemail':
+            return {'success': True, 'emails': [], 'method': 'Graph API', 'has_more': False}
+        return self._inbox_fetch_payload()
+
     def test_discover_skips_enqueue_when_flag_off_and_keeps_body_when_on(self):
         with self.app.app_context():
             web_outlook_app.set_setting('normal_mail_local_retention_enabled', 'true')
@@ -310,7 +319,7 @@ class AiPrecheckPipelineTestCase(unittest.TestCase):
             with patch.object(
                 web_outlook_app,
                 'fetch_account_folder_emails',
-                return_value=self._inbox_fetch_payload(),
+                side_effect=self._discovery_fetch,
             ), patch.object(web_outlook_app, '_ai_precheck_executor') as executor:
                 web_outlook_app.discover_account_inbox_mail(self.account, top=20)
             executor.submit.assert_not_called()
@@ -336,7 +345,7 @@ class AiPrecheckPipelineTestCase(unittest.TestCase):
             with patch.object(
                 web_outlook_app,
                 'fetch_account_folder_emails',
-                return_value=self._inbox_fetch_payload(),
+                side_effect=self._discovery_fetch,
             ), patch.object(
                 web_outlook_app, 'enqueue_inbox_mail_precheck', side_effect=capture_enqueue
             ) as enqueue:

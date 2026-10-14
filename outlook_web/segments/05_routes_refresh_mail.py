@@ -3976,26 +3976,43 @@ def build_retained_mail_filter_sql(subject_contains: str = '',
 def attach_email_notes_to_result(result: Dict[str, Any], account: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if not isinstance(result, dict) or not result.get('success'):
         return result
+    account_id = int((account or {}).get('id') or 0)
+    default_folder = str(result.get('folder') or 'inbox')
+    default_account_email = (account or {}).get('email') or ''
+    emails = result.get('emails')
+    email = result.get('email')
     try:
-        account_id = int((account or {}).get('id') or 0)
-        default_folder = str(result.get('folder') or 'inbox')
-        emails = result.get('emails')
         if isinstance(emails, list) and emails:
             attach_notes_to_email_items(
                 get_db(),
                 emails,
                 default_account_id=account_id,
                 default_folder=default_folder,
-                default_account_email=(account or {}).get('email') or '',
+                default_account_email=default_account_email,
             )
-        email = result.get('email')
         if isinstance(email, dict):
             attach_notes_to_email_items(
                 get_db(),
                 [email],
                 default_account_id=account_id,
                 default_folder=str(email.get('folder') or default_folder),
-                default_account_email=(account or {}).get('email') or '',
+                default_account_email=default_account_email,
+            )
+    except Exception:
+        pass
+    try:
+        from outlook_web.ai.draft_flags import attach_ai_draft_flags_to_email_items
+        if isinstance(emails, list) and emails:
+            attach_ai_draft_flags_to_email_items(
+                get_db(),
+                emails,
+                default_account_email=default_account_email,
+            )
+        if isinstance(email, dict):
+            attach_ai_draft_flags_to_email_items(
+                get_db(),
+                [email],
+                default_account_email=default_account_email,
             )
     except Exception:
         pass

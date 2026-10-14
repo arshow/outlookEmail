@@ -1,4 +1,4 @@
-        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, buildEmailDetailRequestUrl, buildEmailTranslateRequestPayload, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentFolder, currentGroupId, currentMethod, DOMPurify, emailTranslateCache, ensureAiTranslateReady, escapeHtml, fetchWithTimeout, formatDate, getEmailTranslateBucket, getEmailTranslateCacheKey, handleApiError, hideModal, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, providerDisplayName, resolveEmailNoteAccountEmail, resolveEmailNoteContact, rewriteEmailHtmlInlineImages, saveEmailNote, setModalVisible, showModal, showToast, stripEmbeddedMediaForTranslate */
+        /* global AGGREGATED_INBOX_ACCOUNT_KEY, accountsCache, buildEmailDetailRequestUrl, buildEmailTranslateRequestPayload, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentFolder, currentGroupId, currentMethod, DOMPurify, emailTranslateCache, ensureAiTranslateReady, escapeHtml, fetchWithTimeout, formatDate, getEmailTranslateBucket, getEmailTranslateCacheKey, handleApiError, hideModal, isAggregatedInboxMode, isNormalMailLocalRetentionEnabled, isTempEmailGroup, markEmailHasAiDraft, providerDisplayName, resolveEmailNoteAccountEmail, resolveEmailNoteContact, rewriteEmailHtmlInlineImages, saveEmailNote, setModalVisible, showModal, showToast, stripEmbeddedMediaForTranslate */
 
         const COMPOSE_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
         const COMPOSE_ATTACHMENT_TOTAL_MAX_BYTES = 25 * 1024 * 1024;
@@ -1888,6 +1888,9 @@
                     return;
                 }
                 renderComposeAiResult(data);
+                if (typeof markEmailHasAiDraft === 'function') {
+                    markEmailHasAiDraft(messageId);
+                }
                 if (data.warning) {
                     showToast(data.warning, 'info');
                 } else {

@@ -805,11 +805,19 @@
             if (isTempEmailGroup || !currentAccount) {
                 return false;
             }
-            if (String(currentFolder || '').toLowerCase() === 'junkemail') {
-                return false;
-            }
             const accountEmail = String(event.account_email || '').trim().toLowerCase();
             if (!accountEmail) {
+                return false;
+            }
+            const eventFolder = String(event.folder || 'inbox').trim().toLowerCase() || 'inbox';
+            const viewFolder = String(currentFolder || '').toLowerCase();
+            if (viewFolder === 'deleteditems') {
+                return false;
+            }
+            if (viewFolder === 'junkemail' && eventFolder !== 'junkemail') {
+                return false;
+            }
+            if (viewFolder === 'inbox' && eventFolder !== 'inbox') {
                 return false;
             }
             if (isAggregatedInboxMode()) {
@@ -1888,6 +1896,44 @@
             `;
         }
 
+        function emailHasAiDraft(email) {
+            return email?.has_ai_draft === true
+                || email?.has_ai_draft === 1
+                || String(email?.has_ai_draft || '').toLowerCase() === 'true';
+        }
+
+        function renderEmailAiDraftBadge() {
+            return '<span class="email-ai-draft-badge" title="已有智能回复草稿">智</span>';
+        }
+
+        function markEmailHasAiDraft(messageId) {
+            const targetId = String(messageId || '').trim();
+            if (!targetId) {
+                return;
+            }
+            const markList = (list) => {
+                if (!Array.isArray(list)) {
+                    return;
+                }
+                list.forEach((email) => {
+                    if (String(email?.id || email?.message_id || '') === targetId) {
+                        email.has_ai_draft = true;
+                    }
+                });
+            };
+            markList(currentEmails);
+            Object.values(emailListCache || {}).forEach((entry) => markList(entry?.emails));
+            const item = Array.from(document.querySelectorAll('.email-item[data-email-id]'))
+                .find((el) => String(el.dataset.emailId || '') === targetId);
+            if (!item || item.querySelector('.email-ai-draft-badge')) {
+                return;
+            }
+            const row = item.querySelector('.email-subject-row');
+            if (row) {
+                row.insertAdjacentHTML('beforeend', renderEmailAiDraftBadge());
+            }
+        }
+
         function renderEmailList(emails) {
             const container = document.getElementById('emailList');
             const renderedSource = getRenderedEmailListSource(emails);
@@ -1966,7 +2012,10 @@
                             <div class="email-account-label" title="${escapeHtml(accountLabel)}">${escapeHtml(accountLabel)}</div>
                             ${accountRemark ? renderColoredRemarkMarkup(accountRemark, 'email-account-remark') : ''}
                         </div>` : ''}
-                        <div class="email-subject">${escapeHtml(email.subject || '无主题')}</div>
+                        <div class="email-subject-row">
+                            <div class="email-subject">${escapeHtml(email.subject || '无主题')}</div>
+                            ${emailHasAiDraft(email) ? renderEmailAiDraftBadge() : ''}
+                        </div>
                         <div class="email-preview">${escapeHtml((email.body_preview || '').trim() || '暂无预览内容')}</div>
                         ${String(email.note || '').trim() ? `<div class="email-note-snippet" title="${escapeHtml(String(email.note).trim())}">${escapeHtml(String(email.note).trim())}</div>` : ''}
                     </div>

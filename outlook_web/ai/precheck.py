@@ -16,6 +16,8 @@ from outlook_web.ai.constants import (
     PRECHECK_DECISION_MISSING_CLEF,
     PRECHECK_DECISION_NOT_CUSTOMER,
     PRECHECK_DECISION_SKIPPED_NOTIFICATION,
+    PRECHECK_FOLDER_ALIASES,
+    PRECHECK_FOLDERS,
 )
 from outlook_web.ai.service import analyze_email
 from outlook_web.mail_reply_address import is_shopify_platform_address, looks_like_shopify_contact_form
@@ -37,6 +39,17 @@ def email_body_text(email_item: Mapping[str, Any]) -> str:
 
 def email_message_id(email_item: Mapping[str, Any]) -> str:
     return str(email_item.get('id') or email_item.get('message_id') or '').strip()
+
+
+def normalize_precheck_folder(folder: Any) -> str:
+    raw = str(folder or 'inbox').strip().lower()
+    if raw in PRECHECK_FOLDER_ALIASES:
+        return PRECHECK_FOLDER_ALIASES[raw]
+    return raw
+
+
+def is_precheck_folder(folder: Any) -> bool:
+    return normalize_precheck_folder(folder) in PRECHECK_FOLDERS
 
 
 def collect_new_inbox_emails(emails: Any, new_message_ids: Any) -> List[Dict[str, Any]]:
@@ -101,7 +114,7 @@ def build_clef_state(email_item: Mapping[str, Any]) -> Dict[str, str]:
     }
 
 
-def build_analysis_detail(email_item: Mapping[str, Any], message_id: str) -> Dict[str, Any]:
+def build_analysis_detail(email_item: Mapping[str, Any], message_id: str, folder: str = 'inbox') -> Dict[str, Any]:
     return {
         'id': message_id,
         'subject': email_subject(email_item) or '无主题',
@@ -110,7 +123,7 @@ def build_analysis_detail(email_item: Mapping[str, Any], message_id: str) -> Dic
         'body': email_body_text(email_item),
         'body_preview': str(email_item.get('body_preview') or ''),
         'body_type': email_item.get('body_type') or 'text',
-        'folder': 'inbox',
+        'folder': normalize_precheck_folder(folder) or 'inbox',
         'id_mode': str(email_item.get('id_mode') or ''),
     }
 
@@ -198,8 +211,11 @@ def process_inbox_precheck_item(
     account_id = int(account.get('id') or 0)
     account_email = str(account.get('email') or '').strip()
     message_id = email_message_id(email_item)
+    folder = normalize_precheck_folder(folder)
     if not account_id or not account_email or not message_id:
         return {'success': False, 'skipped': True, 'reason': 'invalid_item'}
+    if folder not in PRECHECK_FOLDERS:
+        return {'success': False, 'skipped': True, 'reason': 'unsupported_folder'}
 
     sender = email_sender(email_item)
     subject = email_subject(email_item)
@@ -298,7 +314,7 @@ def process_inbox_precheck_item(
             account_email=account_email,
             account_id=account_id,
             message_id=message_id,
-            current_detail=build_analysis_detail(email_item, message_id),
+            current_detail=build_analysis_detail(email_item, message_id, folder),
             context_scope=CONTEXT_SCOPE_CURRENT,
         )
         finish_precheck_run(
