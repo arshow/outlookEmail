@@ -74,6 +74,11 @@
         document.getElementById('geminiSocksUser').value = socks.username || '';
         document.getElementById('geminiSocksPass').value = '';
         document.getElementById('geminiSocksPassHint').textContent = socks.has_password ? '已保存密码' : '未设置密码';
+        document.getElementById('clefAccountId').value = s.cloudflare_account_id || '';
+        document.getElementById('clefModel').value = s.cloudflare_model || 'clef-flash';
+        document.getElementById('clefApiToken').value = s.cloudflare_api_token || '';
+        document.getElementById('clefRemark').value = s.cloudflare_remark || '';
+        document.getElementById('clefTokenHint').textContent = s.cloudflare_api_token_configured ? '已配置' : '未配置';
         renderQuickInstructionEditor(s.quick_instructions);
     }
 
@@ -153,12 +158,17 @@
                 password: document.getElementById('geminiSocksPass').value,
                 keep_password: true,
             },
+            cloudflare_account_id: document.getElementById('clefAccountId').value.trim(),
+            cloudflare_model: document.getElementById('clefModel').value,
+            cloudflare_remark: document.getElementById('clefRemark').value.trim(),
             ...extra,
         };
         const geminiKey = document.getElementById('geminiApiKey').value.trim();
         const deepseekKey = document.getElementById('deepseekApiKey').value.trim();
+        const clefToken = document.getElementById('clefApiToken').value.trim();
         if (geminiKey) payload.gemini_api_key = geminiKey;
         if (deepseekKey) payload.deepseek_api_key = deepseekKey;
+        if (clefToken) payload.cloudflare_api_token = clefToken;
         await api('/api/ai/settings', { method: 'PUT', body: JSON.stringify(payload) });
         showToast('设置已保存');
         await loadSettings();
@@ -183,6 +193,16 @@
         const deepseekKey = document.getElementById('deepseekApiKey').value.trim();
         if (geminiKey) payload.gemini_api_key = geminiKey;
         if (deepseekKey) payload.deepseek_api_key = deepseekKey;
+        return payload;
+    }
+
+    function collectClefOverrides() {
+        const payload = {
+            cloudflare_account_id: document.getElementById('clefAccountId').value.trim(),
+            cloudflare_model: document.getElementById('clefModel').value,
+        };
+        const token = document.getElementById('clefApiToken').value.trim();
+        if (token) payload.cloudflare_api_token = token;
         return payload;
     }
 
@@ -255,6 +275,14 @@
             body: JSON.stringify(collectCredentialOverrides()),
         });
         showToast(`连接成功：${data.provider} / ${data.model}`);
+    }
+
+    async function testClef() {
+        const data = await api('/api/ai/settings/clef-test', {
+            method: 'POST',
+            body: JSON.stringify(collectClefOverrides()),
+        });
+        showToast(`Clef 连接成功：${data.model || 'clef-flash'}`);
     }
 
     async function loadKnowledge() {
@@ -416,6 +444,9 @@
         document.getElementById('testSettingsBtn').addEventListener('click', () => {
             testSettings().catch((err) => showToast(err.message, true));
         });
+        document.getElementById('testClefBtn').addEventListener('click', () => {
+            testClef().catch((err) => showToast(err.message, true));
+        });
         document.getElementById('fetchModelsBtn').addEventListener('click', () => {
             fetchAvailableModels().catch((err) => showToast(err.message, true));
         });
@@ -424,6 +455,9 @@
         });
         document.getElementById('clearDeepseekKeyBtn').addEventListener('click', () => {
             saveSettings({ clear_deepseek_api_key: true }).catch((err) => showToast(err.message, true));
+        });
+        document.getElementById('clearClefTokenBtn').addEventListener('click', () => {
+            saveSettings({ clear_cloudflare_api_token: true }).catch((err) => showToast(err.message, true));
         });
         document.getElementById('addKnowledgeBtn').addEventListener('click', () => {
             addKnowledge().catch((err) => showToast(err.message, true));

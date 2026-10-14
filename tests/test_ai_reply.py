@@ -50,6 +50,10 @@ class AiReplyTestCase(unittest.TestCase):
                 'ai_reply_gemini_socks5',
                 'ai_reply_system_persona',
                 'ai_reply_quick_instructions',
+                'ai_reply_cloudflare_account_id',
+                'ai_reply_cloudflare_api_token',
+                'ai_reply_cloudflare_model',
+                'ai_reply_cloudflare_remark',
             ):
                 db.execute("UPDATE settings SET value = '' WHERE key = ?", (key,))
             db.execute("UPDATE settings SET value = 'false' WHERE key = 'ai_reply_enabled'")
@@ -65,6 +69,8 @@ class AiReplyTestCase(unittest.TestCase):
         response = self.client.get('/ai')
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'AI', response.data)
+        self.assertIn(b'clef-flash', response.data)
+        self.assertIn(b'testClefBtn', response.data)
 
     def test_settings_encrypt_mask_preserve_and_provider_switch(self):
         response = self.client.put('/api/ai/settings', json={
@@ -520,6 +526,211 @@ class AiReplyTestCase(unittest.TestCase):
             operator_instruction='核实了物流情况，我会办理退款',
         )
         self.assertIn('refund has been approved', guarded['replyText'].lower())
+
+    def test_cloudflare_clef_settings_encrypt_mask_preserve_and_clear(self):
+        response = self.client.put('/api/ai/settings', json={
+            'cloudflare_account_id': 'acc-123',
+            'cloudflare_api_token': 'cf-secret-token',
+            'cloudflare_model': 'clef-flash',
+            'cloudflare_remark': 'Workers AI',
+        })
+        payload = response.get_json()
+        self.assertTrue(payload['success'], payload)
+        settings = payload['settings']
+        self.assertEqual(settings['cloudflare_account_id'], 'acc-123')
+        self.assertEqual(settings['cloudflare_model'], 'clef-flash')
+        self.assertEqual(settings['cloudflare_remark'], 'Workers AI')
+        self.assertTrue(settings['cloudflare_api_token_configured'])
+        self.assertTrue(settings['cloudflare_clef_configured'])
+        self.assertEqual(settings['cloudflare_api_token'], 'cf-secret-token')
+        self.assertEqual(settings['cloudflare_api_token_masked'], '********')
+
+        with self.app.app_context():
+            raw = web_outlook_app.get_setting('ai_reply_cloudflare_api_token')
+            self.assertNotEqual(raw, 'cf-secret-token')
+            self.assertEqual(
+                web_outlook_app.get_setting_decrypted('ai_reply_cloudflare_api_token'),
+                'cf-secret-token',
+            )
+
+        preserve = self.client.put('/api/ai/settings', json={
+            'cloudflare_account_id': 'acc-123',
+            'cloudflare_api_token': '',
+        })
+        self.assertTrue(preserve.get_json()['success'])
+        with self.app.app_context():
+            self.assertEqual(
+                web_outlook_app.get_setting_decrypted('ai_reply_cloudflare_api_token'),
+                'cf-secret-token',
+            )
+
+        status = self.client.get('/api/ai/status').get_json()
+        self.assertTrue(status['cloudflare_clef_configured'])
+        self.assertNotIn('cloudflare_api_token', status)
+        self.assertNotIn('cloudflare_account_id', status)
+
+        invalid = self.client.put('/api/ai/settings', json={'cloudflare_model': 'llama-3'})
+        self.assertEqual(invalid.status_code, 400)
+        self.assertFalse(invalid.get_json()['success'])
+
+        clear = self.client.put('/api/ai/settings', json={'clear_cloudflare_api_token': True})
+        self.assertTrue(clear.get_json()['success'])
+        cleared = clear.get_json()['settings']
+        self.assertFalse(cleared['cloudflare_api_token_configured'])
+        self.assertFalse(cleared['cloudflare_clef_configured'])
+        with self.app.app_context():
+            self.assertEqual(web_outlook_app.get_setting_decrypted('ai_reply_cloudflare_api_token'), '')
+
+    def test_clef_test_endpoint_uses_saved_credentials(self):
+        missing = self.client.post('/api/ai/settings/clef-test', json={})
+        self.assertEqual(missing.status_code, 400)
+        self.assertIn('Cloudflare', missing.get_json().get('error') or '')
+
+        self.client.put('/api/ai/settings', json={
+            'cloudflare_account_id': 'acc-123',
+            'cloudflare_api_token': 'cf-secret-token',
+            'cloudflare_model': 'clef-flash',
+        })
+
+        with patch('outlook_web.ai.clef.call_clef') as mock_call:
+            mock_call.return_value = {
+                'model': 'clef-flash',
+                'answers': {'ok': 0.92},
+                'usage': {},
+            }
+            response = self.client.post('/api/ai/settings/clef-test', json={})
+        payload = response.get_json()
+        self.assertTrue(payload['success'], payload)
+        self.assertEqual(payload['model'], 'clef-flash')
+        self.assertEqual(payload['answers']['ok'], 0.92)
+        mock_call.assert_called_once()
+        self.assertEqual(mock_call.call_args.kwargs['account_id'], 'acc-123')
+        self.assertEqual(mock_call.call_args.kwargs['api_token'], 'cf-secret-token')
+        self.assertEqual(mock_call.call_args.kwargs['model'], 'clef-flash')
+        self.assertEqual(mock_call.call_args.kwargs['state'], 'ping')
+
+        with patch('outlook_web.ai.clef.call_clef') as mock_call:
+            mock_call.return_value = {
+                'model': 'clef',
+                'answers': {'ok': 0.5},
+                'usage': {},
+            }
+            override = self.client.post('/api/ai/settings/clef-test', json={
+                'cloudflare_account_id': 'acc-override',
+                'cloudflare_api_token': 'tok-override',
+                'cloudflare_model': 'clef',
+            })
+        self.assertTrue(override.get_json()['success'])
+        self.assertEqual(mock_call.call_args.kwargs['account_id'], 'acc-override')
+        self.assertEqual(mock_call.call_args.kwargs['api_token'], 'tok-override')
+        self.assertEqual(mock_call.call_args.kwargs['model'], 'clef')
+
+
+class ClefClientTestCase(unittest.TestCase):
+    class FakeResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    def test_validate_questions_and_model(self):
+        from outlook_web.ai.clef import validate_clef_questions
+        from outlook_web.ai.constants import normalize_clef_model
+
+        self.assertEqual(normalize_clef_model(''), 'clef-flash')
+        self.assertEqual(normalize_clef_model('@cf/cloudflare/clef'), 'clef')
+        with self.assertRaises(ValueError):
+            normalize_clef_model('llama-3')
+
+        ok = validate_clef_questions({
+            'urgent': {'type': 'noul', 'instructions': 'Is this urgent?'},
+            'team': {
+                'type': 'choice',
+                'criteria': {'billing': 'Payments', 'technical': 'Outages'},
+            },
+            'severity': {'type': 'score', 'criteria': ['Low', 'High']},
+        })
+        self.assertEqual(ok['urgent']['type'], 'noul')
+        with self.assertRaises(ValueError):
+            validate_clef_questions({})
+        with self.assertRaises(ValueError):
+            validate_clef_questions({'bad id': {'type': 'noul'}})
+        with self.assertRaises(ValueError):
+            validate_clef_questions({'team': {'type': 'choice', 'criteria': {}}})
+        with self.assertRaises(ValueError):
+            validate_clef_questions({'severity': {'type': 'score', 'criteria': ['only-one']}})
+        with self.assertRaises(ValueError):
+            validate_clef_questions({f'q{i}': {'type': 'noul'} for i in range(65)})
+
+    def test_call_clef_unwraps_v4_envelope(self):
+        from outlook_web.ai.clef import call_clef
+
+        with patch('outlook_web.ai.clef.requests.post') as mock_post:
+            mock_post.return_value = self.FakeResponse(200, {
+                'success': True,
+                'errors': [],
+                'result': {
+                    'model': 'clef-flash',
+                    'answers': {'ok': 0.91},
+                    'usage': {'prompt_tokens': 12},
+                },
+            })
+            result = call_clef(
+                account_id='acc-123',
+                api_token='tok',
+                state='ping',
+                questions={'ok': {'type': 'noul', 'instructions': 'Is this a connectivity test?'}},
+            )
+        self.assertEqual(result['answers']['ok'], 0.91)
+        self.assertEqual(result['usage']['prompt_tokens'], 12)
+        url = mock_post.call_args.args[0]
+        self.assertIn('/accounts/acc-123/ai/run/@cf/cloudflare/clef-flash', url)
+        self.assertEqual(mock_post.call_args.kwargs['json']['model'], 'clef-flash')
+        self.assertEqual(
+            mock_post.call_args.kwargs['headers']['Authorization'],
+            'Bearer tok',
+        )
+
+    def test_call_clef_unwraps_nested_response_and_maps_auth_error(self):
+        from outlook_web.ai.clef import call_clef, map_clef_error
+
+        self.assertIn('鉴权失败', map_clef_error('Authentication error', 401))
+
+        with patch('outlook_web.ai.clef.requests.post') as mock_post:
+            mock_post.return_value = self.FakeResponse(200, {
+                'success': True,
+                'result': {
+                    'response': {
+                        'model': 'clef',
+                        'answers': {'ok': 0.4},
+                    },
+                },
+            })
+            nested = call_clef(
+                account_id='acc-123',
+                api_token='tok',
+                model='clef',
+                state='ping',
+                questions={'ok': {'type': 'noul'}},
+            )
+        self.assertEqual(nested['answers']['ok'], 0.4)
+        self.assertIn('/@cf/cloudflare/clef', mock_post.call_args.args[0])
+
+        with patch('outlook_web.ai.clef.requests.post') as mock_post:
+            mock_post.return_value = self.FakeResponse(401, {
+                'success': False,
+                'errors': [{'code': 10000, 'message': 'Authentication error'}],
+            })
+            with self.assertRaises(RuntimeError) as raised:
+                call_clef(
+                    account_id='acc-123',
+                    api_token='bad',
+                    state='ping',
+                    questions={'ok': {'type': 'noul'}},
+                )
+        self.assertIn('鉴权失败', str(raised.exception))
 
 
 if __name__ == '__main__':

@@ -91,6 +91,21 @@ body {
 
 .ai-grid .full { grid-column: 1 / -1; }
 
+.ai-section {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--ai-border);
+}
+
+.ai-section h2 {
+    margin: 0 0 6px;
+    font-size: 1.05rem;
+}
+
+.ai-section > .hint {
+    margin: 0 0 14px;
+}
+
 label {
     display: flex;
     flex-direction: column;

@@ -15,6 +15,25 @@ DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash'
 DEFAULT_DEEPSEEK_MODEL = 'deepseek-chat'
 DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com'
 DEFAULT_DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
+DEFAULT_CLOUDFLARE_AI_BASE_URL = 'https://api.cloudflare.com/client/v4'
+DEFAULT_CLEF_MODEL = 'clef-flash'
+CLEF_MODELS = ('clef-flash', 'clef')
+CLEF_MODEL_PATHS = {
+    'clef-flash': '@cf/cloudflare/clef-flash',
+    'clef': '@cf/cloudflare/clef',
+}
+
+
+def normalize_clef_model(value, *, default: str = DEFAULT_CLEF_MODEL) -> str:
+    text = str(value or '').strip().lower()
+    if not text:
+        return default
+    if text.startswith('@cf/cloudflare/'):
+        text = text.rsplit('/', 1)[-1].strip()
+    if text not in CLEF_MODELS:
+        raise ValueError('Cloudflare Clef 模型必须是 clef-flash 或 clef')
+    return text
+
 
 # Hard limits for contact_local history (local-only; not user-configurable).
 # Cap is a safety ceiling for prompt size; AI never fetches remote IMAP/Graph.
@@ -48,6 +67,10 @@ SETTING_DEEPSEEK_BASE_URL = 'ai_reply_deepseek_base_url'
 SETTING_GEMINI_SOCKS5 = 'ai_reply_gemini_socks5'
 SETTING_SYSTEM_PERSONA = 'ai_reply_system_persona'
 SETTING_QUICK_INSTRUCTIONS = 'ai_reply_quick_instructions'
+SETTING_CLOUDFLARE_ACCOUNT_ID = 'ai_reply_cloudflare_account_id'
+SETTING_CLOUDFLARE_API_TOKEN = 'ai_reply_cloudflare_api_token'
+SETTING_CLOUDFLARE_MODEL = 'ai_reply_cloudflare_model'
+SETTING_CLOUDFLARE_REMARK = 'ai_reply_cloudflare_remark'
 
 # Used when the setting has never been saved. An explicit empty list stays empty.
 DEFAULT_QUICK_INSTRUCTIONS = (

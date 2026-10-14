@@ -12,6 +12,7 @@ from outlook_web.ai.db import (
     list_rule_versions,
 )
 from outlook_web.ai.knowledge import parse_keywords
+from outlook_web.ai.clef import resolve_clef_runtime, test_clef_connection
 from outlook_web.ai.llm import list_available_models, test_provider_connection
 from outlook_web.ai.rules import match_rules, parse_forbidden_phrases, preclassify
 from outlook_web.ai.service import analyze_email, refine_reply, translate_email_to_zh
@@ -114,6 +115,12 @@ def _apply_ai_settings_overrides(settings: Dict[str, Any], data: Dict[str, Any])
             socks['password'] = current['password']
         settings['gemini_socks5_full'] = socks
         settings['gemini_socks5'] = socks
+    if data.get('cloudflare_account_id') is not None:
+        settings['cloudflare_account_id'] = str(data.get('cloudflare_account_id') or '').strip()
+    if data.get('cloudflare_api_token'):
+        settings['cloudflare_api_token'] = str(data.get('cloudflare_api_token') or '').strip()
+    if data.get('cloudflare_model') is not None:
+        settings['cloudflare_model'] = str(data.get('cloudflare_model') or '').strip()
     return settings
 
 
@@ -155,6 +162,25 @@ def api_ai_settings_test():
     _apply_ai_settings_overrides(settings, data)
     try:
         result = test_provider_connection(settings, provider=provider or None)
+        return jsonify(result)
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+
+@app.route('/api/ai/settings/clef-test', methods=['POST'])
+@login_required
+def api_ai_settings_clef_test():
+    _ensure_ai_tables()
+    data = request.get_json(silent=True) or {}
+    settings = _load_ai_settings()
+    _apply_ai_settings_overrides(settings, data)
+    try:
+        credentials = resolve_clef_runtime(settings)
+        result = test_clef_connection(
+            account_id=credentials['account_id'],
+            api_token=credentials['api_token'],
+            model=credentials['model'],
+        )
         return jsonify(result)
     except Exception as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
@@ -778,4 +804,5 @@ def api_ai_status():
         'provider': settings.get('provider'),
         'model': settings.get('model'),
         'quick_instructions': list(settings.get('quick_instructions') or []),
+        'cloudflare_clef_configured': bool(settings.get('cloudflare_clef_configured')),
     })

@@ -12,7 +12,7 @@
         <div class="ai-header">
             <div>
                 <h1>AI 回复管理</h1>
-                <p>配置 Gemini / DeepSeek、知识库与回复规则。日常生成请在邮件回复窗口完成。</p>
+                <p>配置 Gemini / DeepSeek、Cloudflare Clef 决策模型、知识库与回复规则。日常生成请在邮件回复窗口完成。</p>
             </div>
             <div class="ai-header-actions">
                 <a class="btn" href="/">返回邮箱</a>
@@ -112,11 +112,40 @@
                     <span class="hint" id="geminiSocksPassHint"></span>
                 </label>
             </div>
+            <div class="ai-section">
+                <h2>Cloudflare Clef 决策模型</h2>
+                <p class="hint">clef-flash 只做分类 / 评分 / 是否判断，不能写回复或翻译。智能回复仍使用上方 Gemini / DeepSeek。</p>
+                <div class="ai-grid">
+                    <label>
+                        Cloudflare Account ID
+                        <input type="text" id="clefAccountId" name="clef-account-id" placeholder="Workers AI 的 Account ID" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
+                    </label>
+                    <label>
+                        模型
+                        <select id="clefModel">
+                            <option value="clef-flash">clef-flash（推荐）</option>
+                            <option value="clef">clef</option>
+                        </select>
+                    </label>
+                    <label class="full">
+                        API Token
+                        <input type="password" id="clefApiToken" name="clef-api-token" placeholder="留空表示保留已有 Token" autocomplete="new-password" data-1p-ignore data-lpignore="true" data-form-type="other">
+                        <span class="hint" id="clefTokenHint"></span>
+                        <span class="hint">Token 需要 Workers AI Read / Edit 权限。留空 -> 保留原有 Token 不变</span>
+                    </label>
+                    <label class="full">
+                        备注
+                        <input type="text" id="clefRemark" name="clef-remark" placeholder="例如：主账号 / Workers AI" autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other">
+                    </label>
+                </div>
+            </div>
             <div class="btn-row">
                 <button class="btn btn-primary" type="button" id="saveSettingsBtn">保存设置</button>
                 <button class="btn" type="button" id="testSettingsBtn">测试当前提供商</button>
+                <button class="btn" type="button" id="testClefBtn">测试 Clef</button>
                 <button class="btn btn-danger" type="button" id="clearGeminiKeyBtn">清空 Gemini Key</button>
                 <button class="btn btn-danger" type="button" id="clearDeepseekKeyBtn">清空 DeepSeek Key</button>
+                <button class="btn btn-danger" type="button" id="clearClefTokenBtn">清空 Clef Token</button>
             </div>
             <p class="hint" style="margin-top:12px;">上下文「仅本封 / 联系人本地历史」在回复窗口按次选择，不在此页配置。</p>
         </section>

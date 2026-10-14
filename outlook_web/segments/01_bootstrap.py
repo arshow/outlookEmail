@@ -2257,6 +2257,22 @@ def init_db():
         INSERT OR IGNORE INTO settings (key, value)
         VALUES ('ai_reply_quick_instructions', '')
     ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_cloudflare_account_id', '')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_cloudflare_api_token', '')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_cloudflare_model', 'clef-flash')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('ai_reply_cloudflare_remark', '')
+    ''')
 
     cursor.execute('SELECT COUNT(*) FROM cloudflare_channels')
     cloudflare_channel_count = cursor.fetchone()[0]

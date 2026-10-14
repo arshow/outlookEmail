@@ -6,6 +6,7 @@ import json
 from typing import Any, Callable, Dict, Optional
 
 from outlook_web.ai.constants import (
+    DEFAULT_CLEF_MODEL,
     DEFAULT_DEEPSEEK_BASE_URL,
     DEFAULT_DEEPSEEK_MODEL,
     DEFAULT_GEMINI_BASE_URL,
@@ -14,6 +15,10 @@ from outlook_web.ai.constants import (
     PROVIDER_DEEPSEEK,
     PROVIDER_GEMINI,
     PROVIDERS,
+    SETTING_CLOUDFLARE_ACCOUNT_ID,
+    SETTING_CLOUDFLARE_API_TOKEN,
+    SETTING_CLOUDFLARE_MODEL,
+    SETTING_CLOUDFLARE_REMARK,
     SETTING_DEEPSEEK_API_KEY,
     SETTING_DEEPSEEK_BASE_URL,
     SETTING_ENABLED,
@@ -30,6 +35,7 @@ from outlook_web.ai.constants import (
     QUICK_INSTRUCTION_LABEL_MAX_CHARS,
     QUICK_INSTRUCTION_MAX_CHARS,
     QUICK_INSTRUCTION_MAX_COUNT,
+    normalize_clef_model,
 )
 
 
@@ -134,7 +140,13 @@ def get_ai_reply_settings(
 
     gemini_key = get_setting_decrypted(SETTING_GEMINI_API_KEY, '') or ''
     deepseek_key = get_setting_decrypted(SETTING_DEEPSEEK_API_KEY, '') or ''
+    cloudflare_token = get_setting_decrypted(SETTING_CLOUDFLARE_API_TOKEN, '') or ''
     socks = parse_socks5(get_setting_decrypted(SETTING_GEMINI_SOCKS5, '') or get_setting(SETTING_GEMINI_SOCKS5, ''))
+    try:
+        cloudflare_model = normalize_clef_model(get_setting(SETTING_CLOUDFLARE_MODEL, DEFAULT_CLEF_MODEL))
+    except ValueError:
+        cloudflare_model = DEFAULT_CLEF_MODEL
+    cloudflare_account_id = str(get_setting(SETTING_CLOUDFLARE_ACCOUNT_ID, '') or '').strip()
 
     public_socks = {
         'enabled': socks['enabled'],
@@ -159,9 +171,16 @@ def get_ai_reply_settings(
         'gemini_remark': str(get_setting(SETTING_GEMINI_REMARK, '') or ''),
         'deepseek_remark': str(get_setting(SETTING_DEEPSEEK_REMARK, '') or ''),
         'gemini_socks5': public_socks,
+        'cloudflare_account_id': cloudflare_account_id,
+        'cloudflare_model': cloudflare_model,
+        'cloudflare_remark': str(get_setting(SETTING_CLOUDFLARE_REMARK, '') or ''),
+        'cloudflare_api_token_configured': bool(cloudflare_token),
+        'cloudflare_api_token_masked': '********' if cloudflare_token else '',
+        'cloudflare_clef_configured': bool(cloudflare_account_id and cloudflare_token),
         # Internal secrets for callers that need them (routes strip before JSON).
         'gemini_api_key': gemini_key,
         'deepseek_api_key': deepseek_key,
+        'cloudflare_api_token': cloudflare_token,
         'gemini_socks5_full': socks,
     }
 
@@ -186,6 +205,11 @@ def public_ai_reply_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
             'username': '',
             'has_password': False,
         },
+        'cloudflare_account_id': str(settings.get('cloudflare_account_id') or '').strip(),
+        'cloudflare_model': settings.get('cloudflare_model') or DEFAULT_CLEF_MODEL,
+        'cloudflare_api_token_configured': bool(settings.get('cloudflare_api_token_configured')),
+        'cloudflare_api_token_masked': settings.get('cloudflare_api_token_masked') or '',
+        'cloudflare_clef_configured': bool(settings.get('cloudflare_clef_configured')),
     }
 
 
@@ -196,6 +220,8 @@ def admin_ai_reply_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     payload['deepseek_api_key'] = str(settings.get('deepseek_api_key') or '')
     payload['gemini_remark'] = str(settings.get('gemini_remark') or '')
     payload['deepseek_remark'] = str(settings.get('deepseek_remark') or '')
+    payload['cloudflare_api_token'] = str(settings.get('cloudflare_api_token') or '')
+    payload['cloudflare_remark'] = str(settings.get('cloudflare_remark') or '')
     return payload
 
 
@@ -296,6 +322,28 @@ def save_ai_reply_settings(
         if key:
             if set_setting_encrypted(SETTING_DEEPSEEK_API_KEY, key):
                 updated.append(SETTING_DEEPSEEK_API_KEY)
+
+    if 'cloudflare_account_id' in data:
+        if set_setting(SETTING_CLOUDFLARE_ACCOUNT_ID, str(data.get('cloudflare_account_id') or '').strip()):
+            updated.append(SETTING_CLOUDFLARE_ACCOUNT_ID)
+
+    if 'cloudflare_model' in data:
+        model = normalize_clef_model(data.get('cloudflare_model'))
+        if set_setting(SETTING_CLOUDFLARE_MODEL, model):
+            updated.append(SETTING_CLOUDFLARE_MODEL)
+
+    if 'cloudflare_remark' in data:
+        if set_setting(SETTING_CLOUDFLARE_REMARK, str(data.get('cloudflare_remark') or '')):
+            updated.append(SETTING_CLOUDFLARE_REMARK)
+
+    if data.get('clear_cloudflare_api_token'):
+        if set_setting_encrypted(SETTING_CLOUDFLARE_API_TOKEN, ''):
+            updated.append(SETTING_CLOUDFLARE_API_TOKEN)
+    elif 'cloudflare_api_token' in data:
+        token = str(data.get('cloudflare_api_token') or '').strip()
+        if token:
+            if set_setting_encrypted(SETTING_CLOUDFLARE_API_TOKEN, token):
+                updated.append(SETTING_CLOUDFLARE_API_TOKEN)
 
     if 'gemini_socks5' in data:
         incoming = data.get('gemini_socks5')
