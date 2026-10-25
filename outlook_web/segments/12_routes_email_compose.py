@@ -40,6 +40,240 @@ def build_graph_message_action_url(message_id: str, action: str = '') -> str:
     return f'{base}/{action_name}' if action_name else base
 
 
+GRAPH_PROVIDER_MESSAGE_ID_RE = re.compile(r'^(?:AAMk|AQMk)[A-Za-z0-9_\-]+=*$')
+GRAPH_RELINK_TIME_WINDOW_SECONDS = 600
+
+
+def is_graph_provider_message_id(message_id: Any) -> bool:
+    return bool(GRAPH_PROVIDER_MESSAGE_ID_RE.fullmatch(str(message_id or '').strip()))
+
+
+def graph_compose_failure_needs_relink(result: Dict[str, Any]) -> bool:
+    error = result.get('error') if isinstance(result, dict) else ''
+    if isinstance(error, dict):
+        try:
+            text = json.dumps(error, ensure_ascii=True)
+        except Exception:
+            text = str(error)
+    else:
+        text = str(error or '')
+    lowered = text.lower()
+    return 'erroritemnotfound' in lowered or 'errorinvalididmalformed' in lowered
+
+
+def choose_graph_relink_candidate(
+    items: Any,
+    *,
+    sender: str,
+    received_at: str,
+    exclude_id: str,
+) -> str:
+    """从 Graph 搜索结果里挑出仍在邮箱中的那封邮件。"""
+    wanted_sender = extract_email_address(sender)
+    if not wanted_sender:
+        return ''
+    target_dt = parse_email_datetime(str(received_at or ''))
+    exclude = str(exclude_id or '').strip()
+    ranked = []
+    loose = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        message_id = str(item.get('id') or '').strip()
+        if not message_id or message_id == exclude or not is_graph_provider_message_id(message_id):
+            continue
+        if extract_email_address(item.get('from')) != wanted_sender:
+            continue
+        item_dt = parse_email_datetime(str(item.get('receivedDateTime') or ''))
+        if target_dt and item_dt:
+            delta = abs((item_dt - target_dt).total_seconds())
+            if delta <= GRAPH_RELINK_TIME_WINDOW_SECONDS:
+                ranked.append((delta, message_id))
+            continue
+        loose.append(message_id)
+    if ranked:
+        ranked.sort(key=lambda pair: pair[0])
+        return ranked[0][1]
+    if len(loose) == 1:
+        return loose[0]
+    return ''
+
+
+def _load_retained_compose_message(account_id: int, message_id: str):
+    if not account_id or not message_id:
+        return None
+    row = get_db().execute(
+        '''
+        SELECT subject, sender, received_at
+        FROM retained_normal_mail_messages
+        WHERE account_id = ? AND provider_message_id = ?
+        ORDER BY updated_at DESC
+        LIMIT 1
+        ''',
+        (account_id, message_id),
+    ).fetchone()
+    return row
+
+
+def _graph_messages_by_subject(
+    access_token: str,
+    subject: str,
+    proxy_url: str = None,
+    fallback_proxy_urls: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    escaped_subject = str(subject or '').replace("'", "''")
+    if not escaped_subject:
+        return []
+    headers = {'Authorization': f'Bearer {access_token}'}
+    response = get_with_proxy_fallback(
+        'https://graph.microsoft.com/v1.0/me/messages',
+        headers=headers,
+        params={
+            '$filter': f"subject eq '{escaped_subject}'",
+            '$select': 'id,receivedDateTime,from,subject',
+            '$top': '25',
+        },
+        timeout=max(HTTP_REQUEST_TIMEOUT, 30),
+        proxy_url=proxy_url,
+        fallback_proxy_urls=fallback_proxy_urls,
+    )
+    if response.status_code == 200:
+        payload = response.json() if response.content else {}
+        values = payload.get('value') if isinstance(payload, dict) else []
+        return values if isinstance(values, list) else []
+
+    search_headers = dict(headers)
+    search_headers['ConsistencyLevel'] = 'eventual'
+    response = get_with_proxy_fallback(
+        'https://graph.microsoft.com/v1.0/me/messages',
+        headers=search_headers,
+        params={
+            '$search': f'"subject:{subject}"',
+            '$select': 'id,receivedDateTime,from,subject',
+            '$top': '25',
+        },
+        timeout=max(HTTP_REQUEST_TIMEOUT, 30),
+        proxy_url=proxy_url,
+        fallback_proxy_urls=fallback_proxy_urls,
+    )
+    if response.status_code != 200:
+        return []
+    payload = response.json() if response.content else {}
+    values = payload.get('value') if isinstance(payload, dict) else []
+    return values if isinstance(values, list) else []
+
+
+def relink_graph_compose_message_id(
+    account: Dict[str, Any],
+    access_token: str,
+    message_id: str,
+    *,
+    proxy_url: str = None,
+    fallback_proxy_urls: Optional[List[str]] = None,
+) -> str:
+    """邮件移动或本地只剩 IMAP 序号时，按主题/发件人/时间找回当前 Graph ID。"""
+    try:
+        account_id = int(account.get('id') or 0)
+    except (TypeError, ValueError):
+        account_id = 0
+    normalized_id = normalize_compose_message_id(message_id)
+    try:
+        retained = _load_retained_compose_message(account_id, normalized_id)
+    except Exception as exc:
+        app.logger.warning('读取本地邮件元数据失败，无法重新定位回复目标: %s', exc)
+        return ''
+    if not retained:
+        return ''
+    subject = str(retained['subject'] or '').strip()
+    if not subject:
+        return ''
+    items = _graph_messages_by_subject(
+        access_token,
+        subject,
+        proxy_url,
+        fallback_proxy_urls,
+    )
+    return choose_graph_relink_candidate(
+        items,
+        sender=retained['sender'],
+        received_at=retained['received_at'],
+        exclude_id=normalized_id,
+    )
+
+
+def _create_graph_draft_with_relink(
+    account: Dict[str, Any],
+    access_token: str,
+    *,
+    message_id: str,
+    action: str,
+    body_html: str,
+    body_text: str,
+    to_list: Optional[List[str]],
+    cc_list: Optional[List[str]],
+    bcc_list: Optional[List[str]],
+    subject: Optional[str],
+    attachments: List[Dict[str, Any]],
+    proxy_url: str = None,
+    fallback_proxy_urls: Optional[List[str]] = None,
+) -> Tuple[Dict[str, Any], str]:
+    target_id = normalize_compose_message_id(message_id)
+    if not is_graph_provider_message_id(target_id):
+        relinked = relink_graph_compose_message_id(
+            account,
+            access_token,
+            target_id,
+            proxy_url=proxy_url,
+            fallback_proxy_urls=fallback_proxy_urls,
+        )
+        if relinked:
+            app.logger.info('%s 使用重新定位的 Graph 邮件 ID', action)
+            target_id = relinked
+
+    result = _graph_create_and_send(
+        access_token,
+        message_id=target_id,
+        action=action,
+        body_html=body_html,
+        body_text=body_text,
+        to_list=to_list,
+        cc_list=cc_list,
+        bcc_list=bcc_list,
+        subject=subject,
+        attachments=attachments,
+        proxy_url=proxy_url,
+        fallback_proxy_urls=fallback_proxy_urls,
+    )
+    if result.get('success') or not graph_compose_failure_needs_relink(result):
+        return result, target_id
+
+    relinked = relink_graph_compose_message_id(
+        account,
+        access_token,
+        target_id,
+        proxy_url=proxy_url,
+        fallback_proxy_urls=fallback_proxy_urls,
+    )
+    if not relinked or relinked == target_id:
+        return result, target_id
+    app.logger.info('%s 原邮件 ID 已失效，改用当前 Graph 邮件重试', action)
+    retried = _graph_create_and_send(
+        access_token,
+        message_id=relinked,
+        action=action,
+        body_html=body_html,
+        body_text=body_text,
+        to_list=to_list,
+        cc_list=cc_list,
+        bcc_list=bcc_list,
+        subject=subject,
+        attachments=attachments,
+        proxy_url=proxy_url,
+        fallback_proxy_urls=fallback_proxy_urls,
+    )
+    return retried, relinked
+
+
 def _coerce_bool(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
@@ -631,10 +865,10 @@ def reply_email_via_graph(
         return {'success': False, 'error': token_result.get('error')}
 
     action = 'createReplyAll' if reply_all else 'createReply'
-    resolved_message_id = normalize_compose_message_id(message_id)
-    result = _graph_create_and_send(
+    result, resolved_message_id = _create_graph_draft_with_relink(
+        account,
         token_result['access_token'],
-        message_id=resolved_message_id,
+        message_id=message_id,
         action=action,
         body_html=body_html,
         body_text=body_text,
@@ -717,10 +951,10 @@ def forward_email_via_graph(
     if not token_result.get('success'):
         return {'success': False, 'error': token_result.get('error')}
 
-    resolved_message_id = normalize_compose_message_id(message_id)
-    result = _graph_create_and_send(
+    result, resolved_message_id = _create_graph_draft_with_relink(
+        account,
         token_result['access_token'],
-        message_id=resolved_message_id,
+        message_id=message_id,
         action='createForward',
         body_html=body_html,
         body_text=body_text,

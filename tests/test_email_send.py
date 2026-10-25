@@ -251,6 +251,131 @@ class EmailSendApiTests(unittest.TestCase):
         self.assertTrue(response.get_json()['success'])
         self.assertEqual(mocked.call_args.kwargs['message_id'], 'AAMkRealId')
 
+    def test_sequence_id_is_not_a_graph_message_id(self):
+        self.assertFalse(web_outlook_app.is_graph_provider_message_id('56'))
+        self.assertTrue(web_outlook_app.is_graph_provider_message_id(
+            'AQMkADAwATMwMAExLWI2NjMtMTgyYy0wMAItMDAKAAAA=='
+        ))
+
+    def test_choose_graph_relink_candidate_matches_sender_and_time(self):
+        chosen = web_outlook_app.choose_graph_relink_candidate(
+            [
+                {
+                    'id': 'AQMkLIVE=',
+                    'receivedDateTime': '2026-10-24T10:35:50Z',
+                    'from': {'emailAddress': {'address': 'brendan@gmail.com'}},
+                },
+                {
+                    'id': 'AQMkOLDER=',
+                    'receivedDateTime': '2026-10-20T10:35:50Z',
+                    'from': {'emailAddress': {'address': 'brendan@gmail.com'}},
+                },
+            ],
+            sender='Brenda Nisbet <brendan@gmail.com>',
+            received_at='2026-10-24T10:35:50Z',
+            exclude_id='AQMkSTALE=',
+        )
+        self.assertEqual(chosen, 'AQMkLIVE=')
+
+    def test_relink_finds_live_graph_id_from_retained_metadata(self):
+        with self.app.app_context():
+            account = web_outlook_app.get_account_by_email('sender@outlook.com')
+            db = web_outlook_app.get_db()
+            db.execute(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode,
+                    subject, sender, received_at
+                ) VALUES (?, 'junkemail', 'AQMkSTALE=', 'graph', ?, ?, ?)
+                ''',
+                (
+                    account['id'],
+                    'Re: Order AM#1004 confirmed',
+                    'Brenda Nisbet <brendan@gmail.com>',
+                    '2026-10-24T10:35:50Z',
+                ),
+            )
+            db.commit()
+            response = MagicMock()
+            response.status_code = 200
+            response.content = b'{"value":[]}'
+            response.json.return_value = {
+                'value': [{
+                    'id': 'AQMkLIVE=',
+                    'receivedDateTime': '2026-10-24T10:35:50Z',
+                    'from': {'emailAddress': {'address': 'brendan@gmail.com'}},
+                }],
+            }
+            with patch.object(web_outlook_app, 'get_with_proxy_fallback', return_value=response) as requested:
+                found = web_outlook_app.relink_graph_compose_message_id(
+                    account,
+                    'token',
+                    'AQMkSTALE=',
+                )
+        self.assertEqual(found, 'AQMkLIVE=')
+        self.assertIn("subject eq 'Re: Order AM#1004 confirmed'", requested.call_args.kwargs['params']['$filter'])
+
+    def test_create_reply_retries_with_relinked_id_after_item_not_found(self):
+        calls = []
+
+        def create(_token, **kwargs):
+            calls.append(kwargs['message_id'])
+            if kwargs['message_id'] == 'AQMkSTALE=':
+                return {
+                    'success': False,
+                    'error': {
+                        'code': 'GRAPH_CREATE_DRAFT_FAILED',
+                        'details': '{"error": {"code": "ErrorItemNotFound"}}',
+                    },
+                }
+            return {'success': True, 'message_id': 'draft-1'}
+
+        with self.app.app_context(), patch.object(
+            web_outlook_app, '_graph_create_and_send', side_effect=create
+        ), patch.object(
+            web_outlook_app, 'relink_graph_compose_message_id', return_value='AQMkLIVE='
+        ):
+            result, used_id = web_outlook_app._create_graph_draft_with_relink(
+                {'id': 1},
+                'token',
+                message_id='AQMkSTALE=',
+                action='createReply',
+                body_html='<p>hi</p>',
+                body_text='',
+                to_list=['a@example.com'],
+                cc_list=None,
+                bcc_list=None,
+                subject=None,
+                attachments=[],
+            )
+        self.assertTrue(result['success'])
+        self.assertEqual(calls, ['AQMkSTALE=', 'AQMkLIVE='])
+        self.assertEqual(used_id, 'AQMkLIVE=')
+
+    def test_create_reply_relinks_imap_sequence_before_calling_graph(self):
+        with self.app.app_context(), patch.object(
+            web_outlook_app, 'relink_graph_compose_message_id', return_value='AQMkLIVE='
+        ) as relink, patch.object(
+            web_outlook_app, '_graph_create_and_send', return_value={'success': True, 'message_id': 'draft-1'}
+        ) as create:
+            result, used_id = web_outlook_app._create_graph_draft_with_relink(
+                {'id': 1},
+                'token',
+                message_id='56',
+                action='createReply',
+                body_html='<p>hi</p>',
+                body_text='',
+                to_list=['a@example.com'],
+                cc_list=None,
+                bcc_list=None,
+                subject=None,
+                attachments=[],
+            )
+        self.assertTrue(result['success'])
+        self.assertEqual(used_id, 'AQMkLIVE=')
+        relink.assert_called_once()
+        self.assertEqual(create.call_args.kwargs['message_id'], 'AQMkLIVE=')
+
 
 if __name__ == '__main__':
     unittest.main()
