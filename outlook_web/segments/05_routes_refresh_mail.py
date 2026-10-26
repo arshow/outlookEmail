@@ -6,6 +6,12 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from outlook_web.mail_identity import (
+    choose_retained_mail_winner,
+    normalize_internet_message_id,
+    retained_mail_identity_key,
+    sender_email_from_header,
+)
 from outlook_web.mail_contact_history import (
     CONTACT_HISTORY_DEFAULT_LIMIT,
     CONTACT_HISTORY_MAX_LIMIT,
@@ -3105,13 +3111,18 @@ def build_retained_normal_mail_list_row(account_id: int, item: Dict[str, Any],
     body = coerce_retained_mail_text(normalized.get('body'))
     body_type = coerce_retained_mail_text(normalized.get('body_type')).strip().lower() or 'text'
     body_cached = 1 if body.strip() else 0
+    sender = coerce_retained_mail_text(normalized.get('from')) or '未知'
     return {
         'account_id': account_id,
         'folder': normalized['folder'],
         'provider_message_id': provider_message_id,
         'id_mode': str(normalized.get('id_mode') or '').strip().lower(),
         'subject': coerce_retained_mail_text(normalized.get('subject')) or '无主题',
-        'sender': coerce_retained_mail_text(normalized.get('from')) or '未知',
+        'sender': sender,
+        'sender_email': sender_email_from_header(sender),
+        'internet_message_id': normalize_internet_message_id(
+            source.get('internet_message_id') or source.get('internetMessageId')
+        ),
         'recipients': coerce_retained_mail_text(normalized.get('to')),
         'received_at': coerce_retained_mail_text(normalized.get('date')),
         'received_at_sort': retained_mail_received_at_sort(normalized.get('date')),
@@ -3204,6 +3215,85 @@ def query_existing_retained_normal_mail_keys(rows: List[Dict[str, Any]], db=None
     return existing_keys
 
 
+def register_retained_mail_identity_sql(db) -> None:
+    db.create_function('retained_mail_identity_key', 8, retained_mail_identity_key)
+
+
+def retained_list_row_identity(row: Dict[str, Any]) -> str:
+    return retained_mail_identity_key(
+        row.get('internet_message_id'),
+        row.get('subject'),
+        row.get('sender_email'),
+        row.get('sender'),
+        row.get('received_at_sort'),
+        row.get('folder'),
+        row.get('provider_message_id'),
+        row.get('id_mode'),
+    )
+
+
+def find_retained_mail_identity_matches(database, row: Dict[str, Any]) -> List[Dict[str, Any]]:
+    identity = retained_list_row_identity(row)
+    if identity.startswith('p\t'):
+        return []
+    stored = database.execute(
+        '''
+        SELECT id, folder, provider_message_id, id_mode, subject, sender, sender_email,
+               internet_message_id, received_at_sort, body, body_type, body_cached
+        FROM retained_normal_mail_messages
+        WHERE account_id = ?
+        ''',
+        (int(row.get('account_id') or 0),),
+    ).fetchall()
+    matches = []
+    for item in stored:
+        candidate = dict(item)
+        if retained_list_row_identity(candidate) == identity:
+            matches.append(candidate)
+    return matches
+
+
+def absorb_retained_mail_identity_matches(database, account: Dict[str, Any], row: Dict[str, Any]) -> Dict[str, Any]:
+    """同一封信已有其他 ID 时，把备注和正文留到这次写入的那一行，并删掉旧行。"""
+    matches = find_retained_mail_identity_matches(database, row)
+    incoming_key = (
+        str(row.get('folder') or ''),
+        str(row.get('provider_message_id') or ''),
+        str(row.get('id_mode') or '').strip().lower(),
+    )
+    others = [
+        match for match in matches
+        if (
+            str(match.get('folder') or ''),
+            str(match.get('provider_message_id') or ''),
+            str(match.get('id_mode') or '').strip().lower(),
+        ) != incoming_key
+    ]
+    if not others:
+        return row
+    prepared = dict(row)
+    if not str(prepared.get('body') or '').strip():
+        for match in others:
+            if str(match.get('body') or '').strip():
+                prepared['body'] = match.get('body') or ''
+                prepared['body_type'] = match.get('body_type') or prepared.get('body_type') or 'text'
+                prepared['body_cached'] = 1
+                break
+    from outlook_web.mail_identity import repoint_retained_mail_references
+    account_id = int(prepared.get('account_id') or 0)
+    account_email = str((account or {}).get('email') or '').strip().lower()
+    for match in others:
+        repoint_retained_mail_references(
+            database,
+            account_id=account_id,
+            account_email=account_email,
+            old=match,
+            new=prepared,
+        )
+        database.execute('DELETE FROM retained_normal_mail_messages WHERE id = ?', (match['id'],))
+    return prepared
+
+
 def find_new_retained_normal_mail_identifiers(account: Dict[str, Any], folder: str,
                                               items: List[Dict[str, Any]], db=None) -> List[Dict[str, str]]:
     account_id = int((account or {}).get('id') or 0)
@@ -3212,22 +3302,29 @@ def find_new_retained_normal_mail_identifiers(account: Dict[str, Any], folder: s
 
     unique_rows = []
     seen_keys = set()
+    seen_identities = set()
     for item in items or []:
         row = build_retained_normal_mail_list_row(account_id, item, folder, account)
         if row is None:
             continue
         key = retained_normal_mail_key(row)
-        if key in seen_keys:
+        identity = retained_list_row_identity(row)
+        if key in seen_keys or identity in seen_identities:
             continue
         seen_keys.add(key)
+        seen_identities.add(identity)
         unique_rows.append(row)
 
-    existing_keys = query_existing_retained_normal_mail_keys(unique_rows, db)
-    return [
-        retained_mail_new_message_identifier(row)
-        for row in unique_rows
-        if retained_normal_mail_key(row) not in existing_keys
-    ]
+    database = db or get_db()
+    existing_keys = query_existing_retained_normal_mail_keys(unique_rows, database)
+    fresh = []
+    for row in unique_rows:
+        if retained_normal_mail_key(row) in existing_keys:
+            continue
+        if find_retained_mail_identity_matches(database, row):
+            continue
+        fresh.append(retained_mail_new_message_identifier(row))
+    return fresh
 
 
 def upsert_retained_normal_mail_list_items(account: Dict[str, Any], folder: str,
@@ -3246,19 +3343,45 @@ def upsert_retained_normal_mail_list_items(account: Dict[str, Any], folder: str,
     if not rows:
         return 0
 
+    channel = 'imap' if get_account_authorization_type(account) == 'imap' else 'graph'
+    grouped_rows: Dict[str, List[Dict[str, Any]]] = {}
+    grouped_order: List[str] = []
+    for row in rows:
+        identity = retained_list_row_identity(row)
+        if identity not in grouped_rows:
+            grouped_rows[identity] = []
+            grouped_order.append(identity)
+        grouped_rows[identity].append(row)
+    collapsed_rows = []
+    for identity in grouped_order:
+        grouped = grouped_rows[identity]
+        if len(grouped) == 1:
+            collapsed_rows.append(grouped[0])
+            continue
+        decorated = [
+            {**item, 'id': index, 'last_synced_at': ''}
+            for index, item in enumerate(grouped)
+        ]
+        winner = choose_retained_mail_winner(decorated, channel)
+        collapsed_rows.append(grouped[int(winner.get('id') or 0)])
+    rows = collapsed_rows
+
     database = db or get_db()
+    rows = [absorb_retained_mail_identity_matches(database, account, row) for row in rows]
     database.executemany(
         '''
         INSERT INTO retained_normal_mail_messages (
             account_id, folder, provider_message_id, id_mode,
-            subject, sender, recipients, received_at, received_at_sort,
+            subject, sender, sender_email, internet_message_id,
+            recipients, received_at, received_at_sort,
             is_read, is_flagged, has_attachments, body_preview,
             body, body_type, body_cached, body_cached_at,
             list_cached, list_cached_at, last_synced_at, updated_at
         )
         VALUES (
             :account_id, :folder, :provider_message_id, :id_mode,
-            :subject, :sender, :recipients, :received_at, :received_at_sort,
+            :subject, :sender, :sender_email, :internet_message_id,
+            :recipients, :received_at, :received_at_sort,
             :is_read, :is_flagged, :has_attachments, :body_preview,
             :body, :body_type, :body_cached,
             CASE WHEN :body_cached = 1 THEN CURRENT_TIMESTAMP ELSE NULL END,
@@ -3268,6 +3391,11 @@ def upsert_retained_normal_mail_list_items(account: Dict[str, Any], folder: str,
         DO UPDATE SET
             subject = excluded.subject,
             sender = excluded.sender,
+            sender_email = excluded.sender_email,
+            internet_message_id = CASE
+                WHEN TRIM(COALESCE(excluded.internet_message_id, '')) != '' THEN excluded.internet_message_id
+                ELSE retained_normal_mail_messages.internet_message_id
+            END,
             recipients = excluded.recipients,
             received_at = excluded.received_at,
             received_at_sort = excluded.received_at_sort,
@@ -3470,6 +3598,10 @@ def build_retained_normal_mail_detail_row(account: Dict[str, Any], folder: str,
         'id_mode': key['id_mode'],
         'subject': coerce_retained_mail_text(detail.get('subject')) or '无主题',
         'sender': coerce_retained_mail_text(detail.get('from')) or '未知',
+        'sender_email': sender_email_from_header(detail.get('from')),
+        'internet_message_id': normalize_internet_message_id(
+            detail.get('internet_message_id') or detail.get('internetMessageId')
+        ),
         'recipients': coerce_retained_mail_text(detail.get('to')),
         'cc': coerce_retained_mail_text(detail.get('cc')),
         'received_at': coerce_retained_mail_text(detail.get('date')),
@@ -3493,17 +3625,20 @@ def upsert_retained_normal_mail_detail(account: Dict[str, Any], folder: str,
     if not row:
         return False
 
+    row = absorb_retained_mail_identity_matches(database, account, row)
     database.execute(
         '''
         INSERT INTO retained_normal_mail_messages (
             account_id, folder, provider_message_id, id_mode,
-            subject, sender, recipients, cc, received_at, received_at_sort,
+            subject, sender, sender_email, internet_message_id,
+            recipients, cc, received_at, received_at_sort,
             has_attachments, body, body_type, attachments_json,
             body_cached, body_cached_at, last_synced_at, updated_at
         )
         VALUES (
             :account_id, :folder, :provider_message_id, :id_mode,
-            :subject, :sender, :recipients, :cc, :received_at, :received_at_sort,
+            :subject, :sender, :sender_email, :internet_message_id,
+            :recipients, :cc, :received_at, :received_at_sort,
             :has_attachments, :body, :body_type, :attachments_json,
             1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
         )
@@ -3511,6 +3646,11 @@ def upsert_retained_normal_mail_detail(account: Dict[str, Any], folder: str,
         DO UPDATE SET
             subject = excluded.subject,
             sender = excluded.sender,
+            sender_email = excluded.sender_email,
+            internet_message_id = CASE
+                WHEN TRIM(COALESCE(excluded.internet_message_id, '')) != '' THEN excluded.internet_message_id
+                ELSE retained_normal_mail_messages.internet_message_id
+            END,
             recipients = excluded.recipients,
             cc = excluded.cc,
             received_at = excluded.received_at,
@@ -3534,6 +3674,7 @@ def format_graph_email_detail(detail: Dict[str, Any], attachments: List[Dict[str
     return attach_preferred_reply_address(
         {
             'id': detail.get('id'),
+            'internet_message_id': normalize_internet_message_id(detail.get('internetMessageId')),
             'subject': detail.get('subject', '无主题'),
             'from': detail.get('from', {}).get('emailAddress', {}).get('address', '未知'),
             'to': ', '.join([
@@ -4041,25 +4182,32 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
     status_name = normalize_mail_status_filter(status)
     status_filter = build_retained_mail_status_sql(status_name)
 
-    if folder_name == 'all':
-        dedupe_partition = 'account_id, provider_message_id, id_mode'
-        dedupe_order = '''
-            CASE WHEN folder IN ('inbox', 'junkemail', 'deleteditems') THEN 0 ELSE 1 END,
-            CASE WHEN body_cached = 1 THEN 0 ELSE 1 END,
-            CASE WHEN TRIM(COALESCE(body_preview, '')) != '' THEN 0 ELSE 1 END,
-            received_at_sort DESC,
-            updated_at DESC,
-            id DESC
-        '''
+    channel = get_account_authorization_type(account)
+    if channel == 'imap':
+        mode_rank_sql = "CASE id_mode WHEN 'uid' THEN 0 WHEN 'sequence' THEN 1 WHEN 'graph' THEN 2 ELSE 3 END"
     else:
-        dedupe_partition = 'account_id, folder, provider_message_id'
-        dedupe_order = '''
-            CASE WHEN body_cached = 1 THEN 0 ELSE 1 END,
-            received_at_sort DESC,
-            updated_at DESC,
-            id DESC
-        '''
+        mode_rank_sql = "CASE id_mode WHEN 'graph' THEN 0 WHEN 'uid' THEN 1 WHEN 'sequence' THEN 2 ELSE 3 END"
+    dedupe_partition = '''
+        retained_mail_identity_key(
+            COALESCE(internet_message_id, ''),
+            COALESCE(subject, ''),
+            COALESCE(sender_email, ''),
+            COALESCE(sender, ''),
+            COALESCE(received_at_sort, 0),
+            COALESCE(folder, ''),
+            COALESCE(provider_message_id, ''),
+            COALESCE(id_mode, '')
+        )
+    '''
+    dedupe_order = f'''
+        {mode_rank_sql},
+        COALESCE(last_synced_at, '') DESC,
+        CASE WHEN folder = 'inbox' THEN 0 WHEN folder = 'junkemail' THEN 1 ELSE 2 END,
+        CASE WHEN body_cached = 1 THEN 0 ELSE 1 END,
+        id DESC
+    '''
     db = get_db()
+    register_retained_mail_identity_sql(db)
     if keyword:
         register_retained_mail_sql_functions(db)
     filter_sql, filter_params = build_retained_mail_filter_sql(
@@ -4126,6 +4274,7 @@ def format_graph_email_item(item: Dict[str, Any], folder: str) -> Dict[str, Any]
     body, body_type = coerce_email_list_body(item)
     formatted = {
         'id': item.get('id'),
+        'internet_message_id': normalize_internet_message_id(item.get('internetMessageId')),
         'subject': item.get('subject', '无主题'),
         'from': item.get('from', {}).get('emailAddress', {}).get('address', '未知'),
         'to': ', '.join([

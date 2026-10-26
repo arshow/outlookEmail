@@ -5,6 +5,7 @@ import secrets
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from outlook_web.mail_datetime import parse_mail_datetime
+from outlook_web.mail_identity import normalize_internet_message_id
 from outlook_web.mail_reply_address import attach_preferred_reply_address
 
 if TYPE_CHECKING:
@@ -599,7 +600,7 @@ def get_emails_graph(client_id: str, refresh_token: str, folder: str = 'inbox', 
         params = {
             "$top": top,
             "$skip": skip,
-            "$select": "id,subject,from,toRecipients,receivedDateTime,isRead,flag,hasAttachments,body,bodyPreview",
+            "$select": "id,internetMessageId,subject,from,toRecipients,receivedDateTime,isRead,flag,hasAttachments,body,bodyPreview",
             "$orderby": "receivedDateTime desc"
         }
         headers = {
@@ -681,7 +682,7 @@ def get_email_detail_graph_result(client_id: str, refresh_token: str, message_id
     try:
         url = f"https://graph.microsoft.com/v1.0/me/messages/{message_id}"
         params = {
-            "$select": "id,subject,from,replyTo,toRecipients,ccRecipients,receivedDateTime,isRead,flag,hasAttachments,body,bodyPreview"
+            "$select": "id,internetMessageId,subject,from,replyTo,toRecipients,ccRecipients,receivedDateTime,isRead,flag,hasAttachments,body,bodyPreview"
         }
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -1249,8 +1250,8 @@ def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str
                 )
             }
 
-        status, messages = connection.search(None, 'ALL')
-        if status != 'OK':
+        message_ids, search_mode, search_attempts = search_imap_message_ids(connection)
+        if message_ids is None:
             return {
                 "success": False,
                 "error": build_error_payload(
@@ -1258,14 +1259,13 @@ def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str
                     "获取邮件失败，请检查账号配置",
                     "IMAPSearchError",
                     500,
-                    f"search status={status}"
+                    {'attempts': search_attempts[:10]},
                 )
             }
-        if not messages or not messages[0]:
+        if not message_ids:
             return {"success": True, "emails": []}
 
-        message_ids = messages[0].split()
-        # 计算分页范围
+        # 计算分页范围。UID 不随文件夹插入而整体改号，避免同一封信被存成多个序号。
         total = len(message_ids)
         start_idx = max(0, total - skip - top)
         end_idx = total - skip
@@ -1278,24 +1278,32 @@ def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str
         emails = []
         for msg_id in paged_ids:
             try:
-                status, msg_data = connection.fetch(msg_id, '(FLAGS INTERNALDATE RFC822)')
-                if status == 'OK' and msg_data and msg_data[0]:
-                    raw_email = msg_data[0][1]
-                    fetch_meta = msg_data[0][0]
-                    fetch_response_text = fetch_meta.decode('utf-8', errors='ignore') if isinstance(fetch_meta, (bytes, bytearray)) else str(fetch_meta or '')
-                    internal_date = extract_imap_internaldate(fetch_meta)
-                    msg = email.message_from_bytes(raw_email)
-                    emails.append({
-                        'id': msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id),
-                        'subject': decode_header_value(msg.get("Subject", "无主题")),
-                        'from': decode_header_value(msg.get("From", "未知发件人")),
-                        'to': decode_header_value(msg.get("To", "")),
-                        'date': internal_date or msg.get("Date", "未知时间"),
-                        'id_mode': 'sequence',
-                        'is_read': bool(re.search(r'\\Seen\b', fetch_response_text, flags=re.IGNORECASE)),
-                        'is_flagged': bool(re.search(r'\\Flagged\b', fetch_response_text, flags=re.IGNORECASE)),
-                        **list_item_body_fields(msg),
-                    })
+                status, msg_data, fetch_mode, _fetch_attempts = fetch_imap_message(
+                    connection,
+                    msg_id,
+                    '(FLAGS INTERNALDATE RFC822)',
+                    preferred_mode=search_mode or 'uid',
+                )
+                if status != 'OK' or not msg_data:
+                    continue
+                raw_email, fetch_response_text = parse_imap_fetch_response(msg_data)
+                if not raw_email:
+                    continue
+                internal_date = extract_imap_internaldate(fetch_response_text)
+                msg = email.message_from_bytes(raw_email)
+                message_id_text = msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id)
+                emails.append({
+                    'id': message_id_text,
+                    'subject': decode_header_value(msg.get("Subject", "无主题")),
+                    'from': decode_header_value(msg.get("From", "未知发件人")),
+                    'to': decode_header_value(msg.get("To", "")),
+                    'date': internal_date or msg.get("Date", "未知时间"),
+                    'id_mode': fetch_mode or search_mode or 'uid',
+                    'internet_message_id': normalize_internet_message_id(msg.get('Message-ID')),
+                    'is_read': bool(re.search(r'\\Seen\b', fetch_response_text, flags=re.IGNORECASE)),
+                    'is_flagged': bool(re.search(r'\\Flagged\b', fetch_response_text, flags=re.IGNORECASE)),
+                    **list_item_body_fields(msg),
+                })
             except Exception:
                 continue
 
@@ -3311,6 +3319,7 @@ def get_emails_imap_generic(email_addr: str, imap_password: str, imap_host: str,
                     'to': decode_header_value(msg.get('To', '')),
                     'date': internal_date or msg.get('Date', ''),
                     'id_mode': search_mode or 'uid',
+                    'internet_message_id': normalize_internet_message_id(msg.get('Message-ID')),
                     'is_read': bool(re.search(r'\\Seen\b', fetch_response_text, flags=re.IGNORECASE)),
                     'is_flagged': bool(re.search(r'\\Flagged\b', fetch_response_text, flags=re.IGNORECASE)),
                     'has_attachments': has_message_attachments(msg),

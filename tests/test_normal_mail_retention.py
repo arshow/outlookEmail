@@ -1322,8 +1322,8 @@ class NormalMailRetentionTests(unittest.TestCase):
                         '2026-05-27T09:00:00Z', ?, 1, 1, ?)
                 ''',
                 [
-                    (self.account['id'], 'uid', 'UID retained copy', 100.0, 0),
-                    (self.account['id'], 'graph', 'Graph retained copy', 101.0, 1),
+                    (self.account['id'], 'uid', 'Same retained copy', 100.0, 0),
+                    (self.account['id'], 'graph', 'Same retained copy', 100.0, 1),
                 ]
             )
             self.assertTrue(web_outlook_app.set_setting(
@@ -1343,7 +1343,86 @@ class NormalMailRetentionTests(unittest.TestCase):
         self.assertTrue(payload['success'])
         visible_provider_ids = [item['id'] for item in payload['emails']]
         self.assertEqual(visible_provider_ids.count('mixed-provider-1'), 1)
+        self.assertEqual(payload['emails'][0]['id_mode'], 'graph')
         self.assertEqual(payload['count'], 1)
+
+    def test_local_list_keeps_one_row_for_the_same_message(self):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                'UPDATE accounts SET authorization_type = ? WHERE id = ?',
+                ('imap', self.account['id']),
+            )
+            db.executemany(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode,
+                    subject, sender, sender_email, received_at, received_at_sort,
+                    is_read, list_cached, body_cached, last_synced_at
+                ) VALUES (?, ?, ?, ?, 'Re: Order AM#1004 confirmed', ?, 'brendan@gmail.com',
+                          '2026-10-24T10:35:50Z', 1000, 0, 1, 0, ?)
+                ''',
+                [
+                    (self.account['id'], 'junkemail', 'AQMkSTALE=', 'graph', 'brendan@gmail.com', '2026-10-25 14:07:34'),
+                    (self.account['id'], 'inbox', '56', 'sequence', 'Brenda Nisbet <brendan@gmail.com>', '2026-10-26 00:08:22'),
+                    (self.account['id'], 'junkemail', '4', 'sequence', 'Avermonty <store@example.com>', '2026-10-25 23:07:45'),
+                    (self.account['id'], 'junkemail', '3', 'sequence', 'Avermonty <store@example.com>', '2026-10-26 00:08:22'),
+                ],
+            )
+            db.execute(
+                '''
+                UPDATE retained_normal_mail_messages
+                SET subject = '[Avermonty] Order AM#1005',
+                    sender_email = 'store@example.com',
+                    received_at_sort = 2000
+                WHERE provider_message_id IN ('3', '4')
+                '''
+            )
+            self.assertTrue(web_outlook_app.set_setting('normal_mail_local_retention_enabled', 'true'))
+            db.commit()
+
+        response = self.client.get(
+            '/api/emails/retained@example.com?source=local&folder=all&skip=0&top=20'
+        )
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        visible = {(item['id'], item['folder'], item['id_mode']) for item in payload['emails']}
+        self.assertEqual(visible, {('56', 'inbox', 'sequence'), ('3', 'junkemail', 'sequence')})
+        self.assertEqual(payload['count'], 2)
+
+    def test_upsert_replaces_other_id_of_the_same_message(self):
+        with self.app.app_context():
+            web_outlook_app.upsert_retained_normal_mail_list_items(self.account, 'junkemail', [{
+                'id': 'AQMkOLD=',
+                'id_mode': 'graph',
+                'subject': 'Re: Order AM#1004 confirmed',
+                'from': 'brendan@gmail.com',
+                'date': '2026-10-24T10:35:50Z',
+                'internet_message_id': '<same-message@shopify.com>',
+                'folder': 'junkemail',
+            }])
+            web_outlook_app.upsert_retained_normal_mail_list_items(self.account, 'inbox', [{
+                'id': '373',
+                'id_mode': 'uid',
+                'subject': 'Re: Order AM#1004 confirmed',
+                'from': 'Avermonty <brendan@gmail.com>',
+                'date': '2026-10-24T10:35:50Z',
+                'internet_message_id': '<same-message@shopify.com>',
+                'folder': 'inbox',
+            }])
+            db = web_outlook_app.get_db()
+            rows = db.execute(
+                '''
+                SELECT folder, provider_message_id, id_mode
+                FROM retained_normal_mail_messages
+                WHERE account_id = ?
+                ''',
+                (self.account['id'],),
+            ).fetchall()
+        self.assertEqual(
+            [(row['folder'], row['provider_message_id'], row['id_mode']) for row in rows],
+            [('inbox', '373', 'uid')],
+        )
 
     def test_local_all_list_dedupes_well_known_and_graph_folder_copies(self):
         with self.app.app_context():

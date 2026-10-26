@@ -1649,6 +1649,8 @@ def init_db():
             cc TEXT DEFAULT '',
             received_at TEXT DEFAULT '',
             received_at_sort REAL DEFAULT 0,
+            internet_message_id TEXT NOT NULL DEFAULT '',
+            sender_email TEXT NOT NULL DEFAULT '',
             is_read INTEGER NOT NULL DEFAULT 0,
             is_flagged INTEGER NOT NULL DEFAULT 0,
             has_attachments INTEGER NOT NULL DEFAULT 0,
@@ -2040,6 +2042,10 @@ def init_db():
         cursor.execute('ALTER TABLE retained_normal_mail_messages ADD COLUMN received_at_sort REAL DEFAULT 0')
     if 'is_flagged' not in retained_normal_mail_columns:
         cursor.execute('ALTER TABLE retained_normal_mail_messages ADD COLUMN is_flagged INTEGER NOT NULL DEFAULT 0')
+    if 'internet_message_id' not in retained_normal_mail_columns:
+        cursor.execute("ALTER TABLE retained_normal_mail_messages ADD COLUMN internet_message_id TEXT NOT NULL DEFAULT ''")
+    if 'sender_email' not in retained_normal_mail_columns:
+        cursor.execute("ALTER TABLE retained_normal_mail_messages ADD COLUMN sender_email TEXT NOT NULL DEFAULT ''")
 
     cursor.execute("PRAGMA table_info(project_accounts)")
     project_account_columns = [col[1] for col in cursor.fetchall()]
@@ -2677,6 +2683,11 @@ def init_db():
     ''')
 
     cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_retained_normal_mail_messages_identity
+        ON retained_normal_mail_messages(account_id, internet_message_id)
+    ''')
+
+    cursor.execute('''
         CREATE UNIQUE INDEX IF NOT EXISTS ux_email_notes_key
         ON email_notes(account_id, folder, provider_message_id, id_mode)
     ''')
@@ -2735,6 +2746,8 @@ def init_db():
 
     # 回填历史保留邮件的规范化排序时间，保持旧数据库升级后分页顺序稳定。
     backfill_retained_normal_mail_received_at_sort(conn)
+    from outlook_web.mail_identity import collapse_retained_mail_duplicates
+    collapse_retained_mail_duplicates(conn)
 
     try:
         from outlook_web.ai.db import ensure_ai_schema
