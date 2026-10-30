@@ -987,7 +987,7 @@
                     currentSkip = getCloudflareGlobalNextOffset(data, nextOffset);
                     const loadingEl = document.getElementById('loadingMore');
                     if (loadingEl) {
-                        loadingEl.innerHTML = '<div style="text-align:center;padding:20px;color:#999;font-size:13px;">没有更多邮件了</div>';
+                        loadingEl.remove();
                     }
                 }
             } catch (error) {

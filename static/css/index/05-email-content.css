@@ -858,6 +858,8 @@
 
         .email-list {
             flex: 1;
+            position: relative;
+            overflow-x: hidden;
             overflow-y: auto;
             background-color: var(--skin-surface-soft);
             padding: 8px 0 16px;
@@ -866,8 +868,16 @@
             overscroll-behavior: contain;
         }
 
-        .email-list-panel.batch-toolbar-active .email-list {
-            padding-bottom: 88px;
+        /* 加载提示不占文档流，避免把刚好放得下的列表撑出滚动条 */
+        .email-list > .loading.loading-small {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 12px;
+            height: auto;
+            padding: 8px 0;
+            z-index: 2;
+            pointer-events: none;
         }
 
         .new-mail-notice {
@@ -1108,7 +1118,6 @@
         .email-item:hover {
             border-color: #d4d9e2;
             box-shadow: 0 12px 24px var(--skin-shadow);
-            transform: translateY(-1px);
         }
 
         .email-item.active {

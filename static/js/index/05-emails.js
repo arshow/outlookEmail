@@ -2973,6 +2973,86 @@
             return String(email?.folder || '').trim().toLowerCase() === 'junkemail';
         }
 
+        function measureEmailListIntrinsicHeight(list) {
+            const snapshot = {
+                flex: list.style.flex,
+                height: list.style.height,
+                minHeight: list.style.minHeight,
+                overflowY: list.style.overflowY
+            };
+            list.style.overflowY = 'visible';
+            list.style.flex = 'none';
+            list.style.height = 'auto';
+            list.style.minHeight = '0';
+            const height = list.scrollHeight;
+            list.style.flex = snapshot.flex;
+            list.style.height = snapshot.height;
+            list.style.minHeight = snapshot.minHeight;
+            list.style.overflowY = snapshot.overflowY;
+            return height;
+        }
+
+        // 批量底栏是浮层。只有最后一封确实会被挡住时才加底部留白，
+        // 否则留白会把本来放得下的未读列表撑出一条用不到的滚动条。
+        function syncEmailListScrollLayout() {
+            const list = document.getElementById('emailList');
+            if (!list) {
+                return;
+            }
+
+            const panel = document.getElementById('emailListPanel');
+            const bar = document.getElementById('emailBatchActionBar');
+            const toolbarActive = Boolean(
+                panel?.classList.contains('batch-toolbar-active')
+                && bar
+                && bar.style.display !== 'none'
+            );
+            const basePadding = 16;
+            const scrollTop = list.scrollTop;
+
+            list.style.overflowY = 'hidden';
+            list.style.paddingBottom = toolbarActive ? `${basePadding}px` : '';
+
+            const viewport = list.clientHeight;
+            if (!viewport) {
+                list.style.overflowY = '';
+                if (scrollTop) {
+                    list.scrollTop = scrollTop;
+                }
+                return;
+            }
+
+            const intrinsic = measureEmailListIntrinsicHeight(list);
+            let contentHeight = intrinsic;
+            if (toolbarActive) {
+                const bottomOffset = parseFloat(window.getComputedStyle(bar).bottom) || 12;
+                const overlay = Math.ceil(bar.offsetHeight + bottomOffset + 8);
+                const covered = intrinsic - (viewport - overlay);
+                const paddingBottom = covered > basePadding + 8
+                    ? Math.max(basePadding, overlay)
+                    : basePadding;
+                list.style.paddingBottom = `${paddingBottom}px`;
+                contentHeight = intrinsic + (paddingBottom - basePadding);
+            }
+
+            const needsScroll = contentHeight > viewport + 2;
+            list.style.overflowY = needsScroll ? 'auto' : 'hidden';
+            if (needsScroll && scrollTop) {
+                list.scrollTop = scrollTop;
+            }
+        }
+
+        let emailListScrollLayoutFrame = 0;
+        window.addEventListener('resize', () => {
+            if (emailListScrollLayoutFrame) {
+                return;
+            }
+            emailListScrollLayoutFrame = window.requestAnimationFrame(() => {
+                emailListScrollLayoutFrame = 0;
+                syncEmailListScrollLayout();
+            });
+        });
+
         function updateEmailBatchActionBar() {
             const bar = document.getElementById('emailBatchActionBar');
             const selectAllBtn = document.getElementById('emailSelectAllBtn');
@@ -2992,6 +3072,7 @@
                 bar.style.display = 'none';
                 panel?.classList.remove('batch-toolbar-active');
                 resetEmailBatchActionButtons();
+                syncEmailListScrollLayout();
                 return;
             }
             if (selectedEmailIds.size > 0) {
@@ -3068,6 +3149,7 @@
                     moveTrustBtn.style.display = 'none';
                 }
             }
+            syncEmailListScrollLayout();
         }
 
         function toggleSelectAllEmails() {

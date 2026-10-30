@@ -1731,7 +1731,7 @@
                             loadingEl.remove();
                         }
                     } else if (loadingEl) {
-                        loadingEl.innerHTML = '<div style="text-align:center;padding:20px;color:#999;font-size:13px;">没有更多邮件了</div>';
+                        loadingEl.remove();
                     }
                 } catch (error) {
                     const loadingEl = document.getElementById('loadingMore');
@@ -1856,10 +1856,9 @@
                     currentSkip = isAggregatedInboxMode()
                         ? nextSkip
                         : (Array.isArray(currentEmails) ? currentEmails.length : nextSkip);
-                    // 显示"没有更多邮件"
                     const loadingEl = document.getElementById('loadingMore');
                     if (loadingEl) {
-                        loadingEl.innerHTML = '<div style="text-align:center;padding:20px;color:#999;font-size:13px;">没有更多邮件了</div>';
+                        loadingEl.remove();
                     }
                 }
             } catch (error) {
