@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
+from email.policy import SMTP
 from email.utils import formataddr, parseaddr
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
@@ -214,6 +215,7 @@ def _create_graph_draft_with_relink(
     bcc_list: Optional[List[str]],
     subject: Optional[str],
     attachments: List[Dict[str, Any]],
+    from_email: str = '',
     proxy_url: str = None,
     fallback_proxy_urls: Optional[List[str]] = None,
 ) -> Tuple[Dict[str, Any], str]:
@@ -241,6 +243,7 @@ def _create_graph_draft_with_relink(
         bcc_list=bcc_list,
         subject=subject,
         attachments=attachments,
+        from_email=from_email,
         proxy_url=proxy_url,
         fallback_proxy_urls=fallback_proxy_urls,
     )
@@ -268,6 +271,7 @@ def _create_graph_draft_with_relink(
         bcc_list=bcc_list,
         subject=subject,
         attachments=attachments,
+        from_email=from_email,
         proxy_url=proxy_url,
         fallback_proxy_urls=fallback_proxy_urls,
     )
@@ -604,6 +608,136 @@ def graph_send_json(access_token: str, url: str, payload: Optional[Dict[str, Any
     )
 
 
+def graph_post_mime(access_token: str, url: str, mime_bytes: bytes,
+                    proxy_url: str = None, fallback_proxy_urls: Optional[List[str]] = None) -> Any:
+    """用 text/plain 提交 base64 MIME。Graph 会按这段 MIME 原样保存，而不是转成 TNEF。"""
+    encoded = base64.b64encode(mime_bytes).decode('ascii')
+    return request_with_proxy_failover(
+        'post',
+        url,
+        headers={
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'text/plain',
+        },
+        data=encoded.encode('ascii'),
+        timeout=max(HTTP_REQUEST_TIMEOUT, 60),
+        proxy_url=proxy_url,
+        fallback_proxy_urls=fallback_proxy_urls,
+    )
+
+
+def build_graph_mime_bytes(
+    *,
+    from_email: str,
+    to_list: List[str],
+    cc_list: Optional[List[str]],
+    bcc_list: Optional[List[str]],
+    subject: str,
+    body_html: str,
+    body_text: str,
+    attachments: Optional[List[Dict[str, Any]]] = None,
+    in_reply_to: str = '',
+    references: str = '',
+) -> bytes:
+    message = build_smtp_email_message(
+        from_email=' '.join(str(from_email or '').split()),
+        to_list=list(to_list or []),
+        cc_list=list(cc_list or []),
+        bcc_list=list(bcc_list or []),
+        subject=' '.join(str(subject or '').split()),
+        body_html=body_html,
+        body_text=body_text,
+        attachments=list(attachments or []),
+        in_reply_to=in_reply_to,
+        references=references,
+    )
+    return message.as_bytes(policy=SMTP)
+
+
+def _graph_reply_parent_headers(
+    access_token: str,
+    message_id: str,
+    proxy_url: str = None,
+    fallback_proxy_urls: Optional[List[str]] = None,
+) -> Dict[str, str]:
+    """取出原信的 Message-ID 和主题，让 MIME 回复仍能在对方邮箱里串成同一线程。"""
+    try:
+        response = get_with_proxy_fallback(
+            build_graph_message_action_url(message_id),
+            headers={'Authorization': f'Bearer {access_token}'},
+            params={'$select': 'internetMessageId,subject'},
+            timeout=max(HTTP_REQUEST_TIMEOUT, 30),
+            proxy_url=proxy_url,
+            fallback_proxy_urls=fallback_proxy_urls,
+        )
+    except Exception as exc:
+        app.logger.warning('读取原邮件头失败，回复将不带 In-Reply-To: %s', exc)
+        return {}
+    if getattr(response, 'status_code', 0) != 200:
+        return {}
+    payload = response.json() if getattr(response, 'content', None) else {}
+    if not isinstance(payload, dict):
+        return {}
+    parent_id = normalize_internet_message_id(payload.get('internetMessageId'))
+    parent_subject = str(payload.get('subject') or '').strip()
+    headers: Dict[str, str] = {}
+    if parent_id:
+        headers['in_reply_to'] = parent_id
+        headers['references'] = parent_id
+    if parent_subject:
+        headers['subject'] = parent_subject
+    return headers
+
+
+def _graph_send_draft(access_token: str, draft_id: str,
+                      proxy_url: str = None,
+                      fallback_proxy_urls: Optional[List[str]] = None) -> Dict[str, Any]:
+    send_response = graph_send_json(
+        access_token,
+        build_graph_message_action_url(draft_id, 'send'),
+        None,
+        proxy_url,
+        fallback_proxy_urls,
+    )
+    if send_response.status_code == 400:
+        send_response = request_with_proxy_failover(
+            'post',
+            build_graph_message_action_url(draft_id, 'send'),
+            headers={
+                'Authorization': f'Bearer {access_token}',
+                'Content-Length': '0',
+            },
+            data=b'',
+            timeout=max(HTTP_REQUEST_TIMEOUT, 60),
+            proxy_url=proxy_url,
+            fallback_proxy_urls=fallback_proxy_urls,
+        )
+    if send_response.status_code in {200, 202}:
+        return {'success': True, 'message_id': draft_id}
+    details = get_response_details(send_response)
+    if send_response.status_code in {401, 403} and is_graph_mail_send_forbidden(details):
+        return {
+            'success': False,
+            'error': build_error_payload(
+                'GRAPH_MAIL_SEND_SCOPE_REQUIRED',
+                '当前账号缺少 Mail.Send 权限，请重新授权后再发信',
+                'GraphAPIError',
+                send_response.status_code,
+                details,
+            ),
+        }
+    return {
+        'success': False,
+        'error': build_error_payload(
+            'GRAPH_SEND_FAILED',
+            '发送草稿失败',
+            'GraphAPIError',
+            send_response.status_code,
+            details,
+        ),
+    }
+
+
 def send_email_via_graph(
     account: Dict[str, Any],
     *,
@@ -627,6 +761,52 @@ def send_email_via_graph(
         return {'success': False, 'error': token_result.get('error')}
 
     access_token = token_result['access_token']
+    from_email = str(account.get('email') or '').strip()
+    if from_email and to_list:
+        mime_bytes = build_graph_mime_bytes(
+            from_email=from_email,
+            to_list=to_list,
+            cc_list=cc_list,
+            bcc_list=bcc_list,
+            subject=subject,
+            body_html=body_html,
+            body_text=body_text,
+            attachments=attachments,
+        )
+        mime_response = graph_post_mime(
+            access_token,
+            'https://graph.microsoft.com/v1.0/me/sendMail',
+            mime_bytes,
+            proxy_url,
+            fallback_proxy_urls,
+        )
+        if mime_response.status_code in {200, 202}:
+            return {'success': True}
+        mime_details = get_response_details(mime_response)
+        if mime_response.status_code in {401, 403} and is_graph_mail_send_forbidden(mime_details):
+            return {
+                'success': False,
+                'error': build_error_payload(
+                    'GRAPH_MAIL_SEND_SCOPE_REQUIRED',
+                    '当前账号缺少 Mail.Send 权限，请重新授权后再发信',
+                    'GraphAPIError',
+                    mime_response.status_code,
+                    mime_details,
+                ),
+            }
+        if mime_response.status_code != 400:
+            return {
+                'success': False,
+                'error': build_error_payload(
+                    'GRAPH_SEND_FAILED',
+                    'Graph 发信失败',
+                    'GraphAPIError',
+                    mime_response.status_code,
+                    mime_details,
+                ),
+            }
+        app.logger.warning('Graph MIME 发信未被接受（HTTP %s），改用 JSON', mime_response.status_code)
+
     content = body_html if body_html else (body_text or '')
     content_type = 'HTML' if body_html else 'Text'
     message = {
@@ -674,6 +854,118 @@ def send_email_via_graph(
     }
 
 
+def _graph_mime_draft_result(
+    access_token: str,
+    *,
+    message_id: str,
+    action: str,
+    body_html: str,
+    body_text: str,
+    to_list: Optional[List[str]],
+    cc_list: Optional[List[str]],
+    bcc_list: Optional[List[str]],
+    subject: Optional[str],
+    attachments: List[Dict[str, Any]],
+    from_email: str,
+    proxy_url: str = None,
+    fallback_proxy_urls: Optional[List[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """用 MIME 创建回复/转发草稿。返回 None 表示应回退到 JSON。"""
+    recipients = list(to_list or [])
+    sender = str(from_email or '').strip()
+    if not sender or not recipients:
+        return None
+
+    mime_subject = str(subject or '').strip()
+    in_reply_to = ''
+    references = ''
+    if action in {'createReply', 'createReplyAll'}:
+        parent = _graph_reply_parent_headers(
+            access_token,
+            message_id,
+            proxy_url=proxy_url,
+            fallback_proxy_urls=fallback_proxy_urls,
+        )
+        in_reply_to = parent.get('in_reply_to') or ''
+        references = parent.get('references') or ''
+        if not mime_subject:
+            mime_subject = ensure_subject_prefix(parent.get('subject') or '', 'Re:')
+    elif action == 'createForward' and not mime_subject:
+        mime_subject = 'Fw:'
+    if not mime_subject:
+        mime_subject = '(无主题)'
+
+    mime_bytes = build_graph_mime_bytes(
+        from_email=sender,
+        to_list=recipients,
+        cc_list=cc_list,
+        bcc_list=bcc_list,
+        subject=mime_subject,
+        body_html=body_html,
+        body_text=body_text,
+        attachments=attachments,
+        in_reply_to=in_reply_to,
+        references=references,
+    )
+    create_response = graph_post_mime(
+        access_token,
+        build_graph_message_action_url(message_id, action),
+        mime_bytes,
+        proxy_url,
+        fallback_proxy_urls,
+    )
+    if create_response.status_code not in {200, 201}:
+        details = get_response_details(create_response)
+        if create_response.status_code in {401, 403} and is_graph_mail_send_forbidden(details):
+            return {
+                'success': False,
+                'error': build_error_payload(
+                    'GRAPH_MAIL_SEND_SCOPE_REQUIRED',
+                    '当前账号缺少 Mail.Send 权限，请重新授权后再发信',
+                    'GraphAPIError',
+                    create_response.status_code,
+                    details,
+                ),
+            }
+        if graph_compose_failure_needs_relink({'error': details}) or create_response.status_code == 404:
+            return {
+                'success': False,
+                'error': build_error_payload(
+                    'GRAPH_CREATE_DRAFT_FAILED',
+                    f'创建{action} 草稿失败',
+                    'GraphAPIError',
+                    create_response.status_code,
+                    details,
+                ),
+            }
+        app.logger.warning(
+            'Graph MIME %s 未被接受（HTTP %s），改用 JSON 草稿',
+            action,
+            create_response.status_code,
+        )
+        return None
+
+    draft = create_response.json() if create_response.content else {}
+    draft_id = str((draft or {}).get('id') or '').strip()
+    if not draft_id:
+        return {
+            'success': False,
+            'error': build_error_payload(
+                'GRAPH_CREATE_DRAFT_FAILED',
+                '创建草稿成功但未返回草稿 ID',
+                'GraphAPIError',
+                502,
+            ),
+        }
+    app.logger.info('Graph %s 已按 MIME 创建草稿，避免发出 winmail.dat', action)
+    return _graph_send_draft(
+        access_token,
+        draft_id,
+        proxy_url=proxy_url,
+        fallback_proxy_urls=fallback_proxy_urls,
+    )
+
+
 def _graph_create_and_send(
     access_token: str,
     *,
@@ -686,9 +978,28 @@ def _graph_create_and_send(
     bcc_list: Optional[List[str]],
     subject: Optional[str],
     attachments: List[Dict[str, Any]],
+    from_email: str = '',
     proxy_url: str = None,
     fallback_proxy_urls: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
+    mime_result = _graph_mime_draft_result(
+        access_token,
+        message_id=message_id,
+        action=action,
+        body_html=body_html,
+        body_text=body_text,
+        to_list=to_list,
+        cc_list=cc_list,
+        bcc_list=bcc_list,
+        subject=subject,
+        attachments=attachments,
+        from_email=from_email,
+        proxy_url=proxy_url,
+        fallback_proxy_urls=fallback_proxy_urls,
+    )
+    if mime_result is not None:
+        return mime_result
+
     create_url = build_graph_message_action_url(message_id, action)
     create_response = graph_send_json(
         access_token, create_url, {}, proxy_url, fallback_proxy_urls
@@ -793,52 +1104,12 @@ def _graph_create_and_send(
                 ),
             }
 
-    send_response = graph_send_json(
+    return _graph_send_draft(
         access_token,
-        build_graph_message_action_url(draft_id, 'send'),
-        None,
-        proxy_url,
-        fallback_proxy_urls,
+        draft_id,
+        proxy_url=proxy_url,
+        fallback_proxy_urls=fallback_proxy_urls,
     )
-    # send endpoint expects empty body; requests with json=None may still send null
-    if send_response.status_code == 400:
-        send_response = request_with_proxy_failover(
-            'post',
-            build_graph_message_action_url(draft_id, 'send'),
-            headers={
-                'Authorization': f'Bearer {access_token}',
-                'Content-Length': '0',
-            },
-            data=b'',
-            timeout=max(HTTP_REQUEST_TIMEOUT, 60),
-            proxy_url=proxy_url,
-            fallback_proxy_urls=fallback_proxy_urls,
-        )
-
-    if send_response.status_code in {200, 202}:
-        return {'success': True, 'message_id': draft_id}
-    details = get_response_details(send_response)
-    if send_response.status_code in {401, 403} and is_graph_mail_send_forbidden(details):
-        return {
-            'success': False,
-            'error': build_error_payload(
-                'GRAPH_MAIL_SEND_SCOPE_REQUIRED',
-                '当前账号缺少 Mail.Send 权限，请重新授权后再发信',
-                'GraphAPIError',
-                send_response.status_code,
-                details,
-            ),
-        }
-    return {
-        'success': False,
-        'error': build_error_payload(
-            'GRAPH_SEND_FAILED',
-            '发送草稿失败',
-            'GraphAPIError',
-            send_response.status_code,
-            details,
-        ),
-    }
 
 
 def reply_email_via_graph(
@@ -852,6 +1123,7 @@ def reply_email_via_graph(
     cc_list: Optional[List[str]],
     bcc_list: Optional[List[str]],
     attachments: List[Dict[str, Any]],
+    subject: Optional[str] = None,
     proxy_url: str = None,
     fallback_proxy_urls: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
@@ -865,6 +1137,7 @@ def reply_email_via_graph(
         return {'success': False, 'error': token_result.get('error')}
 
     action = 'createReplyAll' if reply_all else 'createReply'
+    reply_subject = str(subject or '').strip() or None
     result, resolved_message_id = _create_graph_draft_with_relink(
         account,
         token_result['access_token'],
@@ -875,8 +1148,9 @@ def reply_email_via_graph(
         to_list=to_list,
         cc_list=cc_list,
         bcc_list=bcc_list,
-        subject=None,
+        subject=reply_subject,
         attachments=attachments,
+        from_email=str(account.get('email') or '').strip(),
         proxy_url=proxy_url,
         fallback_proxy_urls=fallback_proxy_urls,
     )
@@ -963,6 +1237,7 @@ def forward_email_via_graph(
         bcc_list=bcc_list,
         subject=subject or None,
         attachments=attachments,
+        from_email=str(account.get('email') or '').strip(),
         proxy_url=proxy_url,
         fallback_proxy_urls=fallback_proxy_urls,
     )
@@ -1189,6 +1464,7 @@ def api_reply_email():
             cc_list=parsed['cc'] or None,
             bcc_list=parsed['bcc'] or None,
             attachments=parsed['attachments'],
+            subject=parsed['subject'],
             proxy_url=proxy_url,
             fallback_proxy_urls=fallback_proxy_urls,
         )

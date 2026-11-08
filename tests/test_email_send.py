@@ -377,5 +377,147 @@ class EmailSendApiTests(unittest.TestCase):
         self.assertEqual(create.call_args.kwargs['message_id'], 'AQMkLIVE=')
 
 
+class GraphMimeSendTests(unittest.TestCase):
+    def test_mime_bytes_are_multipart_not_tnef(self):
+        raw = web_outlook_app.build_graph_mime_bytes(
+            from_email='marmaxogbor@hotmail.com',
+            to_list=['angelomarano1960@gmail.com'],
+            cc_list=['marmaxogbor@hotmail.com'],
+            bcc_list=[],
+            subject='RE: Order #1001 confirmed',
+            body_html='<p>On the way</p>',
+            body_text='On the way',
+            attachments=[],
+            in_reply_to='<parent@mail.gmail.com>',
+            references='<parent@mail.gmail.com>',
+        )
+        lowered = raw.lower()
+        self.assertIn(b'multipart/alternative', lowered)
+        self.assertIn(b'text/html', lowered)
+        self.assertIn(b'text/plain', lowered)
+        self.assertNotIn(b'application/ms-tnef', lowered)
+        self.assertNotIn(b'winmail.dat', lowered)
+        self.assertIn(b'in-reply-to:', lowered)
+        self.assertIn(b'<parent@mail.gmail.com>', raw)
+
+    def test_create_reply_sends_mime_draft(self):
+        parent = MagicMock(status_code=200, content=b'{}')
+        parent.json.return_value = {
+            'internetMessageId': '<parent@mail.gmail.com>',
+            'subject': 'Order #1001 confirmed',
+        }
+        created = MagicMock(status_code=201, content=b'{"id":"draft-9"}')
+        created.json.return_value = {'id': 'draft-9'}
+        sent = MagicMock(status_code=202, content=b'')
+        with patch.object(web_outlook_app, 'get_with_proxy_fallback', return_value=parent), \
+             patch.object(web_outlook_app, 'graph_post_mime', return_value=created) as mime, \
+             patch.object(web_outlook_app, 'graph_send_json', return_value=sent) as json_call:
+            result = web_outlook_app._graph_create_and_send(
+                'token',
+                message_id='AAMkParent',
+                action='createReply',
+                body_html='<p>thanks</p>',
+                body_text='thanks',
+                to_list=['buyer@gmail.com'],
+                cc_list=['me@hotmail.com'],
+                bcc_list=[],
+                subject='RE: Order #1001 confirmed',
+                attachments=[],
+                from_email='me@hotmail.com',
+            )
+        self.assertTrue(result['success'])
+        self.assertEqual(result['message_id'], 'draft-9')
+        mime.assert_called_once()
+        self.assertTrue(mime.call_args.args[1].endswith('/createReply'))
+        raw = mime.call_args.args[2]
+        self.assertIn(b'multipart/alternative', raw.lower())
+        self.assertNotIn(b'application/ms-tnef', raw.lower())
+        self.assertIn(b'<parent@mail.gmail.com>', raw)
+        self.assertEqual(json_call.call_count, 1)
+        self.assertTrue(json_call.call_args.args[1].endswith('/draft-9/send') or json_call.call_args.args[1].endswith('/send'))
+
+    def test_create_reply_mime_400_falls_back_to_json(self):
+        parent = MagicMock(status_code=200, content=b'{}')
+        parent.json.return_value = {
+            'internetMessageId': '<parent@mail.gmail.com>',
+            'subject': 'Hi',
+        }
+        rejected = MagicMock(status_code=400, content=b'{"error":{"code":"ErrorMimeContentInvalidBase64String"}}')
+        rejected.json.return_value = {'error': {'code': 'ErrorMimeContentInvalidBase64String'}}
+        created = MagicMock(status_code=201, content=b'{"id":"draft-json"}')
+        created.json.return_value = {'id': 'draft-json'}
+        patched = MagicMock(status_code=200, content=b'{}')
+        patched.json.return_value = {'id': 'draft-json'}
+        sent = MagicMock(status_code=202, content=b'')
+        with patch.object(web_outlook_app, 'get_with_proxy_fallback', return_value=parent), \
+             patch.object(web_outlook_app, 'graph_post_mime', return_value=rejected), \
+             patch.object(web_outlook_app, 'graph_send_json', side_effect=[created, patched, sent]) as json_call:
+            result = web_outlook_app._graph_create_and_send(
+                'token',
+                message_id='AAMkParent',
+                action='createReply',
+                body_html='<p>thanks</p>',
+                body_text='',
+                to_list=['buyer@gmail.com'],
+                cc_list=None,
+                bcc_list=None,
+                subject='RE: Hi',
+                attachments=[],
+                from_email='me@hotmail.com',
+            )
+        self.assertTrue(result['success'])
+        self.assertEqual(result['message_id'], 'draft-json')
+        self.assertEqual(json_call.call_count, 3)
+
+    def test_missing_message_does_not_fall_back_to_json(self):
+        parent = MagicMock(status_code=404, content=b'{}')
+        parent.json.return_value = {}
+        missing = MagicMock(status_code=404, content=b'{"error":{"code":"ErrorItemNotFound"}}')
+        missing.json.return_value = {'error': {'code': 'ErrorItemNotFound', 'message': 'not found'}}
+        with patch.object(web_outlook_app, 'get_with_proxy_fallback', return_value=parent), \
+             patch.object(web_outlook_app, 'graph_post_mime', return_value=missing), \
+             patch.object(web_outlook_app, 'graph_send_json') as json_call:
+            result = web_outlook_app._graph_create_and_send(
+                'token',
+                message_id='AAMkMissing',
+                action='createReply',
+                body_html='<p>thanks</p>',
+                body_text='',
+                to_list=['buyer@gmail.com'],
+                cc_list=[],
+                bcc_list=[],
+                subject='RE: Hi',
+                attachments=[],
+                from_email='me@hotmail.com',
+            )
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error']['code'], 'GRAPH_CREATE_DRAFT_FAILED')
+        json_call.assert_not_called()
+
+    def test_send_mail_uses_mime(self):
+        sent = MagicMock(status_code=202, content=b'')
+        with patch.object(
+            web_outlook_app,
+            'get_access_token_graph_result',
+            return_value={'success': True, 'access_token': 'tok'},
+        ), patch.object(web_outlook_app, 'graph_post_mime', return_value=sent) as mime, \
+           patch.object(web_outlook_app, 'graph_send_json') as json_call:
+            result = web_outlook_app.send_email_via_graph(
+                {'email': 'me@hotmail.com', 'client_id': 'c', 'refresh_token': 'r'},
+                to_list=['a@example.com'],
+                cc_list=[],
+                bcc_list=[],
+                subject='Hello',
+                body_html='<p>Hi</p>',
+                body_text='Hi',
+                attachments=[],
+            )
+        self.assertTrue(result['success'])
+        mime.assert_called_once()
+        self.assertTrue(mime.call_args.args[1].endswith('/sendMail'))
+        self.assertNotIn(b'application/ms-tnef', mime.call_args.args[2].lower())
+        json_call.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
