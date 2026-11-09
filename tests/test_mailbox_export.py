@@ -297,6 +297,46 @@ class MailboxExportTests(unittest.TestCase):
         self.assertEqual(result['raw'], b'hello')
         self.assertEqual(queries, [('(BODY.PEEK[])', 'uid')])
 
+    def test_export_job_reports_folder_progress_while_collecting(self):
+        self._insert_account('progress-export@example.com')
+        target = {
+            'label': '收件箱',
+            'folder': 'inbox',
+            'folder_id': '',
+            'mailbox': '',
+            'channel': 'graph',
+            'well_known': 'inbox',
+        }
+
+        def list_refs(_account, folder_target, _ctx, _limit, _should_cancel=None):
+            return {
+                'success': True,
+                'refs': [{
+                    'target': folder_target,
+                    'id': 'm1',
+                    'channel': 'graph',
+                    'subject': 'Hello',
+                    'date': '2026-11-09T00:00:00Z',
+                }],
+                'truncated': False,
+            }
+
+        def fetch_raw(_account, _ref, _ctx):
+            return {'success': True, 'raw': b'From: a@example.com\r\nSubject: Hello\r\n\r\nBody'}
+
+        with patch.object(web_outlook_app, 'start_mailbox_export_thread', side_effect=web_outlook_app.run_mailbox_export_job), \
+                patch.object(web_outlook_app, 'build_mailbox_export_targets', return_value={'success': True, 'targets': [target]}), \
+                patch.object(web_outlook_app, 'list_target_export_refs', side_effect=list_refs), \
+                patch.object(web_outlook_app, 'fetch_export_message_raw', side_effect=fetch_raw):
+            response = self.client.post('/api/emails/progress-export@example.com/export', json={'scope': 'mailbox'})
+
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200, payload)
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['status'], 'succeeded')
+        self.assertEqual(payload['completed'], 1)
+        self.assertEqual(payload['current_folder'], '收件箱')
+
     def test_export_job_downloads_zip_for_one_mailbox(self):
         self._insert_account('person-export@example.com')
         target = {'label': '收件箱', 'folder': 'inbox', 'folder_id': '', 'mailbox': '', 'channel': 'graph', 'well_known': 'inbox'}

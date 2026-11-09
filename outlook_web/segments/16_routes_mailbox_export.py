@@ -1028,8 +1028,8 @@ def _run_mailbox_export_job(job_id: str, ctx: MailboxExportContext) -> None:
         )
         return
 
-    def on_status(message: str, total: Optional[int] = None, folder_label: str = '') -> None:
-        fields: Dict[str, Any] = {'message': message, 'current_folder': folder_label, 'status': 'running'}
+    def on_status(message: str, total: Optional[int] = None, folder: str = '') -> None:
+        fields: Dict[str, Any] = {'message': message, 'current_folder': folder, 'status': 'running'}
         if total is not None:
             fields['total'] = total
         update_mailbox_export_job(job_id, **fields)
