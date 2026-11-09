@@ -297,90 +297,116 @@ class MailboxExportTests(unittest.TestCase):
         self.assertEqual(result['raw'], b'hello')
         self.assertEqual(queries, [('(BODY.PEEK[])', 'uid')])
 
-    def test_export_job_reports_folder_progress_while_collecting(self):
-        self._insert_account('progress-export@example.com')
-        target = {
-            'label': '收件箱',
-            'folder': 'inbox',
-            'folder_id': '',
-            'mailbox': '',
-            'channel': 'graph',
-            'well_known': 'inbox',
-        }
+    def _insert_retained_message(self, account_id: int, message_id: str, subject: str, folder: str = 'inbox',
+                                 body: str = '', body_type: str = 'text', received_at: str = '2026-11-09T01:02:03Z'):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode,
+                    subject, sender, recipients, received_at, received_at_sort,
+                    body, body_type, body_cached, body_preview, list_cached
+                )
+                VALUES (?, ?, ?, 'graph', ?, 'sender@example.com', 'reader@example.com', ?, ?,
+                        ?, ?, ?, ?, 1)
+                ''',
+                (
+                    account_id,
+                    folder,
+                    message_id,
+                    subject,
+                    received_at,
+                    web_outlook_app.retained_mail_received_at_sort(received_at),
+                    body,
+                    body_type,
+                    1 if body else 0,
+                    body[:80],
+                ),
+            )
+            db.commit()
 
-        def list_refs(_account, folder_target, _ctx, _limit, _should_cancel=None):
-            return {
-                'success': True,
-                'refs': [{
-                    'target': folder_target,
-                    'id': 'm1',
-                    'channel': 'graph',
-                    'subject': 'Hello',
-                    'date': '2026-11-09T00:00:00Z',
-                }],
-                'truncated': False,
-            }
+    def test_export_job_reads_retained_mail_without_contacting_the_server(self):
+        account_id = self._insert_account('person-export@example.com')
+        other_account_id = self._insert_account('other-export@example.com')
+        self._insert_retained_message(account_id, 'm1', 'Hello', body='Saved body')
+        self._insert_retained_message(
+            account_id,
+            'm2',
+            'Junk note',
+            folder='junkemail',
+            body='Junk body',
+            received_at='2026-11-08T00:00:00Z',
+        )
+        self._insert_retained_message(other_account_id, 'other', 'Someone else', body='Hidden')
 
-        def fetch_raw(_account, _ref, _ctx):
-            return {'success': True, 'raw': b'From: a@example.com\r\nSubject: Hello\r\n\r\nBody'}
+        def fail_remote(*_args, **_kwargs):
+            raise AssertionError('export must not contact the mail server')
 
         with patch.object(web_outlook_app, 'start_mailbox_export_thread', side_effect=web_outlook_app.run_mailbox_export_job), \
-                patch.object(web_outlook_app, 'build_mailbox_export_targets', return_value={'success': True, 'targets': [target]}), \
-                patch.object(web_outlook_app, 'list_target_export_refs', side_effect=list_refs), \
-                patch.object(web_outlook_app, 'fetch_export_message_raw', side_effect=fetch_raw):
-            response = self.client.post('/api/emails/progress-export@example.com/export', json={'scope': 'mailbox'})
+                patch.object(web_outlook_app, 'get_with_proxy_fallback', side_effect=fail_remote), \
+                patch.object(web_outlook_app, 'get_access_token_graph_result', side_effect=fail_remote), \
+                patch.object(web_outlook_app, 'get_access_token_imap_result', side_effect=fail_remote):
+            response = self.client.post('/api/emails/person-export@example.com/export', json={'scope': 'mailbox'})
 
         payload = response.get_json()
         self.assertEqual(response.status_code, 200, payload)
         self.assertTrue(payload['success'])
         self.assertEqual(payload['status'], 'succeeded')
-        self.assertEqual(payload['completed'], 1)
-        self.assertEqual(payload['current_folder'], '收件箱')
-
-    def test_export_job_downloads_zip_for_one_mailbox(self):
-        self._insert_account('person-export@example.com')
-        target = {'label': '收件箱', 'folder': 'inbox', 'folder_id': '', 'mailbox': '', 'channel': 'graph', 'well_known': 'inbox'}
-        refs = [
-            {'target': target, 'id': 'm1', 'channel': 'graph', 'subject': 'Hello', 'date': '2026-11-09T01:02:03Z'},
-            {'target': target, 'id': 'm2', 'channel': 'graph', 'subject': 'Broken'},
-        ]
-
-        def fetch_raw(_account, ref, _ctx):
-            if ref['id'] == 'm2':
-                return {'success': False, 'error': '读取失败'}
-            return {'success': True, 'raw': b'From: a@example.com\r\nSubject: Hello\r\n\r\nBody'}
-
-        with patch.object(web_outlook_app, 'start_mailbox_export_thread', side_effect=web_outlook_app.run_mailbox_export_job), \
-                patch.object(web_outlook_app, 'build_mailbox_export_targets', return_value={'success': True, 'targets': [target]}), \
-                patch.object(web_outlook_app, 'collect_mailbox_export_refs', return_value={
-                    'success': True,
-                    'cancelled': False,
-                    'error': '',
-                    'refs': refs,
-                    'folder_errors': [],
-                    'truncated': False,
-                }), \
-                patch.object(web_outlook_app, 'fetch_export_message_raw', side_effect=fetch_raw):
-            response = self.client.post('/api/emails/person-export@example.com/export', json={'scope': 'mailbox'})
-
-        payload = response.get_json()
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(payload['success'])
-        self.assertEqual(payload['status'], 'succeeded')
-        self.assertEqual(payload['completed'], 1)
-        self.assertEqual(payload['failed_count'], 1)
+        self.assertEqual(payload['completed'], 2)
+        self.assertEqual(payload['failed_count'], 0)
         self.assertEqual(payload['email'], 'person-export@example.com')
 
         download = self.client.get(f"/api/emails/export-jobs/{payload['job_id']}/download")
         self.assertEqual(download.status_code, 200)
         self.assertIn('application/zip', download.content_type)
-        self.assertIn('person-export@example.com-emails.zip', download.headers.get('Content-Disposition', ''))
         with zipfile.ZipFile(io.BytesIO(download.data)) as archive:
-            eml_name = next(name for name in archive.namelist() if name.endswith('.eml'))
-            self.assertIn(b'Subject: Hello', archive.read(eml_name))
+            contents = {name: archive.read(name) for name in archive.namelist() if name.endswith('.eml')}
             manifest = json.loads(archive.read('manifest.json'))
-        self.assertEqual(manifest['email'], 'person-export@example.com')
-        self.assertEqual(manifest['failed_count'], 1)
+        self.assertEqual(len(contents), 2)
+        joined = b'\n'.join(contents.values())
+        self.assertIn(b'Subject: Hello', joined)
+        self.assertIn(b'Saved body', joined)
+        self.assertIn(b'Subject: Junk note', joined)
+        self.assertNotIn(b'Someone else', joined)
+        self.assertEqual(manifest['source'], 'local')
+        self.assertEqual(manifest['exported_count'], 2)
+        self.assertIn('本地已保留', manifest['note'])
+
+    def test_folder_export_uses_only_the_selected_local_folder(self):
+        account_id = self._insert_account('folder-local-export@example.com')
+        self._insert_retained_message(account_id, 'in-1', 'Inbox only', body='Inbox body')
+        self._insert_retained_message(account_id, 'junk-1', 'Junk only', folder='junkemail', body='Junk body')
+
+        with patch.object(web_outlook_app, 'start_mailbox_export_thread', side_effect=web_outlook_app.run_mailbox_export_job):
+            response = self.client.post(
+                '/api/emails/folder-local-export@example.com/export',
+                json={'scope': 'folder', 'folder': 'inbox'},
+            )
+
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200, payload)
+        self.assertEqual(payload['completed'], 1)
+        download = self.client.get(f"/api/emails/export-jobs/{payload['job_id']}/download")
+        with zipfile.ZipFile(io.BytesIO(download.data)) as archive:
+            joined = b'\n'.join(archive.read(name) for name in archive.namelist() if name.endswith('.eml'))
+        self.assertIn(b'Inbox only', joined)
+        self.assertNotIn(b'Junk only', joined)
+
+    def test_export_without_retained_mail_does_not_call_the_server(self):
+        self._insert_account('empty-export@example.com')
+
+        def fail_remote(*_args, **_kwargs):
+            raise AssertionError('export must not contact the mail server')
+
+        with patch.object(web_outlook_app, 'start_mailbox_export_thread', side_effect=web_outlook_app.run_mailbox_export_job), \
+                patch.object(web_outlook_app, 'get_with_proxy_fallback', side_effect=fail_remote):
+            response = self.client.post('/api/emails/empty-export@example.com/export', json={'scope': 'mailbox'})
+
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 200, payload)
+        self.assertEqual(payload['status'], 'failed')
+        self.assertIn('本地还没有', payload['error'])
 
     def test_second_export_for_same_mailbox_is_rejected_while_running(self):
         self._insert_account('busy-export@example.com')
@@ -441,6 +467,8 @@ class MailboxExportFrontendTests(unittest.TestCase):
         self.assertIn('showMailboxExportModal()', layout)
         self.assertIn('id="mailboxExportModal"', dialogs)
         self.assertIn('整个邮箱（各个文件夹）', dialogs)
+        self.assertIn('已经保存在本地数据库里的邮件', dialogs)
+        self.assertNotIn('从邮箱服务器导出原文', dialogs)
         self.assertIn("data-account-action=\"exportEmails\"", accounts_js)
         self.assertIn('导出全部邮件', accounts_js)
         self.assertIn("action === 'exportEmails'", core_js)

@@ -13,6 +13,7 @@ import threading
 import zipfile
 from datetime import datetime, timezone
 from email import message_from_bytes
+from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote
@@ -42,6 +43,7 @@ MAILBOX_EXPORT_FOLDER_LABELS = {
     'archive': '存档',
     'deleteditems': '已删除邮件',
 }
+LOCAL_EXPORT_NOTE = '这些 .eml 由本地已保留的主题、发件人、收件人、时间和正文生成。'
 
 _mailbox_export_lock = threading.Lock()
 mailbox_export_jobs: Dict[str, Dict[str, Any]] = {}
@@ -848,7 +850,7 @@ def build_mailbox_export_zip(path: str, account_email: str, refs: List[Dict[str,
                              on_progress: Optional[Callable[..., None]] = None,
                              truncated: bool = False, folder_errors: Optional[List[Dict[str, str]]] = None,
                              max_messages: int = MAILBOX_EXPORT_MAX_MESSAGES, scope: str = 'mailbox',
-                             folder_list_fallback: bool = False) -> Dict[str, Any]:
+                             folder_list_fallback: bool = False, note: str = '', source: str = '') -> Dict[str, Any]:
     used_names = set()
     index_rows = []
     errors: List[Dict[str, str]] = []
@@ -917,7 +919,8 @@ def build_mailbox_export_zip(path: str, account_email: str, refs: List[Dict[str,
             'folder_errors': folder_errors or [],
             'errors': errors[:100],
             'folder_list_fallback': bool(folder_list_fallback),
-            'note': (
+            'source': source or ('local' if note else ''),
+            'note': note or (
                 '每个 .eml 是一封邮件的原文，包含完整邮件头。'
                 + (' 未能读取完整文件夹列表，本次只导出了收件箱、垃圾邮件和已删除邮件。' if folder_list_fallback else '')
             ),
@@ -994,6 +997,186 @@ def run_mailbox_export_job(job_id: str) -> None:
         )
 
 
+def export_folder_label(folder: str) -> str:
+    normalized = str(folder or '').strip().lower()
+    if normalized in MAILBOX_EXPORT_FOLDER_LABELS:
+        return MAILBOX_EXPORT_FOLDER_LABELS[normalized]
+    text = str(folder or '').strip()
+    return text or '邮件'
+
+
+def resolve_local_export_folders(scope: str, folder: str = '', folder_id: str = '',
+                                 mailbox: str = '') -> Dict[str, Any]:
+    """返回要导出的本地文件夹。folders 为 None 时表示该账号的全部已保留邮件。"""
+    scope_name = str(scope or 'mailbox').strip().lower()
+    explicit_folder_id = str(folder_id or '').strip()
+    explicit_mailbox = str(mailbox or '').strip()
+    raw_folder = str(folder or '').strip()
+    if raw_folder.lower().startswith('graph:') and not explicit_folder_id:
+        explicit_folder_id = raw_folder.split(':', 1)[1].strip()
+        raw_folder = ''
+    elif raw_folder.lower().startswith('imap:') and not explicit_mailbox:
+        explicit_mailbox = raw_folder.split(':', 1)[1].strip()
+        raw_folder = ''
+    if explicit_folder_id and explicit_mailbox:
+        return {'success': False, 'error': 'folder_id 与 mailbox 不能同时使用', 'folders': []}
+    if scope_name != 'folder':
+        return {'success': True, 'folders': None}
+    if explicit_folder_id:
+        return {'success': True, 'folders': [build_graph_folder_storage_key(explicit_folder_id)]}
+    if explicit_mailbox:
+        return {'success': True, 'folders': [build_imap_folder_storage_key(explicit_mailbox)]}
+    folder_name = normalize_folder_name(raw_folder or 'all')
+    if folder_name == 'all':
+        return {'success': True, 'folders': ['inbox', 'junkemail']}
+    if folder_name not in VALID_MAIL_FOLDERS and not is_custom_mail_folder_storage_key(folder_name):
+        return {
+            'success': False,
+            'error': f'folder 参数无效，支持: {", ".join(sorted(VALID_MAIL_FOLDERS))}',
+            'folders': [],
+        }
+    return {'success': True, 'folders': [folder_name]}
+
+
+def build_retained_export_eml(row: Dict[str, Any]) -> bytes:
+    message = EmailMessage()
+    message['Subject'] = str(row.get('subject') or '无主题')
+    message['From'] = str(row.get('sender') or '')
+    message['To'] = str(row.get('recipients') or '')
+    cc = str(row.get('cc') or '').strip()
+    if cc:
+        message['Cc'] = cc
+    received_at = str(row.get('received_at') or '').strip()
+    if received_at:
+        message['Date'] = received_at
+    internet_message_id = str(row.get('internet_message_id') or '').strip()
+    if internet_message_id:
+        message['Message-ID'] = internet_message_id
+
+    body = str(row.get('body') or '')
+    preview = str(row.get('body_preview') or '')
+    body_type = str(row.get('body_type') or 'text').strip().lower()
+    has_body = bool(int(row.get('body_cached') or 0)) and bool(body.strip())
+    attachment_note = '这封邮件带有附件。' if int(row.get('has_attachments') or 0) else ''
+    if has_body and 'html' in body_type:
+        plain = preview.strip() or '这封邮件包含 HTML 正文。'
+        if attachment_note:
+            plain = f'{attachment_note}\n{plain}'
+        message.set_content(plain)
+        message.add_alternative(body, subtype='html')
+    else:
+        text = body.strip() if has_body else preview.strip()
+        if attachment_note:
+            text = f'{attachment_note}\n{text}'.strip()
+        message.set_content(text)
+    return message.as_bytes()
+
+
+def _retained_export_row_rank(row: Dict[str, Any]) -> tuple:
+    return (
+        1 if int(row.get('body_cached') or 0) else 0,
+        int(row.get('id') or 0),
+    )
+
+
+def load_local_mailbox_export_refs(account: Dict[str, Any], scope: str, folder: str = '',
+                                   folder_id: str = '', mailbox: str = '',
+                                   should_cancel: Optional[Callable[[], bool]] = None,
+                                   on_status: Optional[Callable[..., None]] = None) -> Dict[str, Any]:
+    resolved = resolve_local_export_folders(scope, folder, folder_id, mailbox)
+    if not resolved.get('success'):
+        return {
+            'success': False,
+            'cancelled': False,
+            'error': resolved.get('error') or '文件夹参数无效',
+            'refs': [],
+            'folder_errors': [],
+            'truncated': False,
+        }
+    if should_cancel and should_cancel():
+        return {
+            'success': False,
+            'cancelled': True,
+            'error': '导出已取消',
+            'refs': [],
+            'folder_errors': [],
+            'truncated': False,
+        }
+    if on_status:
+        on_status('正在读取本地邮件', total=0, folder='')
+
+    account_id = int(account.get('id') or 0)
+    folders = resolved.get('folders')
+    sql = '''
+        SELECT id, folder, provider_message_id, id_mode, subject, sender, sender_email,
+               recipients, cc, received_at, received_at_sort, internet_message_id,
+               is_read, is_flagged, has_attachments, body_preview, body, body_type, body_cached
+        FROM retained_normal_mail_messages
+        WHERE account_id = ? AND list_cached = 1
+    '''
+    params: List[Any] = [account_id]
+    if folders:
+        placeholders = ', '.join('?' for _ in folders)
+        sql += f' AND folder IN ({placeholders})'
+        params.extend(folders)
+    sql += ' ORDER BY received_at_sort DESC, id DESC'
+    database = get_db()
+    rows = [dict(row) for row in database.execute(sql, params).fetchall()]
+
+    chosen: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    for row in rows:
+        identity = retained_mail_identity_key(
+            row.get('internet_message_id'),
+            row.get('subject'),
+            row.get('sender_email'),
+            row.get('sender'),
+            row.get('received_at_sort'),
+            row.get('folder'),
+            row.get('provider_message_id'),
+            row.get('id_mode'),
+        )
+        previous = chosen.get(identity)
+        if previous is None:
+            chosen[identity] = row
+            order.append(identity)
+            continue
+        if _retained_export_row_rank(row) > _retained_export_row_rank(previous):
+            chosen[identity] = row
+
+    refs = []
+    for identity in order:
+        row = chosen[identity]
+        label = export_folder_label(str(row.get('folder') or ''))
+        refs.append({
+            'target': {'label': label, 'folder': row.get('folder') or ''},
+            'id': str(row.get('provider_message_id') or ''),
+            'subject': str(row.get('subject') or ''),
+            'from': str(row.get('sender') or ''),
+            'date': str(row.get('received_at') or ''),
+            'raw': build_retained_export_eml(row),
+        })
+    if on_status:
+        on_status(f'已找到 {len(refs)} 封', total=len(refs), folder='')
+    if not refs:
+        return {
+            'success': False,
+            'cancelled': False,
+            'error': '本地还没有这个邮箱的已保留邮件',
+            'refs': [],
+            'folder_errors': [],
+            'truncated': False,
+        }
+    return {
+        'success': True,
+        'cancelled': False,
+        'error': '',
+        'refs': refs,
+        'folder_errors': [],
+        'truncated': False,
+    }
+
+
 def _run_mailbox_export_job(job_id: str, ctx: MailboxExportContext) -> None:
     with _mailbox_export_lock:
         job = mailbox_export_jobs.get(job_id)
@@ -1004,9 +1187,8 @@ def _run_mailbox_export_job(job_id: str, ctx: MailboxExportContext) -> None:
         folder = str(job.get('folder') or '')
         folder_id = str(job.get('folder_id') or '')
         mailbox = str(job.get('mailbox') or '')
-        max_messages = int(job.get('max_messages') or MAILBOX_EXPORT_MAX_MESSAGES)
         job['status'] = 'running'
-        job['message'] = '正在准备导出'
+        job['message'] = '正在读取本地邮件'
 
     if mailbox_export_cancel_requested(job_id):
         _finish_mailbox_export_job(job_id, ctx, status='cancelled', message='导出已取消', error='')
@@ -1017,28 +1199,18 @@ def _run_mailbox_export_job(job_id: str, ctx: MailboxExportContext) -> None:
         _finish_mailbox_export_job(job_id, ctx, status='failed', error='账号不存在', message='导出失败')
         return
 
-    target_result = build_mailbox_export_targets(account, scope, folder, folder_id, mailbox)
-    if not target_result.get('success'):
-        _finish_mailbox_export_job(
-            job_id,
-            ctx,
-            status='failed',
-            error=mailbox_export_error_text(target_result.get('error')),
-            message='导出失败',
-        )
-        return
-
     def on_status(message: str, total: Optional[int] = None, folder: str = '') -> None:
         fields: Dict[str, Any] = {'message': message, 'current_folder': folder, 'status': 'running'}
         if total is not None:
             fields['total'] = total
         update_mailbox_export_job(job_id, **fields)
 
-    collected = collect_mailbox_export_refs(
+    collected = load_local_mailbox_export_refs(
         account,
-        target_result.get('targets') or [],
-        max_messages,
-        ctx,
+        scope,
+        folder,
+        folder_id,
+        mailbox,
         lambda: mailbox_export_cancel_requested(job_id),
         on_status,
     )
@@ -1084,14 +1256,15 @@ def _run_mailbox_export_job(job_id: str, ctx: MailboxExportContext) -> None:
             file_path,
             account.get('email') or email_addr,
             refs,
-            lambda ref: fetch_export_message_raw(account, ref, ctx),
+            lambda ref: {'success': True, 'raw': ref.get('raw') or b''},
             lambda: mailbox_export_cancel_requested(job_id),
             on_progress,
-            truncated=bool(collected.get('truncated')),
-            folder_errors=collected.get('folder_errors') or [],
-            max_messages=max_messages,
+            truncated=False,
+            folder_errors=[],
+            max_messages=len(refs),
             scope=scope,
-            folder_list_fallback=bool(target_result.get('folder_list_fallback')),
+            note=LOCAL_EXPORT_NOTE,
+            source='local',
         )
     except Exception:
         _finish_mailbox_export_job(job_id, ctx, status='failed', error='写入压缩包失败', message='导出失败')
@@ -1114,14 +1287,9 @@ def _run_mailbox_export_job(job_id: str, ctx: MailboxExportContext) -> None:
 
     failed_count = int(written.get('failed_count') or 0)
     exported_count = int(written.get('exported_count') or 0)
-    truncated = bool(written.get('truncated'))
-    message = f'已导出 {exported_count} 封'
+    message = f'已导出 {exported_count} 封本地邮件'
     if failed_count:
         message += f'，{failed_count} 封失败'
-    if truncated:
-        message += '，已达到单次上限'
-    if target_result.get('folder_list_fallback'):
-        message += '。未能读取完整文件夹列表，已导出收件箱、垃圾邮件和已删除邮件'
     _finish_mailbox_export_job(
         job_id,
         ctx,
@@ -1130,7 +1298,7 @@ def _run_mailbox_export_job(job_id: str, ctx: MailboxExportContext) -> None:
         error='',
         completed=exported_count,
         failed_count=failed_count,
-        truncated=truncated,
+        truncated=False,
         total=len(refs),
         filename=build_export_download_name(account.get('email') or email_addr),
         file_path=file_path,

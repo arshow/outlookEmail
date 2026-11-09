@@ -551,7 +551,7 @@
                         <input type="radio" name="mailboxExportScope" value="folder">
                         <span id="mailboxExportCurrentFolderLabel">当前文件夹</span>
                     </label>
-                    <div class="form-hint">从邮箱服务器导出原文，不限于当前已经加载的列表。每封邮件保存为一个 .eml，打包成 ZIP，包含完整邮件头。单次最多 2000 封，超出时优先保留较新的邮件，并在压缩包里的 manifest.json 说明。</div>
+                    <div class="form-hint">导出这个邮箱已经保存在本地数据库里的邮件，不会重新连接邮箱服务器。每封邮件按已保存的主题、发件人、时间和正文生成 .eml，并打包成 ZIP。</div>
                 </div>
                 <div id="mailboxExportProgress" class="form-hint" hidden></div>
             </div>
