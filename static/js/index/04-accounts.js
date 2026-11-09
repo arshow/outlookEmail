@@ -32,6 +32,9 @@
             showEmailList({ scheduleLoadCheck: false });
             closeMobilePanels();
             updateMobileContext();
+            if (typeof syncMailboxExportButton === 'function') {
+                syncMailboxExportButton();
+            }
 
             document.querySelectorAll('.account-item').forEach(item => item.classList.remove('active'));
             const targetItem = event?.currentTarget;
@@ -199,6 +202,9 @@
 
             // 有远端缓存也走 loadEmails：本地保留开启时会补齐收件箱发现写入的新信
             loadEmails(email);
+            if (typeof syncMailboxExportButton === 'function') {
+                syncMailboxExportButton();
+            }
         }
 
         // 隐藏添加账号模态框

@@ -1587,6 +1587,10 @@
                         showEditAccountRemarkModal(accountId, accountEmail, accountRemark);
                     } else if (action === 'forwardingLogs') {
                         showAccountForwardingLogs(accountId, accountEmail);
+                    } else if (action === 'exportEmails') {
+                        if (typeof showMailboxExportModal === 'function') {
+                            showMailboxExportModal(accountEmail, { fromAccountMenu: true });
+                        }
                     } else if (action === 'toggleStatus') {
                         toggleAccountStatus(accountId, accountStatus);
                     } else if (action === 'outlookAutoAuth') {

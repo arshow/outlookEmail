@@ -529,6 +529,41 @@
         </div>
     </div>
 
+    <!-- 单个邮箱导出全部邮件 -->
+    <div class="modal" id="mailboxExportModal" onmousedown="if(event.target === this) hideMailboxExportModal()">
+        <div class="modal-content" style="width: 480px;">
+            <div class="modal-header">
+                <h3>导出全部邮件</h3>
+                <button class="modal-close" type="button" onclick="hideMailboxExportModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">邮箱</label>
+                    <div id="mailboxExportAccount" class="form-hint" style="margin-top: 0;"></div>
+                </div>
+                <div class="form-group" id="mailboxExportScopeGroup">
+                    <label class="form-label">导出范围</label>
+                    <label class="mailbox-export-scope">
+                        <input type="radio" name="mailboxExportScope" value="mailbox" checked>
+                        <span>整个邮箱（各个文件夹）</span>
+                    </label>
+                    <label class="mailbox-export-scope" id="mailboxExportCurrentFolderOption">
+                        <input type="radio" name="mailboxExportScope" value="folder">
+                        <span id="mailboxExportCurrentFolderLabel">当前文件夹</span>
+                    </label>
+                    <div class="form-hint">从邮箱服务器导出原文，不限于当前已经加载的列表。每封邮件保存为一个 .eml，打包成 ZIP，包含完整邮件头。单次最多 2000 封，超出时优先保留较新的邮件，并在压缩包里的 manifest.json 说明。</div>
+                </div>
+                <div id="mailboxExportProgress" class="form-hint" hidden></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" type="button" id="mailboxExportStopBtn" onclick="cancelMailboxExport()" hidden>停止</button>
+                <button class="btn btn-secondary" type="button" onclick="hideMailboxExportModal()">关闭</button>
+                <button class="btn btn-primary" type="button" id="mailboxExportDownloadBtn" onclick="downloadMailboxExportZip()" hidden>下载压缩包</button>
+                <button class="btn btn-primary" type="button" id="mailboxExportStartBtn" onclick="startMailboxExport()">开始导出</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 导出密码确认模态框 -->
     <div class="modal" id="exportVerifyModal" onmousedown="if(event.target === this) hideExportVerifyModal()">
         <div class="modal-content" style="width: 400px;">

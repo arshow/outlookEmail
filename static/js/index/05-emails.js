@@ -4902,3 +4902,297 @@
                 window.location.href = '/logout';
             }
         }
+
+        // ==================== 单个邮箱导出全部邮件 ====================
+
+        let mailboxExportEmail = '';
+        let mailboxExportJobId = '';
+        let mailboxExportJobEmail = '';
+        let mailboxExportFilename = '';
+        let mailboxExportPollTimer = null;
+        let mailboxExportPollErrors = 0;
+        let mailboxExportAutoDownloaded = false;
+        let mailboxExportStarting = false;
+
+        function canExportCurrentMailbox() {
+            return Boolean(currentAccount)
+                && !isTempEmailGroup
+                && !isAggregatedInboxMode()
+                && currentMethod !== 'cloudflare-admin'
+                && currentMethod !== 'gptmail';
+        }
+
+        function syncMailboxExportButton() {
+            const button = document.getElementById('exportMailboxEmailsBtn');
+            if (!button) {
+                return;
+            }
+            const visible = canExportCurrentMailbox();
+            button.hidden = !visible;
+            button.style.display = visible ? 'inline-flex' : 'none';
+        }
+
+        function mailboxExportFolderLabel() {
+            if (typeof getFolderDisplayName === 'function') {
+                return getFolderDisplayName(currentFolder || 'all');
+            }
+            return currentFolder === 'all' ? '全部邮件' : (currentFolder || '当前文件夹');
+        }
+
+        function stopMailboxExportPoll() {
+            if (mailboxExportPollTimer) {
+                clearTimeout(mailboxExportPollTimer);
+                mailboxExportPollTimer = null;
+            }
+        }
+
+        function formatMailboxExportProgress(job) {
+            const completed = Number(job?.completed) || 0;
+            const total = Number(job?.total) || 0;
+            const folder = job?.current_folder ? ` · ${job.current_folder}` : '';
+            if (job?.status === 'pending') {
+                return '正在准备导出...';
+            }
+            if (job?.status === 'running') {
+                if (total > 0) {
+                    return `正在导出 ${completed}/${total}${folder}`;
+                }
+                return job?.message || '正在读取邮箱...';
+            }
+            if (job?.status === 'succeeded') {
+                const failed = Number(job?.failed_count) > 0 ? `，${job.failed_count} 封失败` : '';
+                const truncated = job?.truncated ? '，已达到单次上限' : '';
+                return `已导出 ${completed} 封${failed}${truncated}`;
+            }
+            if (job?.status === 'cancelled') {
+                return '导出已取消';
+            }
+            return job?.error || job?.message || '导出失败';
+        }
+
+        function renderMailboxExportActions(status) {
+            const startBtn = document.getElementById('mailboxExportStartBtn');
+            const stopBtn = document.getElementById('mailboxExportStopBtn');
+            const downloadBtn = document.getElementById('mailboxExportDownloadBtn');
+            const running = status === 'pending' || status === 'running' || mailboxExportStarting;
+            if (startBtn) {
+                startBtn.hidden = running;
+                startBtn.disabled = running;
+            }
+            if (stopBtn) {
+                stopBtn.hidden = !running;
+            }
+            if (downloadBtn) {
+                downloadBtn.hidden = status !== 'succeeded';
+            }
+        }
+
+        function setMailboxExportProgress(text, visible = true) {
+            const progress = document.getElementById('mailboxExportProgress');
+            if (!progress) {
+                return;
+            }
+            progress.hidden = !visible;
+            progress.textContent = text || '';
+        }
+
+        function showMailboxExportModal(email, options = {}) {
+            const fromAccountMenu = Boolean(options.fromAccountMenu);
+            const accountEmail = String(email || (!fromAccountMenu ? currentAccount : '') || '').trim();
+            if (!accountEmail || accountEmail === AGGREGATED_INBOX_ACCOUNT_KEY) {
+                showToast('请先选择一个普通邮箱', 'error');
+                return;
+            }
+            if (!fromAccountMenu && !canExportCurrentMailbox()) {
+                showToast('当前邮箱不支持导出全部邮件', 'error');
+                return;
+            }
+
+            const sameJob = Boolean(mailboxExportJobId) && mailboxExportJobEmail === accountEmail;
+            mailboxExportEmail = accountEmail;
+            const accountEl = document.getElementById('mailboxExportAccount');
+            if (accountEl) {
+                accountEl.textContent = accountEmail;
+            }
+            const folderOption = document.getElementById('mailboxExportCurrentFolderOption');
+            const folderLabel = document.getElementById('mailboxExportCurrentFolderLabel');
+            const allowCurrentFolder = !fromAccountMenu && currentAccount === accountEmail && canExportCurrentMailbox();
+            if (folderOption) {
+                folderOption.hidden = !allowCurrentFolder;
+            }
+            if (folderLabel) {
+                const name = mailboxExportFolderLabel();
+                folderLabel.textContent = currentFolder === 'all'
+                    ? '当前视图（收件箱和垃圾邮件）'
+                    : `当前文件夹（${name}）`;
+            }
+            const mailboxRadio = document.querySelector('input[name="mailboxExportScope"][value="mailbox"]');
+            if (mailboxRadio) {
+                mailboxRadio.checked = true;
+            }
+            if (!sameJob) {
+                setMailboxExportProgress('', false);
+                renderMailboxExportActions('');
+            }
+            showModal('mailboxExportModal');
+            if (sameJob) {
+                pollMailboxExportJob();
+            }
+        }
+
+        function hideMailboxExportModal() {
+            hideModal('mailboxExportModal');
+        }
+
+        function buildMailboxExportPayload() {
+            const selected = document.querySelector('input[name="mailboxExportScope"]:checked');
+            const scope = selected ? selected.value : 'mailbox';
+            const payload = { scope };
+            if (scope !== 'folder') {
+                return payload;
+            }
+            const query = typeof applyMailFolderParamsToSearch === 'function'
+                ? applyMailFolderParamsToSearch(new URLSearchParams(), currentFolder || 'all')
+                : new URLSearchParams({ folder: currentFolder || 'all' });
+            const folder = query.get('folder');
+            const folderId = query.get('folder_id');
+            const mailbox = query.get('mailbox');
+            if (folder) {
+                payload.folder = folder;
+            }
+            if (folderId) {
+                payload.folder_id = folderId;
+            }
+            if (mailbox) {
+                payload.mailbox = mailbox;
+            }
+            if (!payload.folder && !payload.folder_id && !payload.mailbox) {
+                payload.folder = currentFolder || 'all';
+            }
+            return payload;
+        }
+
+        function attachMailboxExportJob(jobId) {
+            mailboxExportJobId = String(jobId || '');
+            mailboxExportJobEmail = mailboxExportEmail;
+            mailboxExportPollErrors = 0;
+            mailboxExportAutoDownloaded = false;
+            renderMailboxExportActions('running');
+            setMailboxExportProgress('正在准备导出...', true);
+            pollMailboxExportJob();
+        }
+
+        async function startMailboxExport() {
+            if (!mailboxExportEmail || mailboxExportStarting) {
+                return;
+            }
+            mailboxExportStarting = true;
+            renderMailboxExportActions('running');
+            setMailboxExportProgress('正在创建导出任务...', true);
+            try {
+                const response = await fetch(`/api/emails/${encodeURIComponent(mailboxExportEmail)}/export`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(buildMailboxExportPayload()),
+                });
+                const data = await response.json();
+                if (response.status === 409 && data.job_id) {
+                    attachMailboxExportJob(data.job_id);
+                    showToast(data.error || '这个邮箱正在导出', 'info');
+                    return;
+                }
+                if (!response.ok || !data.success || !data.job_id) {
+                    handleApiError(data, '创建导出任务失败');
+                    renderMailboxExportActions('');
+                    setMailboxExportProgress(data.error || '创建导出任务失败', true);
+                    return;
+                }
+                attachMailboxExportJob(data.job_id);
+                if (data.filename) {
+                    mailboxExportFilename = data.filename;
+                }
+            } catch (error) {
+                showToast('创建导出任务失败', 'error');
+                renderMailboxExportActions('');
+                setMailboxExportProgress('创建导出任务失败', true);
+            } finally {
+                mailboxExportStarting = false;
+            }
+        }
+
+        async function pollMailboxExportJob() {
+            if (!mailboxExportJobId) {
+                return;
+            }
+            stopMailboxExportPoll();
+            try {
+                const response = await fetch(`/api/emails/export-jobs/${encodeURIComponent(mailboxExportJobId)}`);
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || '读取导出进度失败');
+                }
+                mailboxExportPollErrors = 0;
+                if (data.filename) {
+                    mailboxExportFilename = data.filename;
+                }
+                const viewingThisJob = !mailboxExportEmail || mailboxExportEmail === mailboxExportJobEmail;
+                if (viewingThisJob) {
+                    setMailboxExportProgress(formatMailboxExportProgress(data), true);
+                    renderMailboxExportActions(data.status);
+                }
+                if (data.status === 'pending' || data.status === 'running') {
+                    mailboxExportPollTimer = setTimeout(pollMailboxExportJob, 1000);
+                    return;
+                }
+                if (data.status === 'succeeded' && !mailboxExportAutoDownloaded) {
+                    mailboxExportAutoDownloaded = true;
+                    downloadMailboxExportZip();
+                    showToast(formatMailboxExportProgress(data), 'success');
+                } else if (data.status === 'failed') {
+                    showToast(data.error || '导出失败', 'error');
+                }
+            } catch (error) {
+                mailboxExportPollErrors += 1;
+                if (mailboxExportPollErrors >= 5) {
+                    setMailboxExportProgress('读取导出进度失败', true);
+                    renderMailboxExportActions('');
+                    showToast('读取导出进度失败', 'error');
+                    return;
+                }
+                mailboxExportPollTimer = setTimeout(pollMailboxExportJob, 1500);
+            }
+        }
+
+        function downloadMailboxExportZip() {
+            if (!mailboxExportJobId) {
+                return;
+            }
+            const link = document.createElement('a');
+            link.href = `/api/emails/export-jobs/${encodeURIComponent(mailboxExportJobId)}/download`;
+            link.download = mailboxExportFilename || 'mailbox-emails.zip';
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        }
+
+        async function cancelMailboxExport() {
+            if (!mailboxExportJobId) {
+                hideMailboxExportModal();
+                return;
+            }
+            try {
+                const response = await fetch(`/api/emails/export-jobs/${encodeURIComponent(mailboxExportJobId)}/cancel`, {
+                    method: 'POST',
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    handleApiError(data, '取消导出失败');
+                    return;
+                }
+                setMailboxExportProgress('正在取消...', true);
+                pollMailboxExportJob();
+            } catch (error) {
+                showToast('取消导出失败', 'error');
+            }
+        }

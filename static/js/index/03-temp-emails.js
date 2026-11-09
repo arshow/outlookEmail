@@ -710,6 +710,9 @@
             showEmailList();
             closeMobilePanels();
             updateMobileContext();
+            if (typeof syncMailboxExportButton === 'function') {
+                syncMailboxExportButton();
+            }
 
             document.querySelectorAll('.account-item').forEach(item => {
                 item.classList.remove('active');
@@ -796,6 +799,9 @@
             showEmailList();
             closeMobilePanels();
             updateMobileContext();
+            if (typeof syncMailboxExportButton === 'function') {
+                syncMailboxExportButton();
+            }
 
             document.querySelectorAll('.account-item').forEach(item => item.classList.remove('active'));
             const targetItem = event?.currentTarget;

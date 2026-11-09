@@ -368,6 +368,10 @@
                             <button class="compose-btn" type="button" onclick="openComposeModal('new')" title="写邮件">
                                 写邮件
                             </button>
+                            <button class="export-mailbox-btn" type="button" id="exportMailboxEmailsBtn"
+                                onclick="showMailboxExportModal()" title="导出这个邮箱的全部邮件" hidden style="display: none;">
+                                导出全部
+                            </button>
                             <label class="email-fetch-top" title="刷新时获取最近多少封">
                                 <span>最近</span>
                                 <input class="email-fetch-top-input" id="emailFetchTopInput" type="number" min="1" max="2000" step="1" value="50" inputmode="numeric">
