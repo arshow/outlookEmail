@@ -43,6 +43,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from outlook_web.runtime import default_database_path, resource_path, resolve_secret_key, runtime_root
+import outlook_web.forwarding_store as forwarding_store
 from outlook_web.mail_datetime import parse_mail_datetime
 
 # 尝试导入 Flask-WTF CSRF 保护
@@ -768,6 +769,8 @@ INDEX_CSS_FILES = (
     'css/index/06-modals-toast.css',
     'css/index/07-meta.css',
     'css/index/08-responsive.css',
+    'css/index/forwarding/base.css',
+    'css/index/10-forwarding.css',
 )
 INDEX_JS_FILES = (
     'js/index/01-core.js',
@@ -783,6 +786,8 @@ INDEX_JS_FILES = (
     'js/index/11-email-shares.js',
     'js/index/12-outlook-upload-accounts.js',
     'js/index/13-compose.js',
+    'js/index/14-mail-folders.js',
+    'js/index/15-forwarding.js',
 )
 
 # GPTMail API 配置
@@ -2779,6 +2784,13 @@ def init_db():
 
     # 迁移现有明文数据为加密数据
     migrate_sensitive_data(conn)
+
+    try:
+        forwarding_store.init_schema(conn, encrypt_data, decrypt_data)
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
 
     conn.commit()
     conn.close()

@@ -14,6 +14,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - Gmail IMAP 登录最多重试一次，并限制列表连接注销等待，减少异常网络下的取信卡顿。
 
 ### Added
+- 邮件转发改为独立管理工作区：可创建多个 SMTP、Telegram、企业微信和飞书渠道，并按具体邮箱、分组、普通默认、Cloudflare Worker、域名或完整地址关联规则。关键词和发件人条件写在规则上，两者同时填写时必须同时命中。同一封邮件对每个渠道分别记录投递，失败可重试；Cloudflare 来源按稳定邮件 ID 记住扫描进度。
 - 普通 Outlook/IMAP 邮件列表整体超时可在「常规设置 → 邮件获取超时」中设置，范围 30-300 秒，默认 120 秒。环境变量 `MAIL_FETCH_OVERALL_TIMEOUT` 只作为尚未保存该设置时的初始值；前端请求再增加 10 秒缓冲。
 - Outlook OAuth 账号新增 `authorization_type`（`graph` / `imap`，空值表示未设置）：记录首选或最近成功的邮件授权通道。
 - 编辑账号弹窗可查看和修改授权类型；未设置时取信与 Token 刷新默认 Graph 优先。

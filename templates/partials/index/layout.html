@@ -70,6 +70,7 @@
                 <button class="navbar-btn mobile-only-btn" id="refreshTokensBtn" type="button" onclick="showRefreshModal()">Token刷新管理</button>
                 <button class="navbar-btn mobile-only-btn" id="emailShareManagementBtn" type="button" onclick="showEmailShareManagementModal()">分享管理</button>
                 <a class="navbar-btn mobile-only-btn" id="aiReplyManagementBtn" href="/ai">AI 回复管理</a>
+                <button class="navbar-btn mobile-only-btn" type="button" onclick="showForwardingManagement()">邮件转发</button>
                 <button class="navbar-btn mobile-only-btn" id="exportAccountsBtn" type="button" onclick="showExportModal()">导出邮箱</button>
                 <button class="navbar-btn mobile-only-btn" id="openSettingsBtn" style="display: inline-flex; align-items: center; gap: 4px;" type="button" onclick="showSettingsModal()">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -123,6 +124,7 @@
                         <button class="dropdown-item" type="button" onclick="showRefreshModal()">Token 刷新管理</button>
                         <button class="dropdown-item" type="button" onclick="showEmailShareManagementModal()">分享管理</button>
                         <a class="dropdown-item" href="/ai">AI 回复管理</a>
+                        <button class="dropdown-item" type="button" onclick="showForwardingManagement()">邮件转发</button>
                     </div>
                 </div>
                 
@@ -571,4 +573,5 @@
             </div>
         </div>
     </div>
+    {% include "partials/index/forwarding-management.html" %}
     <div class="mobile-panel-scrim" id="mobilePanelScrim"></div>
