@@ -180,12 +180,12 @@ class ImapFolderResolutionTests(unittest.TestCase):
                     uid_text = uid.decode('utf-8') if isinstance(uid, (bytes, bytearray)) else str(uid)
                     if uid_text == '1':
                         return 'OK', [(
-                            b'1 (FLAGS () INTERNALDATE "14-Apr-2026 10:00:00 +0000" RFC822 {128}',
+                            b'1 (UID 1 FLAGS () INTERNALDATE "14-Apr-2026 10:00:00 +0000" RFC822 {128}',
                             raw_old_header,
                         )]
                     if uid_text == '2':
                         return 'OK', [(
-                            b'2 (FLAGS () INTERNALDATE "13-Apr-2026 10:00:00 +0000" RFC822 {128}',
+                            b'2 (UID 2 FLAGS () INTERNALDATE "13-Apr-2026 10:00:00 +0000" RFC822 {128}',
                             raw_new_header,
                         )]
                 return super().uid(command, *args, **kwargs)
@@ -226,7 +226,7 @@ class ImapFolderResolutionTests(unittest.TestCase):
                         "hello\r\n"
                     ).encode('utf-8')
                     return 'OK', [(
-                        f'{uid_text} (FLAGS () INTERNALDATE "{internal_date}" RFC822 {{{len(raw_email)}}}'.encode('utf-8'),
+                        f'{uid_text} (UID {uid_text} FLAGS () INTERNALDATE "{internal_date}" RFC822 {{{len(raw_email)}}}'.encode('utf-8'),
                         raw_email,
                     )]
                 return super().uid(command, *args, **kwargs)
@@ -275,7 +275,7 @@ class ImapFolderResolutionTests(unittest.TestCase):
                 if command == 'FETCH':
                     return 'OK', [
                         (
-                            b'11 (INTERNALDATE "14-Apr-2026 08:20:50 +0000" RFC822 {128}',
+                            b'11 (UID 11 INTERNALDATE "14-Apr-2026 08:20:50 +0000" RFC822 {128}',
                             raw_email,
                         ),
                         b' FLAGS (\\Seen))',
@@ -396,7 +396,7 @@ class ImapFolderResolutionTests(unittest.TestCase):
             def fetch(self, message_id, _query):
                 self.select_calls.append((f'FETCH:{message_id}', False))
                 return 'OK', [(
-                    b'7 (FLAGS (\\Seen) INTERNALDATE "14-Apr-2026 08:20:50 +0000" RFC822 {128}',
+                    b'7 (UID 7 FLAGS (\\Seen) INTERNALDATE "14-Apr-2026 08:20:50 +0000" RFC822 {128}',
                     raw_email,
                 )]
 
@@ -450,10 +450,8 @@ class ImapFolderResolutionTests(unittest.TestCase):
                 provider='custom',
             )
 
-        self.assertTrue(result['success'])
-        self.assertEqual(result['email']['id'], '9')
-        self.assertEqual(result['email']['subject'], 'detail message')
-        self.assertIn('detail body', result['email']['body'])
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error']['code'], 'EMAIL_DETAIL_FETCH_FAILED')
 
     def test_custom_imap_detail_falls_back_when_uid_fetch_returns_ok_without_payload(self):
         raw_email = (
@@ -491,10 +489,8 @@ class ImapFolderResolutionTests(unittest.TestCase):
                 provider='custom',
             )
 
-        self.assertTrue(result['success'])
-        self.assertEqual(result['email']['id'], '9')
-        self.assertEqual(result['email']['subject'], 'detail fallback payload')
-        self.assertIn('detail body from sequence fetch', result['email']['body'])
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error']['code'], 'EMAIL_NOT_FOUND')
 
     def test_custom_imap_raw_fetch_uses_sequence_fallback_when_uid_fetch_has_no_payload(self):
         raw_email = (
@@ -530,19 +526,19 @@ class ImapFolderResolutionTests(unittest.TestCase):
         mail = RawFetchFallbackMail(selectable={'INBOX'}, list_entries=[b'(\\HasNoChildren) "." "INBOX"'])
 
         with patch.object(web_outlook_app, 'create_imap_connection', return_value=mail):
-            result = web_outlook_app.get_raw_email_imap_generic(
-                email_addr='user@example.com',
-                imap_password='secret',
-                imap_host='imap.example.com',
-                imap_port=993,
-                message_id='9',
-                folder='inbox',
-                provider='custom',
-            )
+            with self.assertRaises(web_outlook_app.ImapMessageIdentityError):
+                web_outlook_app.get_raw_email_imap_generic(
+                    email_addr='user@example.com',
+                    imap_password='secret',
+                    imap_host='imap.example.com',
+                    imap_port=993,
+                    message_id='9',
+                    folder='inbox',
+                    provider='custom',
+                )
 
-        self.assertEqual(result, raw_email)
         self.assertEqual(mail.uid_fetch_calls, [('FETCH', ('9', '(RFC822)'))])
-        self.assertEqual(mail.sequence_fetch_calls, [('9', '(RFC822)')])
+        self.assertEqual(mail.sequence_fetch_calls, [])
         self.assertTrue(mail.logged_out)
 
     def test_custom_imap_uses_exists_count_when_search_returns_empty(self):
@@ -573,7 +569,7 @@ class ImapFolderResolutionTests(unittest.TestCase):
             def fetch(self, message_id, _query):
                 if str(message_id) == '1':
                     return 'OK', [(
-                        b'1 (FLAGS () INTERNALDATE "14-Apr-2026 08:20:50 +0000" RFC822 {128}',
+                        b'1 (UID 1 FLAGS () INTERNALDATE "14-Apr-2026 08:20:50 +0000" RFC822 {128}',
                         raw_email,
                     )]
                 return 'NO', [b'not found']
@@ -824,7 +820,7 @@ class ImapFolderResolutionTests(unittest.TestCase):
 
             def uid(self, command, message_id, query):
                 self.uid_calls.append((command, message_id, query))
-                return 'OK', [(b'7 (RFC822 {128}', raw_email)]
+                return 'OK', [(b'7 (UID 7 RFC822 {128}', raw_email)]
 
             def fetch(self, message_id, query):
                 self.fetch_calls.append((message_id, query))
@@ -1510,7 +1506,8 @@ class ExternalAccountsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertTrue(payload['success'])
-        self.assertEqual([item['id'] for item in payload['emails']], ['plus'])
+        # 查询串里的 + 按空格解码，因此命中主题 “Reset Code”。
+        self.assertEqual([item['id'] for item in payload['emails']], ['space'])
 
     def test_update_account_requires_login(self):
         response = self.client.put(

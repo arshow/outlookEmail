@@ -1826,6 +1826,10 @@
                     document.getElementById('settingsCloudflareAiPrompt').value = data.settings.cloudflare_ai_username_prompt || '';
                     document.getElementById('settingsCloudflareAiTestResult').textContent = '未测试';
                     document.getElementById('settingsAppTimezone').value = appTimeZone;
+                    const mailFetchTimeoutSeconds = data.settings.mail_fetch_timeout_seconds || '120';
+                    const mailFetchTimeoutInput = document.getElementById('mailFetchTimeoutSeconds');
+                    if (mailFetchTimeoutInput) mailFetchTimeoutInput.value = mailFetchTimeoutSeconds;
+                    setMailFetchTimeoutSeconds(mailFetchTimeoutSeconds);
                     document.getElementById('settingsPassword').value = '';
                     const currentPasswordInput = document.getElementById('settingsCurrentPassword');
                     if (currentPasswordInput) currentPasswordInput.value = '';
@@ -1911,6 +1915,7 @@
             const refreshDelay = document.getElementById('refreshDelaySeconds').value;
             const refreshCron = document.getElementById('refreshCron').value.trim();
             const appTimeZone = document.getElementById('settingsAppTimezone').value.trim();
+            const mailFetchTimeoutSeconds = parseInt(document.getElementById('mailFetchTimeoutSeconds')?.value || '120', 10);
             const strategy = document.querySelector('input[name="refreshStrategy"]:checked').value;
             const enableScheduled = document.getElementById('enableScheduledRefresh').checked;
             const showAccountCreatedAt = !!document.getElementById('settingsShowAccountCreatedAt')?.checked;
@@ -2029,6 +2034,10 @@
                 showToast('转发邮件时间范围必须在 0-10080 分钟之间', 'error');
                 return;
             }
+            if (Number.isNaN(mailFetchTimeoutSeconds) || mailFetchTimeoutSeconds < 30 || mailFetchTimeoutSeconds > 300) {
+                showToast('邮件获取超时必须在 30-300 秒之间', 'error');
+                return;
+            }
             if (forwardChannels.includes('smtp') && !smtpRecipient) {
                 showToast('启用 SMTP 转发时必须填写转发到邮箱', 'error');
                 return;
@@ -2093,6 +2102,7 @@
             settings.use_cron_schedule = strategy === 'cron';
             settings.enable_scheduled_refresh = enableScheduled;
             settings.app_timezone = appTimeZone;
+            settings.mail_fetch_timeout_seconds = mailFetchTimeoutSeconds;
             settings.show_account_created_at = showAccountCreatedAt;
             settings.show_account_sort_order = showAccountSortOrder;
             settings.show_group_id = showGroupId;
@@ -2174,6 +2184,7 @@
             }
 
             setAppTimeZone(appTimeZone);
+            setMailFetchTimeoutSeconds(mailFetchTimeoutSeconds);
             setShowAccountCreatedAt(showAccountCreatedAt);
             setShowAccountSortOrder(showAccountSortOrder);
             setShowGroupId(showGroupId);

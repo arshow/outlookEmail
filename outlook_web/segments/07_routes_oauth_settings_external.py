@@ -685,6 +685,7 @@ def api_get_settings():
     settings['cloudflare_ai_username_api_key_configured'] = bool(cloudflare_ai_api_key)
     settings['cloudflare_ai_username_api_key_masked'] = '********' if cloudflare_ai_api_key else ''
     settings['app_timezone'] = get_app_timezone()
+    settings['mail_fetch_timeout_seconds'] = str(get_mail_fetch_timeout_seconds())
     settings['show_account_created_at'] = get_setting('show_account_created_at', 'true')
     settings['show_account_sort_order'] = get_setting('show_account_sort_order', 'false')
     settings['show_group_id'] = get_setting('show_group_id', 'true')
@@ -1194,6 +1195,17 @@ def api_update_settings():
                 errors.append('保存转发邮件时间范围失败')
         except ValueError:
             errors.append('转发邮件时间范围必须是数字')
+
+    if MAIL_FETCH_TIMEOUT_SETTING_KEY in data:
+        mail_fetch_timeout_seconds = parse_mail_fetch_timeout_seconds(data[MAIL_FETCH_TIMEOUT_SETTING_KEY])
+        if mail_fetch_timeout_seconds is None:
+            errors.append(
+                f'邮件获取超时必须在 {MAIL_FETCH_TIMEOUT_MIN_SECONDS}-{MAIL_FETCH_TIMEOUT_MAX_SECONDS} 秒之间'
+            )
+        elif set_setting(MAIL_FETCH_TIMEOUT_SETTING_KEY, str(mail_fetch_timeout_seconds)):
+            updated.append('邮件获取超时')
+        else:
+            errors.append('保存邮件获取超时失败')
 
     if 'forward_include_junkemail' in data:
         include_junk = str(data['forward_include_junkemail']).lower()

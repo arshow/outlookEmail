@@ -1250,7 +1250,33 @@ def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str
                 )
             }
 
+        selected_exists = selected_imap_exists_count(folder_diagnostics)
         message_ids, search_mode, search_attempts = search_imap_message_ids(connection)
+
+        def reopen_oauth_session():
+            token = get_access_token_imap(client_id, refresh_token, proxy_url, fallback_proxy_urls)
+            if not token:
+                return None, 0
+            reopened = None
+            try:
+                with proxy_socket_context(proxy_url):
+                    reopened = imaplib.IMAP4_SSL(server, IMAP_PORT, timeout=IMAP_TIMEOUT)
+                auth_value = f"user={account}\1auth=Bearer {token}\1\1".encode('utf-8')
+                reopened.authenticate('XOAUTH2', lambda _unused: auth_value)
+                selected_name, reopened_diagnostics = resolve_imap_folder(
+                    reopened, 'outlook', folder, readonly=True, mailbox=mailbox
+                )
+                if not selected_name:
+                    raise RuntimeError('select failed')
+                return reopened, selected_imap_exists_count(reopened_diagnostics)
+            except Exception:
+                if reopened is not None:
+                    close_imap_list_connection(reopened, discard=True)
+                return None, 0
+
+        connection, message_ids, search_mode = finalize_imap_search_ids(
+            connection, message_ids, search_mode, search_attempts, selected_exists, reopen_oauth_session
+        )
         if message_ids is None:
             return {
                 "success": False,
@@ -1265,7 +1291,7 @@ def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str
         if not message_ids:
             return {"success": True, "emails": []}
 
-        # 计算分页范围。UID 不随文件夹插入而整体改号，避免同一封信被存成多个序号。
+        # 计算分页范围。对外 ID 使用 UID，序列号只用于当前页寻址。
         total = len(message_ids)
         start_idx = max(0, total - skip - top)
         end_idx = total - skip
@@ -1278,11 +1304,8 @@ def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str
         emails = []
         for msg_id in paged_ids:
             try:
-                status, msg_data, fetch_mode, _fetch_attempts = fetch_imap_message(
-                    connection,
-                    msg_id,
-                    '(FLAGS INTERNALDATE RFC822)',
-                    preferred_mode=search_mode or 'uid',
+                status, msg_data, _fetch_attempts = fetch_listed_imap_message(
+                    connection, msg_id, search_mode or 'uid'
                 )
                 if status != 'OK' or not msg_data:
                     continue
@@ -1291,24 +1314,27 @@ def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str
                     continue
                 internal_date = extract_imap_internaldate(fetch_response_text)
                 msg = email.message_from_bytes(raw_email)
-                message_id_text = msg_id.decode() if isinstance(msg_id, bytes) else str(msg_id)
                 emails.append({
-                    'id': message_id_text,
+                    'id': listed_imap_public_id(connection, msg_id, msg_data, search_mode or 'uid'),
                     'subject': decode_header_value(msg.get("Subject", "无主题")),
                     'from': decode_header_value(msg.get("From", "未知发件人")),
                     'to': decode_header_value(msg.get("To", "")),
                     'date': internal_date or msg.get("Date", "未知时间"),
-                    'id_mode': fetch_mode or search_mode or 'uid',
+                    'id_mode': 'uid',
                     'internet_message_id': normalize_internet_message_id(msg.get('Message-ID')),
                     'is_read': bool(re.search(r'\\Seen\b', fetch_response_text, flags=re.IGNORECASE)),
                     'is_flagged': bool(re.search(r'\\Flagged\b', fetch_response_text, flags=re.IGNORECASE)),
                     **list_item_body_fields(msg),
                 })
+            except ImapMessageIdentityError:
+                raise
             except Exception:
                 continue
 
         emails.sort(key=lambda item: parse_email_datetime(item.get('date')) or datetime.min, reverse=True)
         return {"success": True, "emails": emails}
+    except ImapMessageIdentityError as exc:
+        return imap_identity_error_result(exc)
     except Exception as exc:
         return {
             "success": False,
@@ -1322,16 +1348,13 @@ def get_emails_imap_with_server(account: str, client_id: str, refresh_token: str
             )
         }
     finally:
-        if connection:
-            try:
-                connection.logout()
-            except Exception:
-                pass
+        close_imap_list_connection(connection)
 
 
 def get_raw_email_imap(account: str, client_id: str, refresh_token: str, message_id: str,
                        folder: str = 'inbox', proxy_url: str = None,
-                       fallback_proxy_urls: Optional[List[str]] = None) -> Optional[bytes]:
+                       fallback_proxy_urls: Optional[List[str]] = None,
+                       preferred_id_mode: str = 'uid') -> Optional[bytes]:
     """使用 Outlook IMAP 获取原始 MIME 邮件源码。"""
     access_token = get_access_token_imap(client_id, refresh_token, proxy_url, fallback_proxy_urls)
     if not access_token:
@@ -1348,10 +1371,15 @@ def get_raw_email_imap(account: str, client_id: str, refresh_token: str, message
         if not selected_folder:
             return None
 
-        status, msg_data = connection.fetch(message_id.encode() if isinstance(message_id, str) else message_id, '(RFC822)')
-        if status != 'OK' or not msg_data or not msg_data[0]:
+        status, msg_data, _fetch_mode, _fetch_attempts = fetch_imap_message(
+            connection, message_id, '(RFC822)', preferred_mode=preferred_id_mode or 'uid'
+        )
+        if status != 'OK' or not msg_data:
             return None
-        return msg_data[0][1]
+        raw_email, _response_text = parse_imap_fetch_response(msg_data)
+        return raw_email
+    except ImapMessageIdentityError:
+        raise
     except Exception:
         return None
     finally:
@@ -1509,6 +1537,8 @@ def _get_email_detail_imap_result_once(account: str, client_id: str, refresh_tok
                 extract_imap_internaldate(fetch_response_text)
             ),
         }
+    except ImapMessageIdentityError as exc:
+        return imap_identity_error_result(exc)
     except Exception as exc:
         return {
             'success': False,
@@ -1884,7 +1914,8 @@ def get_message_attachment_by_id(msg, attachment_id: str) -> Optional[Dict[str, 
 
 def get_raw_email_imap_generic(email_addr: str, imap_password: str, imap_host: str,
                                imap_port: int, message_id: str, folder: str = 'inbox',
-                               provider: str = 'custom', proxy_url: str = '') -> Optional[bytes]:
+                               provider: str = 'custom', proxy_url: str = '',
+                               preferred_id_mode: str = 'uid') -> Optional[bytes]:
     """使用通用 IMAP 获取原始 MIME 邮件源码。"""
     if not message_id:
         return None
@@ -1901,11 +1932,14 @@ def get_raw_email_imap_generic(email_addr: str, imap_password: str, imap_host: s
             connection,
             str(message_id),
             '(RFC822)',
-            preferred_mode='uid'
+            preferred_mode=preferred_id_mode or 'uid'
         )
-        if status != 'OK' or not msg_data or not msg_data[0]:
+        if status != 'OK' or not msg_data:
             return None
-        return msg_data[0][1]
+        raw_email, _response_text = parse_imap_fetch_response(msg_data)
+        return raw_email
+    except ImapMessageIdentityError:
+        raise
     except Exception:
         return None
     finally:
@@ -2230,6 +2264,77 @@ def search_imap_message_ids(mail) -> tuple[Optional[List[bytes]], str, List[Dict
     return None, '', attempts
 
 
+def is_imap_search_protocol_rejection(attempts: List[Dict[str, Any]]) -> bool:
+    """SEARCH 是否全部被服务器用 NO/BAD 拒绝。连接仍可用时才能按序列号枚举。"""
+    if not attempts:
+        return False
+    return all(str(item.get('status') or '') in ('NO', 'BAD') for item in attempts)
+
+
+def is_imap_search_response_too_large(attempts: List[Dict[str, Any]]) -> bool:
+    """SEARCH ALL 是否超过 imaplib 单行 1MB 上限。超限后连接已失步，必须重连。"""
+    for item in attempts:
+        response = str(item.get('response') or '')
+        if 'got more than' in response and 'bytes' in response:
+            return True
+    return False
+
+
+def selected_imap_exists_count(folder_diagnostics: Dict[str, Any]) -> int:
+    selected_exists = 0
+    for attempt in reversed((folder_diagnostics or {}).get('select_attempts') or []):
+        if str(attempt.get('status') or '') == 'OK':
+            selected_exists = extract_imap_exists_count(attempt.get('response'))
+            if selected_exists > 0:
+                break
+    return selected_exists
+
+
+def finalize_imap_search_ids(mail, message_ids: Optional[List[bytes]], search_mode: str,
+                             attempts: List[Dict[str, Any]], selected_exists: int,
+                             reopen) -> tuple[Any, Optional[List[bytes]], str]:
+    """SEARCH 被拒绝或响应超限时，改为按当前文件夹 EXISTS 枚举序列号。"""
+    if message_ids is None:
+        if selected_exists > 0 and is_imap_search_protocol_rejection(attempts):
+            return mail, build_sequence_message_ids(selected_exists), 'sequence'
+        if selected_exists > 0 and is_imap_search_response_too_large(attempts):
+            new_mail, new_exists = reopen()
+            if new_mail is not None and new_exists > 0:
+                try:
+                    mail.logout()
+                except Exception:
+                    pass
+                return new_mail, build_sequence_message_ids(new_exists), 'sequence'
+        return mail, None, ''
+    if not message_ids and selected_exists > 0:
+        return mail, build_sequence_message_ids(selected_exists), 'sequence'
+    return mail, message_ids, search_mode or 'uid'
+
+
+def is_gmail_imap_host(imap_host: str) -> bool:
+    return str(imap_host or '').strip().lower().rstrip('.') in {'imap.gmail.com', 'imap.googlemail.com'}
+
+
+def close_imap_list_connection(mail, discard: bool = False) -> None:
+    """限制列表连接注销等待，避免异常网络把取信拖死。"""
+    try:
+        if mail is None or discard:
+            return
+        sock = getattr(mail, 'sock', None)
+        if sock is not None:
+            timeout = sock.gettimeout()
+            sock.settimeout(min(timeout, 1) if timeout is not None else 1)
+        mail.logout()
+    except Exception:
+        pass
+    finally:
+        if mail is not None and hasattr(mail, 'shutdown'):
+            try:
+                mail.shutdown()
+            except Exception:
+                pass
+
+
 def build_sequence_message_ids(total_messages: int) -> List[bytes]:
     if total_messages <= 0:
         return []
@@ -2300,70 +2405,186 @@ def parse_imap_fetch_response(data: Any) -> tuple[bytes | None, str]:
     return raw_email, ' '.join(fragment for fragment in response_fragments if fragment).strip()
 
 
-def fetch_imap_message(mail, message_id: Any, query: str, preferred_mode: str = 'uid') -> tuple[str, Any, str, List[Dict[str, Any]]]:
-    message_text = message_id.decode('utf-8', errors='ignore') if isinstance(message_id, (bytes, bytearray)) else str(message_id)
-    modes = [preferred_mode]
-    if preferred_mode != 'uid':
-        modes.append('uid')
-    if preferred_mode != 'sequence':
-        modes.append('sequence')
+class ImapMessageIdentityError(ValueError):
+    def __init__(self, message='邮件标识已失效，请刷新邮件列表后重试', code='IMAP_MESSAGE_ID_EXPIRED'):
+        super().__init__(message)
+        self.code = code
 
+
+def imap_identity_error_result(error: ImapMessageIdentityError) -> Dict[str, Any]:
+    return {'success': False, 'error': build_error_payload(
+        error.code, str(error), 'IMAPMessageIdentityError',
+        {'IMAP_MESSAGE_ID_EXPIRED': 409, 'EMAIL_NOT_FOUND': 404}.get(error.code, 502), '',
+    )}
+
+
+def imap_attempt_error(attempts: List[Dict[str, Any]], fallback: Dict[str, Any]) -> Dict[str, Any]:
+    if attempts and isinstance(attempts[0], dict) and isinstance(attempts[0].get('error'), dict):
+        return attempts[0]['error']
+    return fallback
+
+
+def get_imap_uidvalidity(mail) -> str:
+    responses = getattr(mail, 'untagged_responses', {})
+    values = responses.get('UIDVALIDITY') if isinstance(responses, dict) else None
+    value = values[-1] if isinstance(values, (list, tuple)) and values else values
+    value = value.decode('ascii', errors='ignore') if isinstance(value, bytes) else str(value or '')
+    return str(int(value)) if value.isdigit() and int(value) > 0 else ''
+
+
+def encode_imap_message_id(uid: str, uidvalidity: str) -> str:
+    return f'imap:{uidvalidity}:{uid}' if uidvalidity else uid
+
+
+def resolve_imap_message_uid(mail, message_id: Any, id_mode: str = 'uid') -> str:
+    if str(id_mode or 'uid').strip().lower() != 'uid':
+        raise ImapMessageIdentityError()
+    value = message_id.decode('ascii', errors='ignore') if isinstance(message_id, bytes) else str(message_id)
+    match = re.fullmatch(r'imap:([1-9]\d*):([1-9]\d*)', value)
+    if match:
+        validity, uid = match.groups()
+        if validity != get_imap_uidvalidity(mail):
+            raise ImapMessageIdentityError('邮箱标识已变化，请重新同步邮件列表后重试')
+        return uid
+    if re.fullmatch(r'[1-9]\d*', value):
+        # 只接受调用方明确标为 UID 的裸数字，不把旧序列号改标为 UID。
+        return value
+    raise ImapMessageIdentityError()
+
+
+def imap_response_uids(data: Any) -> set[str]:
+    uids = set()
+    for item in data or []:
+        metadata = item[0] if isinstance(item, tuple) else item
+        if isinstance(metadata, bytes):
+            uids.update(uid.decode('ascii') for uid in re.findall(rb'\bUID\s+([1-9]\d*)\b', metadata, re.IGNORECASE))
+    return uids
+
+
+def fetch_imap_message(mail, message_id: Any, query: str, preferred_mode: str = 'uid',
+                       allow_id_mode_fallback: bool = True) -> tuple[str, Any, str, List[Dict[str, Any]]]:
+    """只按 UID 取信。保留旧参数，但不再把同一个数字回退成序列号。"""
+    del allow_id_mode_fallback
+    uid = resolve_imap_message_uid(mail, message_id, preferred_mode)
     attempts: List[Dict[str, Any]] = []
-    for mode in modes:
-        try:
-            if mode == 'uid':
-                status, data = mail.uid('FETCH', message_id, query)
-            else:
-                status, data = mail.fetch(message_text, query)
-            payload_present = has_imap_fetch_payload(data)
-            attempts.append({
-                'mode': mode,
-                'status': str(status),
-                'response': sanitize_error_details(str(data or ''))[:200],
-                'payload_present': payload_present,
-            })
-            if status == 'OK' and payload_present:
-                return status, data, mode, attempts
-        except Exception as exc:
-            attempts.append({
-                'mode': mode,
-                'status': type(exc).__name__,
-                'response': sanitize_error_details(str(exc))[:200],
-            })
+    try:
+        status, data = mail.uid('FETCH', uid, query)
+        payload_present = has_imap_fetch_payload(data)
+        attempts.append({
+            'mode': 'uid',
+            'status': str(status),
+            'response': sanitize_error_details(str(data or ''))[:200],
+            'payload_present': payload_present,
+        })
+        if status == 'OK':
+            if not payload_present:
+                raise ImapMessageIdentityError('邮件已不存在，请刷新列表后重试', 'EMAIL_NOT_FOUND')
+            if imap_response_uids(data) != {uid}:
+                raise ImapMessageIdentityError('无法确认返回邮件的 UID，请刷新列表后重试')
+            return status, data, 'uid', attempts
+    except ImapMessageIdentityError:
+        raise
+    except Exception as exc:
+        attempts.append({
+            'mode': 'uid',
+            'status': type(exc).__name__,
+            'response': sanitize_error_details(str(exc))[:200],
+        })
     return 'NO', None, '', attempts
 
 
 def store_imap_message_flags(mail, message_id: Any, action: str = '+FLAGS.SILENT',
                              flags: str = r'(\Seen)',
                              preferred_mode: str = 'uid') -> tuple[bool, str, List[Dict[str, Any]]]:
-    message_text = message_id.decode('utf-8', errors='ignore') if isinstance(message_id, (bytes, bytearray)) else str(message_id)
-    modes = [preferred_mode]
-    if preferred_mode != 'uid':
-        modes.append('uid')
-    if preferred_mode != 'sequence':
-        modes.append('sequence')
-
     attempts: List[Dict[str, Any]] = []
-    for mode in modes:
-        try:
-            if mode == 'uid':
-                status, data = mail.uid('STORE', message_id, action, flags)
-            else:
-                status, data = mail.store(message_text, action, flags)
+    try:
+        uid = resolve_imap_message_uid(mail, message_id, preferred_mode)
+        # UID STORE 对不存在的 UID 也可能返回 OK，先确认目标存在，避免随后误 EXPUNGE。
+        status, data = mail.uid('FETCH', uid, '(UID)')
+        if status != 'OK':
             attempts.append({
-                'mode': mode,
+                'mode': 'uid',
+                'command': 'FETCH',
                 'status': str(status),
                 'response': sanitize_error_details(str(data or ''))[:200],
             })
-            if status == 'OK':
-                return True, mode, attempts
+            return False, '', attempts
+        if uid not in imap_response_uids(data):
+            raise ImapMessageIdentityError('邮件已不存在，请刷新列表后重试', 'EMAIL_NOT_FOUND')
+        status, data = mail.uid('STORE', uid, action, flags)
+        attempts.append({
+            'mode': 'uid',
+            'status': str(status),
+            'response': sanitize_error_details(str(data or ''))[:200],
+        })
+        if status == 'OK':
+            return True, 'uid', attempts
+    except ImapMessageIdentityError as exc:
+        attempts.append({
+            'mode': 'uid',
+            'status': 'IDENTITY_EXPIRED',
+            'error': imap_identity_error_result(exc)['error'],
+        })
+    except Exception as exc:
+        attempts.append({
+            'mode': 'uid',
+            'status': type(exc).__name__,
+            'response': sanitize_error_details(str(exc))[:200],
+        })
+    return False, '', attempts
+
+
+IMAP_LIST_FETCH_QUERY = '(UID FLAGS INTERNALDATE RFC822)'
+
+
+def fetch_listed_imap_message(mail, message_id: Any, search_mode: str) -> tuple[str, Any, List[Dict[str, Any]]]:
+    """列表分页可以按序列号寻址，但返回给调用方的 ID 必须是 UID。"""
+    if str(search_mode or 'uid') == 'sequence':
+        message_text = message_id.decode('utf-8', errors='ignore') if isinstance(message_id, (bytes, bytearray)) else str(message_id)
+        attempts: List[Dict[str, Any]] = []
+        try:
+            status, data = mail.fetch(message_text, IMAP_LIST_FETCH_QUERY)
         except Exception as exc:
             attempts.append({
-                'mode': mode,
+                'mode': 'sequence',
                 'status': type(exc).__name__,
                 'response': sanitize_error_details(str(exc))[:200],
             })
-    return False, '', attempts
+            return 'NO', None, attempts
+        payload_present = has_imap_fetch_payload(data)
+        attempts.append({
+            'mode': 'sequence',
+            'status': str(status),
+            'response': sanitize_error_details(str(data or ''))[:200],
+            'payload_present': payload_present,
+        })
+        if status != 'OK' or not payload_present:
+            return status, data, attempts
+        if len(imap_response_uids(data)) != 1:
+            raise ImapMessageIdentityError('服务器未返回邮件 UID，无法安全读取列表', 'IMAP_STABLE_ID_UNAVAILABLE')
+        return status, data, attempts
+
+    status, data, _mode, attempts = fetch_imap_message(
+        mail, message_id, IMAP_LIST_FETCH_QUERY, preferred_mode='uid'
+    )
+    return status, data, attempts
+
+
+def listed_imap_public_id(mail, requested_id: Any, data: Any, search_mode: str) -> str:
+    uids = imap_response_uids(data)
+    if str(search_mode or 'uid') == 'sequence':
+        uid = next(iter(uids))
+    else:
+        requested = requested_id.decode('ascii', errors='ignore') if isinstance(requested_id, bytes) else str(requested_id)
+        requested = requested.strip()
+        if uids and requested not in uids:
+            raise ImapMessageIdentityError('无法确认返回邮件的 UID，请刷新列表后重试')
+        uid = requested if re.fullmatch(r'[1-9]\d*', requested) else ''
+        if not uid and len(uids) == 1:
+            uid = next(iter(uids))
+        if not uid:
+            raise ImapMessageIdentityError('服务器未返回邮件 UID，无法安全读取列表', 'IMAP_STABLE_ID_UNAVAILABLE')
+    return encode_imap_message_id(uid, get_imap_uidvalidity(mail))
 
 
 def mark_email_items_seen_imap(mail, items: List[Dict[str, Any]], provider: str,
@@ -2431,7 +2652,7 @@ def mark_email_items_seen_imap(mail, items: List[Dict[str, Any]], provider: str,
 
             errors.append({
                 'id': item['id'],
-                'error': build_error_payload(
+                'error': imap_attempt_error(attempts, build_error_payload(
                     'EMAIL_MARK_READ_FAILED',
                     f'标记邮件{action_label}失败',
                     'IMAPStoreError',
@@ -2442,7 +2663,7 @@ def mark_email_items_seen_imap(mail, items: List[Dict[str, Any]], provider: str,
                         'message_id': item['id'],
                         'store_attempts': attempts[:10],
                     }
-                )
+                ))
             })
 
     total_count = sum(len(group) for group in grouped_items.values())
@@ -2519,7 +2740,7 @@ def mark_email_items_flagged_imap(mail, items: List[Dict[str, Any]], provider: s
                 continue
             errors.append({
                 'id': folder_item['id'],
-                'error': build_error_payload(
+                'error': imap_attempt_error(attempts, build_error_payload(
                     'EMAIL_MARK_FLAG_FAILED',
                     '标记邮件 Flag 失败',
                     'IMAPStoreError',
@@ -2531,7 +2752,7 @@ def mark_email_items_flagged_imap(mail, items: List[Dict[str, Any]], provider: s
                         'used_mode': used_mode,
                         'attempts': attempts,
                     }
-                )
+                ))
             })
 
     failed_count = len(errors)
@@ -2777,7 +2998,7 @@ def delete_email_items_imap(mail, items: List[Dict[str, Any]], provider: str,
 
             errors.append({
                 'id': item['id'],
-                'error': build_error_payload(
+                'error': imap_attempt_error(attempts, build_error_payload(
                     'EMAIL_DELETE_FAILED',
                     '删除邮件失败',
                     'IMAPStoreError',
@@ -2788,7 +3009,7 @@ def delete_email_items_imap(mail, items: List[Dict[str, Any]], provider: str,
                         'message_id': item['id'],
                         'store_attempts': attempts[:10],
                     }
-                )
+                ))
             })
 
         if not folder_deleted_ids:
@@ -2829,82 +3050,73 @@ def delete_email_items_imap(mail, items: List[Dict[str, Any]], provider: str,
 
 def move_imap_message_to_mailbox(mail, message_id: Any, destination_mailbox: str,
                                  preferred_mode: str = 'uid') -> tuple[bool, str, List[Dict[str, Any]]]:
-    """将单封邮件移到目标邮箱：优先 MOVE，失败则 COPY + \\Deleted + EXPUNGE。"""
-    message_text = message_id.decode('utf-8', errors='ignore') if isinstance(message_id, (bytes, bytearray)) else str(message_id)
+    """将单封邮件移到目标邮箱：只按 UID MOVE，失败则 UID COPY + \\Deleted + EXPUNGE。"""
     destination = str(destination_mailbox or '').strip()
-    if not message_text or not destination:
-        return False, '', [{'mode': preferred_mode, 'status': 'INVALID', 'response': 'empty message or destination'}]
-
-    modes = [preferred_mode]
-    if preferred_mode != 'uid':
-        modes.append('uid')
-    if preferred_mode != 'sequence':
-        modes.append('sequence')
-
     attempts: List[Dict[str, Any]] = []
-    for mode in modes:
-        if mode != 'uid':
-            continue
-        try:
-            status, data = mail.uid('MOVE', message_text, destination)
-            attempts.append({
-                'mode': mode,
-                'action': 'MOVE',
-                'status': str(status),
-                'response': sanitize_error_details(str(data or ''))[:200],
-            })
-            if status == 'OK':
-                return True, mode, attempts
-        except Exception as exc:
-            attempts.append({
-                'mode': mode,
-                'action': 'MOVE',
-                'status': type(exc).__name__,
-                'response': sanitize_error_details(str(exc))[:200],
-            })
+    if not destination:
+        return False, '', [{'mode': preferred_mode, 'status': 'INVALID', 'response': 'empty message or destination'}]
+    try:
+        uid = resolve_imap_message_uid(mail, message_id, preferred_mode)
+    except ImapMessageIdentityError as exc:
+        attempts.append({
+            'mode': str(preferred_mode or 'uid'),
+            'status': 'IDENTITY_EXPIRED',
+            'error': imap_identity_error_result(exc)['error'],
+        })
+        return False, '', attempts
 
-    for mode in modes:
-        try:
-            if mode == 'uid':
-                copy_status, copy_data = mail.uid('COPY', message_text, destination)
-            else:
-                copy_status, copy_data = mail.copy(message_text, destination)
-            attempts.append({
-                'mode': mode,
-                'action': 'COPY',
-                'status': str(copy_status),
-                'response': sanitize_error_details(str(copy_data or ''))[:200],
-            })
-            if copy_status != 'OK':
-                continue
+    try:
+        status, data = mail.uid('MOVE', uid, destination)
+        attempts.append({
+            'mode': 'uid',
+            'action': 'MOVE',
+            'status': str(status),
+            'response': sanitize_error_details(str(data or ''))[:200],
+        })
+        if status == 'OK':
+            return True, 'uid', attempts
+    except Exception as exc:
+        attempts.append({
+            'mode': 'uid',
+            'action': 'MOVE',
+            'status': type(exc).__name__,
+            'response': sanitize_error_details(str(exc))[:200],
+        })
 
+    try:
+        copy_status, copy_data = mail.uid('COPY', uid, destination)
+        attempts.append({
+            'mode': 'uid',
+            'action': 'COPY',
+            'status': str(copy_status),
+            'response': sanitize_error_details(str(copy_data or ''))[:200],
+        })
+        if copy_status == 'OK':
             store_ok, used_mode, store_attempts = store_imap_message_flags(
                 mail,
-                message_text,
+                uid,
                 action='+FLAGS.SILENT',
                 flags=r'(\Deleted)',
-                preferred_mode=mode,
+                preferred_mode='uid',
             )
             attempts.extend({**item, 'action': 'STORE_DELETED'} for item in store_attempts)
-            if not store_ok:
-                continue
-
-            expunge_status, expunge_data = mail.expunge()
-            attempts.append({
-                'mode': used_mode or mode,
-                'action': 'EXPUNGE',
-                'status': str(expunge_status),
-                'response': sanitize_error_details(str(expunge_data or ''))[:200],
-            })
-            if expunge_status == 'OK':
-                return True, used_mode or mode, attempts
-        except Exception as exc:
-            attempts.append({
-                'mode': mode,
-                'action': 'COPY_DELETE',
-                'status': type(exc).__name__,
-                'response': sanitize_error_details(str(exc))[:200],
-            })
+            if store_ok:
+                expunge_status, expunge_data = mail.expunge()
+                attempts.append({
+                    'mode': used_mode or 'uid',
+                    'action': 'EXPUNGE',
+                    'status': str(expunge_status),
+                    'response': sanitize_error_details(str(expunge_data or ''))[:200],
+                })
+                if expunge_status == 'OK':
+                    return True, used_mode or 'uid', attempts
+    except Exception as exc:
+        attempts.append({
+            'mode': 'uid',
+            'action': 'COPY_DELETE',
+            'status': type(exc).__name__,
+            'response': sanitize_error_details(str(exc))[:200],
+        })
 
     return False, '', attempts
 
@@ -3003,7 +3215,7 @@ def move_email_items_imap(mail, items: List[Dict[str, Any]], provider: str,
 
             errors.append({
                 'id': item['id'],
-                'error': build_error_payload(
+                'error': imap_attempt_error(attempts, build_error_payload(
                     'EMAIL_MOVE_FAILED',
                     '移动邮件失败',
                     'IMAPMoveError',
@@ -3015,7 +3227,7 @@ def move_email_items_imap(mail, items: List[Dict[str, Any]], provider: str,
                         'message_id': item['id'],
                         'move_attempts': attempts[:12],
                     }
-                )
+                ))
             })
 
     unique_moved = list(dict.fromkeys(moved_ids))
@@ -3214,26 +3426,44 @@ def get_emails_imap_generic(email_addr: str, imap_password: str, imap_host: str,
                             mailbox: Optional[str] = None) -> Dict[str, Any]:
     mail = None
     imap_id_info = {}
+    gmail_host = is_gmail_imap_host(imap_host)
     try:
         skip = max(0, int(skip or 0))
         top = max(1, int(top or 20))
-        mail = create_imap_connection(imap_host, imap_port, proxy_url)
-        try:
-            mail.login(email_addr, imap_password)
-        except imaplib.IMAP4.error as exc:
-            return {
-                'success': False,
-                'error': build_error_payload(
-                    'IMAP_AUTH_FAILED',
-                    normalize_imap_auth_error(provider, imap_host, str(exc)),
-                    'IMAPAuthError',
-                    401,
-                    ''
-                ),
-                'error_code': 'IMAP_AUTH_FAILED'
-            }
+        for attempt in range(2 if gmail_host else 1):
+            mail = create_imap_connection(imap_host, imap_port, proxy_url)
+            login_socket = getattr(mail, 'sock', None) if gmail_host else None
+            login_timeout = None
+            if login_socket is not None:
+                login_timeout = login_socket.gettimeout()
+                login_socket.settimeout(min(login_timeout, 15) if login_timeout is not None else 15)
+            try:
+                mail.login(email_addr, imap_password)
+            except (TimeoutError, imaplib.IMAP4.abort) as exc:
+                close_imap_list_connection(mail, discard=True)
+                mail = None
+                if not gmail_host or attempt > 0:
+                    raise
+                app.logger.warning('[imap] gmail login retry error_type=%s account=%s', type(exc).__name__, email_addr)
+                continue
+            except imaplib.IMAP4.error as exc:
+                return {
+                    'success': False,
+                    'error': build_error_payload(
+                        'IMAP_AUTH_FAILED',
+                        normalize_imap_auth_error(provider, imap_host, str(exc)),
+                        'IMAPAuthError',
+                        401,
+                        ''
+                    ),
+                    'error_code': 'IMAP_AUTH_FAILED'
+                }
+            if login_socket is not None:
+                login_socket.settimeout(login_timeout)
+            break
 
-        imap_id_info = send_imap_id(mail, provider, imap_host)
+        if not gmail_host:
+            imap_id_info = send_imap_id(mail, provider, imap_host)
         selected, folder_diagnostics = resolve_imap_folder(
             mail, provider, folder, readonly=True, mailbox=mailbox
         )
@@ -3263,14 +3493,30 @@ def get_emails_imap_generic(email_addr: str, imap_password: str, imap_host: str,
                 'error_code': 'IMAP_FOLDER_NOT_FOUND'
             }
 
-        selected_exists = 0
-        for attempt in reversed(folder_diagnostics.get('select_attempts') or []):
-            if str(attempt.get('status') or '') == 'OK':
-                selected_exists = extract_imap_exists_count(attempt.get('response'))
-                if selected_exists > 0:
-                    break
-
+        selected_exists = selected_imap_exists_count(folder_diagnostics)
         message_ids, search_mode, search_attempts = search_imap_message_ids(mail)
+
+        def reopen_generic_session():
+            reopened = None
+            try:
+                reopened = create_imap_connection(imap_host, imap_port, proxy_url)
+                reopened.login(email_addr, imap_password)
+                if not gmail_host:
+                    send_imap_id(reopened, provider, imap_host)
+                selected_name, reopened_diagnostics = resolve_imap_folder(
+                    reopened, provider, folder, readonly=True, mailbox=mailbox
+                )
+                if not selected_name:
+                    raise RuntimeError('select failed')
+                return reopened, selected_imap_exists_count(reopened_diagnostics)
+            except Exception:
+                if reopened is not None:
+                    close_imap_list_connection(reopened, discard=True)
+                return None, 0
+
+        mail, message_ids, search_mode = finalize_imap_search_ids(
+            mail, message_ids, search_mode, search_attempts, selected_exists, reopen_generic_session
+        )
         if message_ids is None:
             return {
                 'success': False,
@@ -3283,10 +3529,6 @@ def get_emails_imap_generic(email_addr: str, imap_password: str, imap_host: str,
                 ),
                 'error_code': 'IMAP_SEARCH_FAILED'
             }
-
-        if not message_ids and selected_exists > 0:
-            message_ids = build_sequence_message_ids(selected_exists)
-            search_mode = 'sequence'
 
         if not message_ids:
             return {'success': True, 'emails': [], 'method': 'IMAP (Generic)', 'has_more': False}
@@ -3301,8 +3543,8 @@ def get_emails_imap_generic(email_addr: str, imap_password: str, imap_host: str,
         emails_data = []
         for uid in paged_uids:
             try:
-                f_status, f_data, fetch_mode, _fetch_attempts = fetch_imap_message(
-                    mail, uid, '(FLAGS INTERNALDATE RFC822)', preferred_mode=search_mode or 'uid'
+                f_status, f_data, _fetch_attempts = fetch_listed_imap_message(
+                    mail, uid, search_mode or 'uid'
                 )
                 if f_status != 'OK' or not f_data:
                     continue
@@ -3313,18 +3555,20 @@ def get_emails_imap_generic(email_addr: str, imap_password: str, imap_host: str,
 
                 msg = email.message_from_bytes(raw_email)
                 emails_data.append({
-                    'id': uid.decode('utf-8', errors='ignore') if isinstance(uid, (bytes, bytearray)) else str(uid),
+                    'id': listed_imap_public_id(mail, uid, f_data, search_mode or 'uid'),
                     'subject': decode_header_value(msg.get('Subject', '无主题')),
                     'from': decode_header_value(msg.get('From', '未知')),
                     'to': decode_header_value(msg.get('To', '')),
                     'date': internal_date or msg.get('Date', ''),
-                    'id_mode': search_mode or 'uid',
+                    'id_mode': 'uid',
                     'internet_message_id': normalize_internet_message_id(msg.get('Message-ID')),
                     'is_read': bool(re.search(r'\\Seen\b', fetch_response_text, flags=re.IGNORECASE)),
                     'is_flagged': bool(re.search(r'\\Flagged\b', fetch_response_text, flags=re.IGNORECASE)),
                     'has_attachments': has_message_attachments(msg),
                     **list_item_body_fields(msg),
                 })
+            except ImapMessageIdentityError:
+                raise
             except Exception:
                 continue
 
@@ -3335,6 +3579,8 @@ def get_emails_imap_generic(email_addr: str, imap_password: str, imap_host: str,
             'method': 'IMAP (Generic)',
             'has_more': start_idx > 0
         }
+    except ImapMessageIdentityError as exc:
+        return imap_identity_error_result(exc)
     except Exception as exc:
         return {
             'success': False,
@@ -3350,17 +3596,14 @@ def get_emails_imap_generic(email_addr: str, imap_password: str, imap_host: str,
             'error_code': 'IMAP_CONNECT_FAILED'
         }
     finally:
-        if mail:
-            try:
-                mail.logout()
-            except Exception:
-                pass
+        close_imap_list_connection(mail)
 
 
 def get_email_detail_imap_generic_result(email_addr: str, imap_password: str, imap_host: str,
                                          imap_port: int = 993, message_id: str = '',
                                          folder: str = 'inbox', provider: str = 'custom',
-                                         proxy_url: str = '') -> Dict[str, Any]:
+                                         proxy_url: str = '',
+                                         preferred_id_mode: str = 'uid') -> Dict[str, Any]:
     if not message_id:
         return {'success': False, 'error': build_error_payload('EMAIL_DETAIL_INVALID', 'message_id 不能为空', 'ValidationError', 400, '')}
 
@@ -3409,7 +3652,7 @@ def get_email_detail_imap_generic_result(email_addr: str, imap_password: str, im
             }
 
         status, msg_data, _fetch_mode, _fetch_attempts = fetch_imap_message(
-            mail, str(message_id), '(RFC822)', preferred_mode='uid'
+            mail, str(message_id), '(RFC822)', preferred_mode=preferred_id_mode or 'uid'
         )
         if status != 'OK' or not msg_data:
             return {
@@ -3456,6 +3699,8 @@ def get_email_detail_imap_generic_result(email_addr: str, imap_password: str, im
             'success': True,
             'email': build_email_detail_from_message(msg, str(message_id))
         }
+    except ImapMessageIdentityError as exc:
+        return imap_identity_error_result(exc)
     except Exception as exc:
         return {'success': False, 'error': build_error_payload('IMAP_CONNECT_FAILED', sanitize_error_details(str(exc)) or 'IMAP 连接失败', 'IMAPConnectError', 502, '')}
     finally:
@@ -3557,6 +3802,8 @@ def download_email_attachment_imap_result(account: str, client_id: str, refresh_
             'content_type': attachment.get('content_type', 'application/octet-stream'),
             'content': attachment.get('content', b''),
         }
+    except ImapMessageIdentityError as exc:
+        return imap_identity_error_result(exc)
     except Exception as exc:
         return {
             'success': False,
@@ -3579,7 +3826,8 @@ def download_email_attachment_imap_result(account: str, client_id: str, refresh_
 def download_email_attachment_imap_generic_result(email_addr: str, imap_password: str, imap_host: str,
                                                   imap_port: int = 993, message_id: str = '',
                                                   attachment_id: str = '', folder: str = 'inbox',
-                                                  provider: str = 'custom', proxy_url: str = '') -> Dict[str, Any]:
+                                                  provider: str = 'custom', proxy_url: str = '',
+                                                  preferred_id_mode: str = 'uid') -> Dict[str, Any]:
     """使用通用 IMAP 下载邮件附件"""
     if not message_id or not attachment_id:
         return {'success': False, 'error': build_error_payload('ATTACHMENT_INVALID', '附件参数不完整', 'ValidationError', 400, '')}
@@ -3626,7 +3874,7 @@ def download_email_attachment_imap_generic_result(email_addr: str, imap_password
             }
 
         status, msg_data, _fetch_mode, fetch_attempts = fetch_imap_message(
-            mail, str(message_id), '(RFC822)', preferred_mode='uid'
+            mail, str(message_id), '(RFC822)', preferred_mode=preferred_id_mode or 'uid'
         )
         if status != 'OK' or not msg_data:
             return {
@@ -3686,6 +3934,8 @@ def download_email_attachment_imap_generic_result(email_addr: str, imap_password
             'content_type': attachment.get('content_type', 'application/octet-stream'),
             'content': attachment.get('content', b''),
         }
+    except ImapMessageIdentityError as exc:
+        return imap_identity_error_result(exc)
     except Exception as exc:
         return {
             'success': False,

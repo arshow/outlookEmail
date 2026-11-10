@@ -36,7 +36,7 @@ from pathlib import Path, PurePosixPath
 from typing import Optional, List, Dict, Any
 from urllib.parse import quote, urlparse, unquote
 from zoneinfo import ZoneInfo
-from flask import Flask, render_template, request, jsonify, g, session, redirect, url_for, Response, make_response
+from flask import Flask, render_template, request, jsonify, g, session, redirect, url_for, Response, make_response, has_app_context
 from functools import wraps
 import requests
 from cryptography.fernet import Fernet
@@ -172,11 +172,22 @@ IMAP_SERVER_NEW = "outlook.live.com"
 IMAP_PORT = 993
 HTTP_REQUEST_TIMEOUT = int(os.getenv("HTTP_REQUEST_TIMEOUT", "30"))
 IMAP_TIMEOUT = int(os.getenv("IMAP_TIMEOUT", "45"))
+MAIL_FETCH_TIMEOUT_SETTING_KEY = 'mail_fetch_timeout_seconds'
+MAIL_FETCH_TIMEOUT_DEFAULT_SECONDS = 120
+MAIL_FETCH_TIMEOUT_MIN_SECONDS = 30
+MAIL_FETCH_TIMEOUT_MAX_SECONDS = 300
 DEFAULT_APP_TIMEZONE = (os.getenv("APP_TIMEZONE", "Asia/Shanghai") or "Asia/Shanghai").strip()
 FALLBACK_APP_TIMEZONE = "UTC"
-MAIL_FETCH_OVERALL_TIMEOUT = int(
-    os.getenv("MAIL_FETCH_OVERALL_TIMEOUT", str(max(HTTP_REQUEST_TIMEOUT, IMAP_TIMEOUT) + 5))
-)
+try:
+    MAIL_FETCH_OVERALL_TIMEOUT = max(
+        MAIL_FETCH_TIMEOUT_MIN_SECONDS,
+        min(
+            MAIL_FETCH_TIMEOUT_MAX_SECONDS,
+            int(os.getenv("MAIL_FETCH_OVERALL_TIMEOUT", str(MAIL_FETCH_TIMEOUT_DEFAULT_SECONDS))),
+        ),
+    )
+except (TypeError, ValueError):
+    MAIL_FETCH_OVERALL_TIMEOUT = MAIL_FETCH_TIMEOUT_DEFAULT_SECONDS
 
 try:
     with resource_path('VERSION').open('r', encoding='utf-8') as version_file:
@@ -2047,6 +2058,17 @@ def init_db():
     if 'sender_email' not in retained_normal_mail_columns:
         cursor.execute("ALTER TABLE retained_normal_mail_messages ADD COLUMN sender_email TEXT NOT NULL DEFAULT ''")
 
+    if not cursor.execute("SELECT 1 FROM settings WHERE key = 'imap_uid_identity_cache_migrated'").fetchone():
+        # 旧 IMAP 缓存可能把序列号当成 UID。失效后重新同步，原始正文记录保留。
+        cursor.execute('''
+            UPDATE retained_normal_mail_messages
+            SET list_cached = 0, body_cached = 0, body_preview = ''
+            WHERE id_mode = 'sequence'
+               OR (id_mode = 'uid' AND provider_message_id NOT LIKE 'imap:%')
+               OR (id_mode = '' AND account_id IN (SELECT id FROM accounts WHERE account_type = 'imap'))
+        ''')
+        cursor.execute("INSERT INTO settings (key, value) VALUES ('imap_uid_identity_cache_migrated', '1')")
+
     cursor.execute("PRAGMA table_info(project_accounts)")
     project_account_columns = [col[1] for col in cursor.fetchall()]
     if project_account_columns:
@@ -2939,6 +2961,38 @@ def get_all_settings() -> Dict[str, str]:
     cursor = db.execute('SELECT key, value FROM settings')
     rows = cursor.fetchall()
     return {row['key']: row['value'] for row in rows}
+
+
+def parse_mail_fetch_timeout_seconds(value: Any) -> Optional[int]:
+    """解析用户配置的邮件获取超时秒数。"""
+    try:
+        seconds = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if seconds < MAIL_FETCH_TIMEOUT_MIN_SECONDS or seconds > MAIL_FETCH_TIMEOUT_MAX_SECONDS:
+        return None
+    return seconds
+
+
+def normalize_mail_fetch_timeout_seconds(value: Any, default: int = MAIL_FETCH_TIMEOUT_DEFAULT_SECONDS) -> int:
+    """将邮件获取超时秒数限制在 30-300 秒。"""
+    try:
+        seconds = int(str(value).strip())
+    except (TypeError, ValueError):
+        seconds = default
+    return max(MAIL_FETCH_TIMEOUT_MIN_SECONDS, min(MAIL_FETCH_TIMEOUT_MAX_SECONDS, seconds))
+
+
+def get_mail_fetch_timeout_seconds() -> int:
+    """读取邮件列表整体超时。已保存的系统设置优先于环境变量。"""
+    configured_value = ''
+    if has_app_context():
+        configured_value = str(get_setting(MAIL_FETCH_TIMEOUT_SETTING_KEY, '') or '').strip()
+    if configured_value:
+        return normalize_mail_fetch_timeout_seconds(configured_value)
+    return normalize_mail_fetch_timeout_seconds(
+        os.getenv('MAIL_FETCH_OVERALL_TIMEOUT', MAIL_FETCH_TIMEOUT_DEFAULT_SECONDS)
+    )
 
 
 # ==================== 皮肤管理 ====================

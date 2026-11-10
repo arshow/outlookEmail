@@ -2037,6 +2037,48 @@ def api_get_refresh_status_list():
 
 # ==================== Email Deletion Helpers ====================
 
+_GRAPH_DELETE_REAUTH_MARKERS = (
+    'authorization_requestdenied',
+    'erroraccessdenied',
+    'access is denied',
+    'insufficient privileges',
+    'authorization has been denied',
+    'mail.readwrite',
+)
+
+
+def is_graph_delete_reauthorization_error(status_code: Any, error_body: Any) -> bool:
+    """删除失败是否因为缺少写权限或授权失效。"""
+    try:
+        code = int(status_code or 0)
+    except (TypeError, ValueError):
+        code = 0
+    if code in {401, 403}:
+        return True
+    try:
+        details_text = json.dumps(error_body, ensure_ascii=True).lower()
+    except Exception:
+        details_text = str(error_body or '').lower()
+    return any(marker in details_text for marker in _GRAPH_DELETE_REAUTH_MARKERS)
+
+
+def graph_delete_error_text(status_code: Any, error_body: Any) -> str:
+    if isinstance(error_body, str):
+        details = error_body.strip()
+    else:
+        try:
+            details = json.dumps(error_body, ensure_ascii=False)
+        except Exception:
+            details = str(error_body or '')
+    details = sanitize_error_details(details)[:300]
+    if is_graph_delete_reauthorization_error(status_code, error_body):
+        message = '删除邮件失败：账号缺少邮件写权限（Mail.ReadWrite）或授权已失效，请对该账号重新授权后重试'
+        return f'{message}（{details}）' if details else message
+    if details:
+        return f'删除邮件失败：{details}'
+    return f'删除邮件失败（Status: {status_code}）'
+
+
 def delete_emails_graph(client_id: str, refresh_token: str, message_ids: List[str], proxy_url: str = None,
                         fallback_proxy_urls: List[str] = None) -> Dict[str, Any]:
     """通过 Graph API 批量删除邮件（永久删除）"""
@@ -2095,22 +2137,56 @@ def delete_emails_graph(client_id: str, refresh_token: str, message_ids: List[st
                 results = response.json().get("responses", [])
                 for res in results:
                     msg_id = batch[int(res['id'])]
-                    if res.get("status") in [200, 204]:
+                    status_code = int(res.get("status") or 0)
+                    if status_code in (200, 204):
                         success_count += 1
                         deleted_ids.append(str(msg_id))
                     else:
                         failed_count += 1
-                        # 记录具体错误
-                        errors.append(f"Msg ID: {msg_id}, Status: {res.get('status')}")
+                        error_body = res.get('body') or ''
+                        message = graph_delete_error_text(status_code, error_body)
+                        errors.append({
+                            'id': str(msg_id),
+                            'error': build_error_payload(
+                                'EMAIL_DELETE_REAUTH_REQUIRED' if is_graph_delete_reauthorization_error(status_code, error_body) else 'EMAIL_DELETE_FAILED',
+                                message,
+                                'GraphAPIError',
+                                status_code or 500,
+                                error_body or '批处理返回空响应',
+                            ),
+                        })
             else:
                 failed_count += len(batch)
-                errors.append(f"Batch request failed: {response.text}")
+                error_body = get_response_details(response)
+                message = graph_delete_error_text(response.status_code, error_body)
+                error_payload = build_error_payload(
+                    'EMAIL_DELETE_REAUTH_REQUIRED' if is_graph_delete_reauthorization_error(response.status_code, error_body) else 'EMAIL_DELETE_FAILED',
+                    message,
+                    'GraphAPIError',
+                    response.status_code,
+                    error_body,
+                )
+                errors.extend({'id': str(message_id), 'error': error_payload} for message_id in batch)
 
         except Exception as e:
             failed_count += len(batch)
-            errors.append(f"Network error: {str(e)}")
+            error_payload = build_error_payload(
+                'EMAIL_DELETE_FAILED',
+                f'删除邮件失败：{sanitize_error_details(str(e))[:300]}',
+                type(e).__name__,
+                500,
+                str(e),
+            )
+            errors.extend({'id': str(message_id), 'error': error_payload} for message_id in batch)
 
-    return {
+    first_error = ''
+    if errors:
+        nested = errors[0].get('error') if isinstance(errors[0], dict) else errors[0]
+        if isinstance(nested, dict):
+            first_error = str(nested.get('message') or '')
+        else:
+            first_error = str(nested or '')
+    result = {
         "success": failed_count == 0,
         "success_count": success_count,
         "failed_count": failed_count,
@@ -2118,6 +2194,9 @@ def delete_emails_graph(client_id: str, refresh_token: str, message_ids: List[st
         "updated_ids": deleted_ids,
         "errors": errors,
     }
+    if first_error:
+        result['error'] = first_error
+    return result
 
 
 def move_emails_graph(client_id: str, refresh_token: str, message_ids: List[str],
@@ -3718,7 +3797,8 @@ def fetch_imap_account_detail_response(account: Dict[str, Any], folder: str,
         message_id,
         folder,
         account.get('provider', 'custom'),
-        proxy_url
+        proxy_url,
+        id_mode or 'uid',
     )
     if detail_result.get('success'):
         return build_retained_detail_success_response(
@@ -4707,8 +4787,9 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
             )
             for folder_job in folder_jobs
         }
+        mail_fetch_timeout_seconds = get_mail_fetch_timeout_seconds()
         try:
-            done, not_done = wait(future_map.values(), timeout=MAIL_FETCH_OVERALL_TIMEOUT)
+            done, not_done = wait(future_map.values(), timeout=mail_fetch_timeout_seconds)
             for folder_job, future in future_map.items():
                 if future in done:
                     try:
@@ -4734,7 +4815,7 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
                         '获取邮件超时，请稍后重试',
                         'TimeoutError',
                         504,
-                        f'folder={folder_job}, timeout={MAIL_FETCH_OVERALL_TIMEOUT}s'
+                        f'folder={folder_job}, timeout={mail_fetch_timeout_seconds}s'
                     )
                 }
         finally:
@@ -5616,27 +5697,41 @@ def api_get_raw_email(email_addr, message_id):
     proxy_url = get_account_proxy_url(account)
     fallback_proxy_urls = get_account_proxy_failover_urls(account)
 
+    id_mode = str(request.args.get('id_mode') or 'uid').strip().lower() or 'uid'
     raw_content = None
-    if account.get('account_type') == 'imap':
-        raw_content = get_raw_email_imap_generic(
-            account['email'],
-            account.get('imap_password', ''),
-            account.get('imap_host', ''),
-            account.get('imap_port', 993),
-            message_id,
-            folder,
-            account.get('provider', 'custom'),
-            proxy_url
-        )
-    elif method == 'graph':
-        raw_content = get_raw_email_graph(
-            account['client_id'],
-            account['refresh_token'],
-            message_id,
-            proxy_url,
-            fallback_proxy_urls,
-        )
-        if raw_content is None:
+    try:
+        if account.get('account_type') == 'imap':
+            raw_content = get_raw_email_imap_generic(
+                account['email'],
+                account.get('imap_password', ''),
+                account.get('imap_host', ''),
+                account.get('imap_port', 993),
+                message_id,
+                folder,
+                account.get('provider', 'custom'),
+                proxy_url,
+                id_mode,
+            )
+        elif method == 'graph':
+            raw_content = get_raw_email_graph(
+                account['client_id'],
+                account['refresh_token'],
+                message_id,
+                proxy_url,
+                fallback_proxy_urls,
+            )
+            if raw_content is None:
+                raw_content = get_raw_email_imap(
+                    account['email'],
+                    account['client_id'],
+                    account['refresh_token'],
+                    message_id,
+                    folder,
+                    proxy_url,
+                    fallback_proxy_urls,
+                    id_mode,
+                )
+        else:
             raw_content = get_raw_email_imap(
                 account['email'],
                 account['client_id'],
@@ -5645,17 +5740,10 @@ def api_get_raw_email(email_addr, message_id):
                 folder,
                 proxy_url,
                 fallback_proxy_urls,
+                id_mode,
             )
-    else:
-        raw_content = get_raw_email_imap(
-            account['email'],
-            account['client_id'],
-            account['refresh_token'],
-            message_id,
-            folder,
-            proxy_url,
-            fallback_proxy_urls,
-        )
+    except ImapMessageIdentityError as exc:
+        return jsonify(imap_identity_error_result(exc))
 
     if raw_content is None:
         return jsonify({'success': False, 'error': '获取原始邮件失败'})
@@ -5865,7 +5953,8 @@ def download_email_attachment_for_account(account, method, message_id, attachmen
             attachment_id,
             folder,
             account.get('provider', 'custom'),
-            proxy_url
+            proxy_url,
+            id_mode or 'uid',
         )
 
     if method == 'graph':
@@ -5901,7 +5990,8 @@ def get_email_attachment_metadata_for_download(account, method, message_id, fold
             message_id,
             folder,
             account.get('provider', 'custom'),
-            proxy_url
+            proxy_url,
+            id_mode or 'uid',
         )
         if detail_result.get('success'):
             return {'success': True, 'attachments': detail_result.get('email', {}).get('attachments', [])}

@@ -670,6 +670,7 @@ def process_forwarding_account(account_row: Dict[str, Any], job_config: Dict[str
                         folder_duration_ms,
                         folder_result.get('error') or 'unknown',
                     )
+                    conn.commit()
                     continue
                 emails.extend(folder_result.get('emails', []))
 
@@ -733,6 +734,7 @@ def process_forwarding_account(account_row: Dict[str, Any], job_config: Dict[str
                         account.get('email', ''),
                         item.get('id', ''),
                     )
+                    conn.commit()
                     continue
 
                 title, plain, html_body, telegram_text, wecom_text = build_forward_payload(account, detail)
@@ -756,6 +758,7 @@ def process_forwarding_account(account_row: Dict[str, Any], job_config: Dict[str
                     if processed:
                         message_processed = True
                     message_failed = message_failed or failed
+                    conn.commit()
 
                 if job_config.get('telegram_enabled'):
                     processed, failed, duration_ms, sent = send_forward_channel(
@@ -772,6 +775,7 @@ def process_forwarding_account(account_row: Dict[str, Any], job_config: Dict[str
                     if processed:
                         message_processed = True
                     message_failed = message_failed or failed
+                    conn.commit()
 
                 if job_config.get('wecom_enabled'):
                     processed, failed, duration_ms, sent = send_forward_channel(
@@ -788,6 +792,7 @@ def process_forwarding_account(account_row: Dict[str, Any], job_config: Dict[str
                     if processed:
                         message_processed = True
                     message_failed = message_failed or failed
+                    conn.commit()
 
                 if message_failed:
                     result['had_processing_failure'] = True

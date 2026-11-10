@@ -6,7 +6,15 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Fixed
+- IMAP 邮件身份改为 UID，并在服务器提供 `UIDVALIDITY` 时使用 `imap:<UIDVALIDITY>:<UID>`。详情、原文、附件、已读、删除和移动不再在 UID 与序列号之间回退；旧序列号会要求重新同步。首次启动会把可能错配的旧 IMAP 缓存标记失效，并保留原始正文记录。
+- IMAP `SEARCH` 被服务器拒绝，或 `SEARCH ALL` 超过单行读取上限时，重连后按序列号只取当前页，避免整箱无法浏览。
+- 后台转发在文件夹拉取失败、详情失败和每个通知渠道结束后立即提交，已成功的渠道记录不会被后续异常回滚。
+- Graph 批量删除失败时保留服务端错误详情；缺少 `Mail.ReadWrite` 或授权失效时提示重新授权。
+- Gmail IMAP 登录最多重试一次，并限制列表连接注销等待，减少异常网络下的取信卡顿。
+
 ### Added
+- 普通 Outlook/IMAP 邮件列表整体超时可在「常规设置 → 邮件获取超时」中设置，范围 30-300 秒，默认 120 秒。环境变量 `MAIL_FETCH_OVERALL_TIMEOUT` 只作为尚未保存该设置时的初始值；前端请求再增加 10 秒缓冲。
 - Outlook OAuth 账号新增 `authorization_type`（`graph` / `imap`，空值表示未设置）：记录首选或最近成功的邮件授权通道。
 - 编辑账号弹窗可查看和修改授权类型；未设置时取信与 Token 刷新默认 Graph 优先。
 - 拉信、邮件详情和 Token 刷新按记录通道优先尝试，失败后自动回退到另一通道，并写回实际成功通道。

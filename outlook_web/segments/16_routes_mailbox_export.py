@@ -631,46 +631,65 @@ def list_imap_export_refs(account: Dict[str, Any], target: Dict[str, Any], ctx: 
     connection = selected['connection']
     diagnostics = selected.get('diagnostics') or {}
     try:
-        message_ids, search_mode, _attempts = search_imap_message_ids(connection)
+        message_ids, search_mode, search_attempts = search_imap_message_ids(connection)
     except Exception as exc:
         close_export_imap(ctx)
         return {'success': False, 'error': sanitize_error_details(str(exc))[:200] or '搜索邮件失败', 'refs': []}
+
+    selected_exists = selected_imap_exists_count(diagnostics)
+    truncated = False
+    if message_ids is None and selected_exists > 0 and is_imap_search_response_too_large(search_attempts):
+        close_export_imap(ctx)
+        selected = select_export_imap_folder(account, target, ctx)
+        if not selected.get('success'):
+            return {'success': False, 'error': selected.get('error') or '搜索邮件失败', 'refs': []}
+        connection = selected['connection']
+        diagnostics = selected.get('diagnostics') or {}
+        selected_exists = selected_imap_exists_count(diagnostics)
+        message_ids = build_sequence_message_ids(selected_exists) if selected_exists > 0 else None
+        search_mode = 'sequence'
+    elif message_ids is None and selected_exists > 0 and is_imap_search_protocol_rejection(search_attempts):
+        message_ids = build_sequence_message_ids(selected_exists)
+        search_mode = 'sequence'
+    elif not message_ids and selected_exists > 0:
+        message_ids = build_sequence_message_ids(selected_exists)
+        search_mode = 'sequence'
     if message_ids is None:
         return {'success': False, 'error': '搜索邮件失败', 'refs': []}
-
-    truncated = False
-    if not message_ids:
-        selected_exists = 0
-        for attempt in reversed(diagnostics.get('select_attempts') or []):
-            if str(attempt.get('status') or '') == 'OK':
-                selected_exists = extract_imap_exists_count(attempt.get('response'))
-                if selected_exists > 0:
-                    break
-        if selected_exists > 0:
-            start = max(1, selected_exists - max(1, limit) + 1)
-            message_ids = [str(index).encode('utf-8') for index in range(start, selected_exists + 1)]
-            search_mode = 'sequence'
-            truncated = selected_exists > limit
 
     ordered = list(reversed(message_ids))
     if len(ordered) > limit:
         ordered = ordered[:limit]
         truncated = True
     refs = []
-    for message_id in ordered:
-        text = message_id.decode('utf-8', errors='ignore') if isinstance(message_id, (bytes, bytearray)) else str(message_id)
-        text = text.strip()
-        if not text:
-            continue
-        refs.append({
-            'target': target,
-            'id': text,
-            'id_mode': search_mode or 'uid',
-            'channel': 'imap',
-            'subject': '',
-            'from': '',
-            'date': '',
-        })
+    try:
+        uidvalidity = get_imap_uidvalidity(connection)
+        for message_id in ordered:
+            text = message_id.decode('utf-8', errors='ignore') if isinstance(message_id, (bytes, bytearray)) else str(message_id)
+            text = text.strip()
+            if not text:
+                continue
+            if search_mode == 'sequence':
+                status, data = connection.fetch(text, '(UID)')
+                uids = imap_response_uids(data)
+                if status != 'OK' or len(uids) != 1:
+                    raise ImapMessageIdentityError('服务器未返回邮件 UID，无法安全导出')
+                public_id = encode_imap_message_id(next(iter(uids)), uidvalidity)
+            else:
+                if not re.fullmatch(r'[1-9]\d*', text):
+                    continue
+                public_id = encode_imap_message_id(text, uidvalidity)
+            refs.append({
+                'target': target,
+                'id': public_id,
+                'id_mode': 'uid',
+                'channel': 'imap',
+                'subject': '',
+                'from': '',
+                'date': '',
+            })
+    except ImapMessageIdentityError as exc:
+        return {'success': False, 'error': str(exc), 'refs': []}
     return {'success': True, 'refs': refs, 'truncated': truncated, 'error': ''}
 
 
