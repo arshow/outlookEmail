@@ -2,6 +2,7 @@ import importlib
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 os.environ.setdefault('SECRET_KEY', 'test-secret-key')
@@ -81,6 +82,27 @@ class SourceForwardingRuleTests(unittest.TestCase):
         self.assertEqual(route['keywords'], '发票')
         self.assertEqual(route['path'][0]['mode'], 'inherit')
         self.assertEqual(route['path'][1]['scope_type'], 'group')
+
+    def test_named_telegram_channel_sends_html(self):
+        captured = {}
+
+        class Response:
+            ok = True
+
+        def capture(url, json=None, **kwargs):
+            captured['url'] = url
+            captured['json'] = json
+            return Response()
+
+        with patch.object(web_outlook_app, 'post_with_proxy_fallback', side_effect=capture):
+            sent = web_outlook_app.send_forward_telegram_with_config(
+                {'bot_token': 'token', 'chat_id': '100', 'topic_id': '', 'proxy_url': ''},
+                '<b>【HS_310 UK T5】</b>\n新邮件转发',
+            )
+
+        self.assertTrue(sent)
+        self.assertEqual(captured['json']['parse_mode'], 'HTML')
+        self.assertIn('<b>【HS_310 UK T5】</b>', captured['json']['text'])
 
 
 if __name__ == '__main__':

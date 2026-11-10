@@ -346,6 +346,7 @@ def send_forward_telegram_with_config(config: Dict[str, Any], text: str) -> bool
         str(config.get('topic_id', '') or '').strip(),
         str(config.get('proxy_url', '') or '').strip(),
         text,
+        parse_mode='HTML',
     )
 
 
