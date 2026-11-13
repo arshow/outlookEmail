@@ -149,7 +149,9 @@
 
     <section class="mail-fetch-tasks-panel" id="mailFetchTasksPanel" aria-label="收信任务进度" hidden>
         <div class="mail-fetch-tasks-panel-heading">
-            <div><strong>收信任务</strong><p>完成后保留记录，点击关闭按钮收起</p></div>
+            <div><strong>收信任务</strong><p>刷新后自动恢复记录和查询，点击关闭按钮收起</p>
+                <p id="mailFetchTasksStorageWarning" hidden>浏览器未允许保存任务，刷新后可能无法恢复。</p>
+            </div>
             <button class="mail-fetch-tasks-close" type="button" aria-label="关闭收信任务面板"
                 onclick="toggleMailFetchTasks(false)">×</button>
         </div>
