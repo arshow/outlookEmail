@@ -129,22 +129,48 @@ function toggleMailFetchTasks(open) {
     renderMailFetchTasks();
 }
 
+function removeManualMailTaskRecord(task) {
+    try {
+        window.localStorage.removeItem(MAIL_TASK_STORAGE_PREFIX + task.id);
+    } catch (_) {
+        const warning = document.getElementById('mailFetchTasksStorageWarning');
+        if (warning) warning.hidden = false;
+        return false;
+    }
+    manualMailTasks.delete(task.id);
+    savedManualMailTasks.delete(task.id);
+    manualMailTaskCards.get(task.id)?.card.remove();
+    manualMailTaskCards.delete(task.id);
+    return true;
+}
+
+function deleteManualMailTask(id) {
+    const task = manualMailTasks.get(id);
+    if (!task || task.state === 'running') return;
+    removeManualMailTaskRecord(task);
+    renderMailFetchTasks();
+}
+
+function clearCompletedMailTasks() {
+    for (const task of manualMailTasks.values()) {
+        if (task.state !== 'running') removeManualMailTaskRecord(task);
+    }
+    renderMailFetchTasks();
+}
+
 function renderMailFetchTasks() {
     const panel = document.getElementById('mailFetchTasksPanel');
     const trigger = document.getElementById('mailFetchTasksButton');
     const badge = document.getElementById('mailFetchTasksBadge');
     const list = document.getElementById('mailFetchTasksList');
     const empty = document.getElementById('mailFetchTasksEmpty');
+    const clear = document.getElementById('mailFetchTasksClear');
     if (!panel || !list) return;
     const completed = [...manualMailTasks.values()].filter(task => task.state !== 'running')
         .sort((left, right) => left.finishedAt - right.finishedAt);
     while (completed.length > 20) {
         const task = completed.shift();
-        manualMailTasks.delete(task.id);
-        try { window.localStorage.removeItem(MAIL_TASK_STORAGE_PREFIX + task.id); } catch (_) { /* Keep UI usable. */ }
-        savedManualMailTasks.delete(task.id);
-        manualMailTaskCards.get(task.id)?.card.remove();
-        manualMailTaskCards.delete(task.id);
+        removeManualMailTaskRecord(task);
     }
     const running = [...manualMailTasks.values()].filter(task => task.state === 'running').length;
     panel.hidden = !mailFetchTasksOpen;
@@ -154,6 +180,7 @@ function renderMailFetchTasks() {
     badge.hidden = manualMailTasks.size === 0;
     badge.textContent = running || manualMailTasks.size;
     if (empty) empty.hidden = manualMailTasks.size !== 0;
+    if (clear) clear.disabled = ![...manualMailTasks.values()].some(task => task.state !== 'running');
     const states = { running: '进行中', completed: '已完成', partial: '部分失败', failed: '失败' };
     for (const task of [...manualMailTasks.values()].reverse()) {
         let nodes = manualMailTaskCards.get(task.id);
@@ -173,12 +200,16 @@ function renderMailFetchTasks() {
                 bar: element('progress', '', card),
                 summary: element('div', 'mail-fetch-task-summary', card),
                 current: element('div', 'mail-fetch-task-current', card),
-                error: element('button', 'mail-fetch-task-error', card)
+                error: element('button', 'mail-fetch-task-error', card),
+                remove: element('button', 'mail-fetch-task-delete', card)
             };
             nodes.bar.setAttribute('aria-label', '任务真实进度');
             nodes.error.type = 'button';
             nodes.error.textContent = '查看错误详情';
             nodes.error.addEventListener('click', () => showEmailFetchErrorModal(task.errorDetails));
+            nodes.remove.type = 'button';
+            nodes.remove.textContent = '删除记录';
+            nodes.remove.addEventListener('click', () => deleteManualMailTask(task.id));
             list.prepend(card);
             manualMailTaskCards.set(task.id, nodes);
         }
@@ -205,6 +236,7 @@ function renderMailFetchTasks() {
             ? `${active.length ? `正在获取：${active.join('、')}` : '正在整理邮件…'} · 本批已读取 ${snapshot?.fetched || 0} 封`
             : task.message;
         nodes.error.hidden = !task.errorDetails || task.state === 'running';
+        nodes.remove.hidden = task.state === 'running';
     }
 }
 

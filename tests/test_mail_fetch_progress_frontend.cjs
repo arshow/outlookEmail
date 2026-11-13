@@ -24,11 +24,11 @@ function setup(aggregated = false, storage = memoryStorage(), createTask = true)
             appendChild(child) { child.parent = this; this.children.push(child); },
             prepend(child) { child.remove(); child.parent = this; this.children.unshift(child); },
             remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); },
-            addEventListener() {}
+            addEventListener(name, callback) { this[name] = callback; }
         };
     }
     const elements = {};
-    for (const id of ['Panel', 'Button', 'Badge', 'List', 'Empty']) elements['mailFetchTasks' + id] = element();
+    for (const id of ['Panel', 'Button', 'Badge', 'List', 'Empty', 'Clear', 'StorageWarning']) elements['mailFetchTasks' + id] = element();
     let tick, valid = true, cleared = false, counter = 0;
     const context = vm.createContext({
         document: { getElementById: id => elements[id], createElement: element }, AbortController,
@@ -260,4 +260,59 @@ test('one malformed stored record does not erase valid task history', async () =
     const restored = setup(false, original.storage, false);
     vm.runInContext('initManualMailTasks()', restored.context);
     assert.equal(restored.elements.mailFetchTasksList.children.length, 1);
+});
+
+test('deleting a finished record removes it from the panel and persistence across refresh', () => {
+    const original = setup();
+    original.run.finish('completed', '完成');
+    assert.equal(original.card.remove.hidden, false);
+    assert.equal(original.elements.mailFetchTasksClear.disabled, false);
+    original.card.remove.click();
+    assert.equal(original.elements.mailFetchTasksList.children.length, 0);
+    assert.equal(original.elements.mailFetchTasksBadge.hidden, true);
+    assert.equal(original.elements.mailFetchTasksEmpty.hidden, false);
+    assert.equal(original.elements.mailFetchTasksClear.disabled, true);
+    const restored = setup(false, original.storage, false);
+    vm.runInContext('initManualMailTasks()', restored.context);
+    assert.equal(restored.elements.mailFetchTasksList.children.length, 0);
+});
+
+test('clearing finished records includes failed and partial records while preserving running tasks', () => {
+    const original = setup();
+    const requestId = original.run.beginPage(1);
+    for (const state of ['completed', 'partial', 'failed']) {
+        const other = vm.runInContext('startManualMailProgress({account:"other@example.com",folder:"all",aggregated:true},10,50)', original.context);
+        other.finish(state, state);
+    }
+    assert.equal(original.elements.mailFetchTasksList.children.length, 4);
+    vm.runInContext('clearCompletedMailTasks()', original.context);
+    assert.equal(original.elements.mailFetchTasksList.children.length, 1);
+    assert.equal(original.elements.mailFetchTasksList.children[0].dataset.state, 'running');
+    assert.equal(original.elements.mailFetchTasksBadge.textContent, 1);
+    assert.equal(original.elements.mailFetchTasksClear.disabled, true);
+    const records = [...original.storage.entries.values()].map(value => JSON.parse(value));
+    assert.equal(records.length, 1);
+    assert.equal(records[0].requestId, requestId);
+    original.run.updateSnapshot({total:2,completed:1,active:[]});
+    assert.equal(original.elements.mailFetchTasksList.children.length, 1);
+    assert.equal(original.card.bar.value, 1);
+});
+
+test('a running record cannot be deleted even by a direct call', () => {
+    const original = setup();
+    original.run.beginPage(1);
+    assert.equal(original.card.remove.hidden, true);
+    vm.runInContext('deleteManualMailTask([...manualMailTasks.keys()][0])', original.context);
+    assert.equal(original.elements.mailFetchTasksList.children.length, 1);
+    assert.equal(original.storage.entries.size, 1);
+});
+
+test('storage removal failure preserves the record and shows a warning', () => {
+    const original = setup();
+    original.run.finish('failed', '失败');
+    original.storage.removeItem = () => { throw new Error('storage unavailable'); };
+    original.card.remove.click();
+    assert.equal(original.elements.mailFetchTasksList.children.length, 1);
+    assert.equal(original.storage.entries.size, 1);
+    assert.equal(original.elements.mailFetchTasksStorageWarning.hidden, false);
 });

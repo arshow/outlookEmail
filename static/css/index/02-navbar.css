@@ -6,7 +6,7 @@
             color: #fff; font-size: 10px; line-height: 16px; text-align: center;
         }
         .mail-fetch-tasks-badge[hidden], .mail-fetch-tasks-panel[hidden],
-        .mail-fetch-tasks-empty[hidden], .mail-fetch-task-error[hidden] { display: none; }
+        .mail-fetch-tasks-empty[hidden], .mail-fetch-task-error[hidden], .mail-fetch-task-delete[hidden] { display: none; }
         .mail-fetch-tasks-panel {
             position: fixed; top: 64px; right: 24px; z-index: 180;
             width: 420px; max-width: calc(100vw - 24px); max-height: calc(100dvh - 80px);
@@ -36,6 +36,11 @@
         .mail-fetch-task-summary, .mail-fetch-task-current { font-size: 12px; line-height: 1.7; }
         .mail-fetch-task-current { color: var(--skin-text-soft, #475569); margin-top: 4px; }
         .mail-fetch-task-error { border: 0; background: transparent; color: var(--skin-primary, #2563eb); font-size: 12px; padding: 6px 0 0; cursor: pointer; }
+        .mail-fetch-tasks-toolbar { padding: 8px 12px 0; text-align: right; }
+        .mail-fetch-tasks-clear, .mail-fetch-task-delete { border: 0; background: transparent; color: var(--skin-text-muted, #64748b); font-size: 12px; padding: 6px 0; cursor: pointer; }
+        .mail-fetch-task-delete { margin-left: 12px; }
+        .mail-fetch-tasks-clear:disabled { opacity: .45; cursor: default; }
+        .mail-fetch-tasks-clear:hover:enabled, .mail-fetch-task-delete:hover { color: #b91c1c; }
         @media (max-width: 768px) { .mail-fetch-tasks-panel { right: 12px; } }
 
         /* 顶部导航栏 */
