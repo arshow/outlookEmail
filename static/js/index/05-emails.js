@@ -195,9 +195,6 @@
         }
 
         function beginMailboxViewChange() {
-            if (typeof activeManualMailProgress !== 'undefined' && activeManualMailProgress) {
-                activeManualMailProgress.stop(true);
-            }
             mailboxViewSeq += 1;
             isFetchingRecentEmails = false;
             currentEmailTotalCount = 0;
@@ -4826,7 +4823,7 @@
                 : null;
             isFetchingRecentEmails = true;
             setEmailListLoadingState(true);
-            setMailSyncStatus(`正在获取最近 ${fetchTop} 封邮件…`);
+            setMailSyncStatus('');
             const aggregated = context.aggregated === true;
             const account = aggregated ? AGGREGATED_INBOX_ACCOUNT_KEY : context.account;
             const cacheAccountKey = aggregated ? getAggregatedInboxCacheAccountKey() : context.account;
@@ -4859,7 +4856,6 @@
                         context
                     });
                     if (!data || data.success !== true) {
-                        if (stillSameView()) setMailSyncStatus('获取邮件失败，请查看错误详情后重试');
                         manualProgress?.finish('failed', '获取失败，请查看错误详情后重试');
                         return;
                     }
@@ -4875,7 +4871,6 @@
                         window._lastFetchErrorDetails = details;
                         const message = '邮件未完整获取，部分文件夹或账号失败，请查看错误详情';
                         if (stillSameView()) {
-                            setMailSyncStatus(message);
                             showToast(message, 'warning');
                             showEmailFetchErrorModal(details);
                         }
@@ -4884,7 +4879,6 @@
                     }
                     pageIndex += 1;
                     skip += pageTop;
-                    if (stillSameView()) setMailSyncStatus(`正在获取最近 ${fetchTop} 封邮件…已 ${receivedIds.size} 封`);
                     if (data.has_more !== true || receivedIds.size >= fetchTop) {
                         break;
                     }
@@ -4894,7 +4888,6 @@
                     ? `已获取最近 ${receivedIds.size} 封`
                     : `已获取 ${receivedIds.size} 封邮件`;
                 if (stillSameView()) {
-                    setMailSyncStatus(message);
                     showToast(message);
                 }
                 manualProgress?.finish('completed', message);
@@ -4905,12 +4898,10 @@
                     const details = { browser: buildBrowserMailFetchError(error) };
                     const message = getFetchErrorMessage(error);
                     window._lastFetchErrorDetails = details;
-                    setMailSyncStatus(message);
                     showToast(message, 'error');
                     showEmailFetchErrorModal(details);
                 }
             } finally {
-                if (!stillSameView()) manualProgress?.stop(true);
                 if (runSeq === mailboxViewSeq) {
                     isFetchingRecentEmails = false;
                     setEmailListLoadingState(false);

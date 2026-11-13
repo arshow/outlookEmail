@@ -84,10 +84,10 @@ function assertFailed(result) {
     assert.equal(result.toasts.some(item => item.message.startsWith('已获取')), false);
 }
 
-test('manual browser timeout shows persistent status and error details', async () => {
+test('manual browser timeout keeps error details without an inline status', async () => {
     const result = await runFetch('timeout');
     assertFailed(result);
-    assert.match(result.statuses.at(-1), /超时/);
+    assert.equal(result.statuses.at(-1), '');
     assert.equal(result.toasts.at(-1).type, 'error');
     assert.equal(result.modals[0].browser.code, 'MAIL_NETWORK_TIMEOUT');
     assert.deepEqual(result.lastError, result.modals[0]);
@@ -101,7 +101,7 @@ for (const scenario of ['failure', 'later_failure']) {
     test(scenario + ' does not overwrite error with a success notice', async () => {
         const result = await runFetch(scenario);
         assertFailed(result);
-        assert.match(result.statuses.at(-1), /失败/);
+        assert.equal(result.statuses.at(-1), '');
         assert.equal(result.modals.length, 1);
     });
 }
@@ -116,7 +116,8 @@ for (const [scenario, detailKey] of [['partial', 'inbox'], ['aggregated_partial'
 }
 test('successful fetch still reports the received count', async () => {
     const result = await runFetch('success');
-    assert.equal(result.statuses.at(-1), '已获取 10 封邮件');
+    assert.equal(result.statuses.at(-1), '');
+    assert.equal(result.toasts.at(-1).message, '已获取 10 封邮件');
     assert.deepEqual(result.modals, []);
     assert.equal(result.isFetchingRecentEmails, false);
     assert.deepEqual(result.loading, [true, false]);

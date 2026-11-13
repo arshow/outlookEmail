@@ -1,5 +1,4 @@
 /* global fetchWithTimeout, isCurrentMailboxContext */
-let activeManualMailProgress = null;
 const manualMailTasks = new Map();
 const manualMailTaskCards = new Map();
 let mailFetchTasksOpen = false;
@@ -113,19 +112,10 @@ async function waitForManualMailFetch(requestId, options = {}) {
 }
 
 function startManualMailProgress(context, target, pageSize) {
-    if (activeManualMailProgress) activeManualMailProgress.stop(true);
-    const panel = document.getElementById('mailFetchProgress');
-    const bar = document.getElementById('mailFetchProgressBar');
-    const title = document.getElementById('mailFetchProgressTitle');
-    const summary = document.getElementById('mailFetchProgressSummary');
-    const current = document.getElementById('mailFetchProgressCurrent');
-    const elapsed = document.getElementById('mailFetchProgressElapsed');
     const started = Date.now();
     let requestId = '', page = 1, received = 0, snapshot = null;
     let stopped = false;
-    let detached = false;
     const pages = Math.ceil(target / pageSize);
-    const unit = context.aggregated ? '邮箱' : '文件夹';
     const task = {
         id: window.crypto.randomUUID().replaceAll('-', ''), context: { ...context }, target,
         pages, page, started, state: 'running', snapshot: null, received: 0, errorDetails: null
@@ -137,28 +127,10 @@ function startManualMailProgress(context, target, pageSize) {
         task.snapshot = snapshot;
         task.received = received;
         renderMailFetchTasks();
-        if (!panel || detached || !isCurrentMailboxContext(context)) return;
-        panel.hidden = false;
-        title.textContent = `${context.aggregated ? '聚合收件箱' : '单邮箱'} · 第 ${page}/${pages} 批 · 最近 ${target} 封`;
-        elapsed.textContent = `已耗时 ${Math.floor((Date.now() - started) / 1000)} 秒`;
-        if (snapshot) {
-            bar.max = Math.max(1, snapshot.total);
-            bar.value = snapshot.completed;
-            summary.textContent = `当前批${unit} ${snapshot.completed}/${snapshot.total} · 成功 ${snapshot.successful} · 失败 ${snapshot.failed} · 部分失败 ${snapshot.partial} · 超时 ${snapshot.timed_out} · 本批已读取 ${snapshot.fetched} 封 · 本次已展示 ${received} 封`;
-            const labels = { inbox: '收件箱', junkemail: '垃圾邮件', deleteditems: '已删除邮件' };
-            current.textContent = snapshot.active?.length
-                ? `正在获取：${snapshot.active.map(value => labels[value] || value).join('、')}`
-                : (snapshot.state === 'running' ? '正在整理邮件…' : '本批请求已结束');
-        } else {
-            bar.removeAttribute('value');
-            summary.textContent = `等待${unit}进度 · 本次已获取 ${received} 封`;
-            current.textContent = '正在连接邮件服务…';
-        }
     }
 
     function tick() {
         if (stopped) return;
-        if (!isCurrentMailboxContext(context)) run.stop(true);
         render();
     }
 
@@ -168,7 +140,6 @@ function startManualMailProgress(context, target, pageSize) {
             page = number;
             snapshot = null;
             requestId = window.crypto.randomUUID().replaceAll('-', '');
-            if (panel && !detached && isCurrentMailboxContext(context)) panel.dataset.state = 'running';
             render();
             return requestId;
         },
@@ -197,26 +168,13 @@ function startManualMailProgress(context, target, pageSize) {
             task.message = message;
             task.finishedAt = Date.now();
             render();
-            if (panel && !detached && isCurrentMailboxContext(context)) {
-                panel.dataset.state = state;
-                current.textContent = message;
-                if (state === 'completed') { bar.max = 1; bar.value = 1; }
-            }
-            run.stop(false);
+            run.stop();
         },
-        stop(hide) {
-            if (hide) {
-                detached = true;
-                if (panel && activeManualMailProgress === run) panel.hidden = true;
-                if (activeManualMailProgress === run) activeManualMailProgress = null;
-                return;
-            }
+        stop() {
             stopped = true;
             window.clearInterval(timer);
-            if (activeManualMailProgress === run) activeManualMailProgress = null;
         }
     };
-    activeManualMailProgress = run;
     renderMailFetchTasks();
     return run;
 }

@@ -16,10 +16,7 @@ function setup(aggregated = false) {
             addEventListener() {}
         };
     }
-    const elements = Object.fromEntries(['', 'Bar', 'Title', 'Summary', 'Current', 'Elapsed'].map(suffix => [
-        'mailFetchProgress' + suffix,
-        element()
-    ]));
+    const elements = {};
     for (const id of ['Panel', 'Button', 'Badge', 'List', 'Empty']) elements['mailFetchTasks' + id] = element();
     let tick, valid = true, cleared = false, counter = 0;
     const context = vm.createContext({
@@ -40,47 +37,46 @@ function setup(aggregated = false) {
     const run = vm.runInContext(`startManualMailProgress({account:'test@example.com',folder:'all',aggregated:${aggregated}}, 100, 50)`, context);
     const update = () => run.updateSnapshot({ state: 'running', total: 2, completed: 1, successful: 1,
         failed: 0, partial: 0, timed_out: 0, fetched: 3, active: aggregated ? ['beta@example.com'] : ['junkemail'] });
-    return { run, elements, context, tick: () => { update(); return tick(); }, setValid: value => { valid = value; }, isCleared: () => cleared };
+    const card = vm.runInContext('[...manualMailTaskCards.values()][0]', context);
+    return { run, elements, card, context, tick: () => { update(); return tick(); }, setValid: value => { valid = value; }, isCleared: () => cleared };
 }
 
 for (const aggregated of [false, true]) {
     test((aggregated ? 'aggregated accounts' : 'single mailbox folders') + ' shows real progress and active unit', async () => {
-        const { run, elements, tick, isCleared } = setup(aggregated);
+        const { run, card, tick, isCleared } = setup(aggregated);
         assert.match(run.beginPage(1), /^[a-f0-9]{32}$/);
-        assert.equal(elements.mailFetchProgressBar.value, undefined);
+        assert.equal(card.bar.value, undefined);
         await tick();
-        assert.equal(elements.mailFetchProgressBar.value, 1);
-        assert.equal(elements.mailFetchProgressBar.max, 2);
-        assert.match(elements.mailFetchProgressSummary.textContent, aggregated ? /邮箱 1\/2/ : /文件夹 1\/2/);
-        assert.match(elements.mailFetchProgressCurrent.textContent, aggregated ? /beta@example.com/ : /垃圾邮件/);
+        assert.equal(card.bar.value, 1);
+        assert.equal(card.bar.max, 2);
+        assert.match(card.summary.textContent, aggregated ? /邮箱 1\/2/ : /文件夹 1\/2/);
+        assert.match(card.current.textContent, aggregated ? /beta@example.com/ : /垃圾邮件/);
         run.finish('partial', '部分文件夹超时');
-        assert.equal(elements.mailFetchProgress.dataset.state, 'partial');
-        assert.equal(elements.mailFetchProgressCurrent.textContent, '部分文件夹超时');
+        assert.equal(card.card.dataset.state, 'partial');
+        assert.equal(card.current.textContent, '部分文件夹超时');
         assert.equal(isCleared(), true);
-        assert.equal(elements.mailFetchProgress.hidden, false);
     });
 }
 
 test('next batch resets its bar; success preserves received count and stops polling', async () => {
-    const { run, elements, tick, isCleared } = setup();
+    const { run, card, tick, isCleared } = setup();
     run.beginPage(1);
     await tick();
     run.beginPage(2);
-    assert.equal(elements.mailFetchProgressBar.value, undefined);
-    assert.match(elements.mailFetchProgressTitle.textContent, /第 2\/2 批/);
+    assert.equal(card.bar.value, undefined);
+    assert.match(card.meta.textContent, /第 2\/2 批/);
     run.applyResponse({ fetch_progress: { total: 2, completed: 2, successful: 2, failed: 0, partial: 0, timed_out: 0, fetched: 30, active: [], state: 'completed' } }, 80);
     run.finish('completed', '已获取 80 封邮件');
-    assert.match(elements.mailFetchProgressSummary.textContent, /已展示 80 封/);
-    assert.equal(elements.mailFetchProgressBar.value, 1);
+    assert.match(card.current.textContent, /已获取 80 封/);
+    assert.equal(card.bar.value, 1);
     assert.equal(isCleared(), true);
 });
 
-test('switching mailboxes hides inline progress but keeps the task running until completion', async () => {
+test('switching mailboxes keeps floating task running until completion', async () => {
     const { run, elements, tick, setValid, isCleared } = setup();
     run.beginPage(1);
     setValid(false);
     await tick();
-    assert.equal(elements.mailFetchProgress.hidden, true);
     assert.equal(isCleared(), false);
     run.finish('completed', '已完成');
     assert.equal(isCleared(), true);
@@ -148,8 +144,8 @@ test('each manual refresh adds a separate task without losing the previous runni
     other.finish('completed', '完成');
     assert.equal(elements.mailFetchTasksList.children.length, 2);
     assert.equal(elements.mailFetchTasksBadge.textContent, 1);
-    assert.equal(elements.mailFetchProgress.dataset.state, 'completed');
+    assert.equal(elements.mailFetchTasksList.children[0].dataset.state, 'completed');
     run.beginPage(2);
-    assert.equal(elements.mailFetchProgress.dataset.state, 'completed');
+    assert.equal(elements.mailFetchTasksList.children[0].dataset.state, 'completed');
     run.finish('completed', '先前任务已完成');
 });
