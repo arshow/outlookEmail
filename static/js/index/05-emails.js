@@ -1113,7 +1113,25 @@
                     timeoutMessage: '获取邮件超时，请检查网络、代理或账号配置后重试'
                 }
             );
-            const data = await response.json();
+            let data;
+            try {
+                data = await response.json();
+            } catch (error) {
+                const status = Number(response.status) || 0;
+                const timedOut = [408, 504, 524].includes(status);
+                data = {
+                    success: false,
+                    error: {
+                        code: timedOut ? 'MAIL_NETWORK_TIMEOUT' : 'MAIL_RESPONSE_INVALID',
+                        message: timedOut
+                            ? `邮件获取超时（HTTP ${status}），服务端或网关未及时响应，请稍后重试`
+                            : `邮件接口返回异常（HTTP ${status || '未知'}），未收到有效的邮件数据，请稍后重试`,
+                        type: 'HTTPResponseError',
+                        status,
+                        details: error?.message || String(error || '')
+                    }
+                };
+            }
 
             if (data.success) {
                 if (!options.context || isCurrentMailboxContext(options.context)) {

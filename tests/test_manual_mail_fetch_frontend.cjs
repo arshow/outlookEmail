@@ -116,3 +116,35 @@ test('timeout after switching views does not show stale errors', async () => {
     assert.deepEqual(result.modals, []);
     assert.deepEqual(result.toasts, []);
 });
+
+for (const [status, expectedCode] of [[504, 'MAIL_NETWORK_TIMEOUT'], [524, 'MAIL_NETWORK_TIMEOUT'], [502, 'MAIL_RESPONSE_INVALID']]) {
+    test('HTML HTTP ' + status + ' response uses the real fetch path and opens error details', async () => {
+        const modals = [];
+        const list = { innerHTML: '' };
+        const context = vm.createContext({
+            currentFolder: 'all', EMAIL_LIST_REQUEST_TIMEOUT_MS: 130000,
+            window: {}, document: { getElementById: () => list },
+            isAggregatedInboxMode: () => false,
+            resolveEmailListKeyword: () => '',
+            getRemoteMailboxMethodFallback: () => 'graph',
+            buildEmailListRequestUrl: () => '/api/emails/test@example.com',
+            fetchWithTimeout: async () => ({
+                status,
+                json: async () => { throw new SyntaxError('Unexpected token <, HTML is not valid JSON'); }
+            }),
+            showEmailFetchErrorModal: details => modals.push(details),
+            renderEmptyStateMarkup: () => '获取邮件失败，点击查看详情',
+            handleApiError: () => assert.fail('Expected the structured error modal')
+        });
+        const start = source.indexOf('async function fetchRemoteEmails(');
+        const remoteFetch = source.slice(start, source.indexOf('function startBackgroundRemoteMailboxSync(', start));
+        const result = await vm.runInContext(remoteFetch + '\nfetchRemoteEmails("test@example.com", "test_all")', context);
+        assert.equal(result, false);
+        assert.equal(modals.length, 1);
+        assert.equal(modals[0].error.status, status);
+        assert.equal(modals[0].error.code, expectedCode);
+        assert.match(modals[0].error.message, new RegExp('HTTP ' + status));
+        assert.equal(context.window._lastFetchErrorDetails.error.status, status);
+        assert.match(list.innerHTML, /获取邮件失败/);
+    });
+}
