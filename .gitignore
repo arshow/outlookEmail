@@ -48,9 +48,12 @@ openspec
 待办
 /.playwright-cli
 .test_tmp/
+outputs/diagnostics/
 /.trellis/
 /scripts/compare_accounts_db.py
 /scripts/export_accounts.py
 secret_key.txt
 
 原始项目/
+
+output/diagnostics/
