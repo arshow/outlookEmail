@@ -1,3 +1,43 @@
+        .mail-fetch-tasks-trigger { position: relative; flex-shrink: 0; }
+        .mail-fetch-tasks-trigger[data-running="true"] { color: var(--skin-primary); }
+        .mail-fetch-tasks-badge {
+            position: absolute; top: -5px; right: -5px; min-width: 16px; height: 16px;
+            padding: 0 4px; border-radius: 8px; background: var(--skin-primary, #2563eb);
+            color: #fff; font-size: 10px; line-height: 16px; text-align: center;
+        }
+        .mail-fetch-tasks-badge[hidden], .mail-fetch-tasks-panel[hidden],
+        .mail-fetch-tasks-empty[hidden], .mail-fetch-task-error[hidden] { display: none; }
+        .mail-fetch-tasks-panel {
+            position: fixed; top: 64px; right: 24px; z-index: 180;
+            width: 420px; max-width: calc(100vw - 24px); max-height: calc(100dvh - 80px);
+            display: flex; flex-direction: column; overflow: hidden;
+            background: var(--skin-surface, #fff); color: var(--skin-text, #172033);
+            border: 1px solid var(--skin-border, #e2e8f0); border-radius: 12px;
+            box-shadow: 0 12px 40px rgba(15, 23, 42, .16);
+        }
+        .mail-fetch-tasks-panel-heading {
+            display: flex; justify-content: space-between; align-items: flex-start;
+            gap: 16px; padding: 16px; border-bottom: 1px solid var(--skin-border, #e2e8f0);
+        }
+        .mail-fetch-tasks-panel-heading strong { font-size: 15px; }
+        .mail-fetch-tasks-panel-heading p { margin: 4px 0 0; color: var(--skin-text-muted, #64748b); font-size: 12px; }
+        .mail-fetch-tasks-close { border: 0; background: transparent; color: inherit; font-size: 24px; line-height: 1; cursor: pointer; padding: 0 2px; }
+        .mail-fetch-tasks-empty { padding: 24px 16px; font-size: 13px; line-height: 1.7; color: var(--skin-text-muted, #64748b); }
+        .mail-fetch-tasks-list { overflow-y: auto; overscroll-behavior: contain; padding: 0 12px; }
+        .mail-fetch-task { margin: 12px 0; padding: 12px; border: 1px solid var(--skin-border, #e2e8f0); border-radius: 8px; overflow-wrap: anywhere; }
+        .mail-fetch-task-heading { display: flex; align-items: flex-start; gap: 8px; justify-content: space-between; }
+        .mail-fetch-task-title { font-size: 13px; line-height: 1.5; min-width: 0; }
+        .mail-fetch-task-state { flex-shrink: 0; padding: 2px 7px; border-radius: 12px; font-size: 11px; background: #eff6ff; color: #1d4ed8; }
+        .mail-fetch-task[data-state="completed"] .mail-fetch-task-state { background: #ecfdf5; color: #047857; }
+        .mail-fetch-task[data-state="partial"] .mail-fetch-task-state,
+        .mail-fetch-task[data-state="failed"] .mail-fetch-task-state { background: #fff7ed; color: #9a3412; }
+        .mail-fetch-task-meta { color: var(--skin-text-muted, #64748b); font-size: 11px; margin-top: 6px; line-height: 1.7; }
+        .mail-fetch-task progress { display: block; width: 100%; height: 6px; margin: 9px 0; accent-color: var(--skin-primary, #2563eb); }
+        .mail-fetch-task-summary, .mail-fetch-task-current { font-size: 12px; line-height: 1.7; }
+        .mail-fetch-task-current { color: var(--skin-text-soft, #475569); margin-top: 4px; }
+        .mail-fetch-task-error { border: 0; background: transparent; color: var(--skin-primary, #2563eb); font-size: 12px; padding: 6px 0 0; cursor: pointer; }
+        @media (max-width: 768px) { .mail-fetch-tasks-panel { right: 12px; } }
+
         /* 顶部导航栏 */
         .navbar {
             height: 56px;

@@ -10,12 +10,15 @@ const fetchRecent = source.slice(start, source.indexOf('// 刷新邮件', start)
 const harness = String.raw`
 const scenario = SCENARIO;
 const window = {};
+const document = { getElementById: () => null };
 const toasts = [], statuses = [], modals = [], loading = [];
 let isFetchingRecentEmails = false, mailboxViewSeq = 1;
 let isTempEmailGroup = false, currentAccount = 'test@example.com';
 let currentEmails = [], hasMoreEmails = false, requests = 0;
+let aggregatedInboxGroupId = 18, currentGroupId = 18;
+const requestOptions = [];
 const EMAIL_FETCH_PAGE_SIZE = 10, AGGREGATED_INBOX_ACCOUNT_KEY = 'aggregated';
-const isAggregatedInboxMode = () => scenario === 'aggregated_partial';
+const isAggregatedInboxMode = () => scenario === 'aggregated_partial' || scenario === 'background_pages';
 const getCurrentMailboxContext = () => ({
     account: currentAccount, folder: 'all', aggregated: isAggregatedInboxMode()
 });
@@ -29,8 +32,14 @@ const showToast = (message, type) => toasts.push({ message, type });
 const showEmailFetchErrorModal = details => modals.push(details);
 const isTimeoutAbortError = error => error.name === 'AbortError';
 const buildAggregatedFetchErrorDetails = data => ({ account: data.account_errors[0].error });
-async function fetchRemoteEmails() {
+async function fetchRemoteEmails(account, cacheKey, options) {
     requests++;
+    requestOptions.push({folder:options.folder,groupId:options.groupId});
+    if (scenario === 'background_pages' && requests === 1) {
+        mailboxViewSeq++;
+        currentAccount = 'other@example.com';
+        aggregatedInboxGroupId = 99;
+    }
     if (scenario === 'timeout' || scenario === 'stale_timeout') {
         if (scenario === 'stale_timeout') mailboxViewSeq++;
         throw Object.assign(new Error('request timed out'), { name: 'AbortError' });
@@ -42,10 +51,11 @@ async function fetchRemoteEmails() {
         return false;
     }
     const error = { code: 'EMAIL_FETCH_TIMEOUT', message: '收件箱获取超时' };
-    currentEmails = Array.from({ length: 10 }, (_, id) => ({ id }));
+    currentEmails = Array.from({ length: 10 }, (_, id) => ({ id: scenario === 'background_pages' ? requests * 10 + id : id }));
     return {
         success: true,
-        has_more: scenario === 'later_failure' || scenario === 'partial',
+        emails: currentEmails,
+        has_more: scenario === 'later_failure' || scenario === 'partial' || (scenario === 'background_pages' && requests === 1),
         partial: scenario === 'partial' || scenario === 'aggregated_partial',
         details: { inbox: error },
         account_errors: [{ error }]
@@ -55,7 +65,7 @@ HELPERS
 FETCH_RECENT
 fetchRecentEmails().then(() => console.log(JSON.stringify({
     toasts, statuses, modals, loading, requests, isFetchingRecentEmails,
-    lastError: window._lastFetchErrorDetails
+    lastError: window._lastFetchErrorDetails, requestOptions
 }))).catch(error => { console.error(error); process.exitCode = 1; });
 `;
 async function runFetch(scenario) {
@@ -113,6 +123,14 @@ test('successful fetch still reports the received count', async () => {
 });
 test('timeout after switching views does not show stale errors', async () => {
     const result = await runFetch('stale_timeout');
+    assert.deepEqual(result.modals, []);
+    assert.deepEqual(result.toasts, []);
+});
+
+test('background pagination continues for the original group after switching views', async () => {
+    const result = await runFetch('background_pages');
+    assert.equal(result.requests, 2);
+    assert.deepEqual(result.requestOptions, [{folder:'all',groupId:18},{folder:'all',groupId:18}]);
     assert.deepEqual(result.modals, []);
     assert.deepEqual(result.toasts, []);
 });

@@ -56,6 +56,16 @@
             </div>
         </div>
         <div class="navbar-actions">
+            <button class="navbar-icon-btn mail-fetch-tasks-trigger" id="mailFetchTasksButton" type="button"
+                onclick="toggleMailFetchTasks()" title="收信任务" aria-label="收信任务"
+                aria-expanded="false" aria-controls="mailFetchTasksPanel">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                    <path d="M4 5h10M4 10h7M4 15h5" stroke-linecap="round"></path>
+                    <circle cx="16" cy="15" r="6"></circle>
+                    <path d="M16 12v3l2 1" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+                <span class="mail-fetch-tasks-badge" id="mailFetchTasksBadge" hidden></span>
+            </button>
             <button class="mobile-nav-menu-btn" id="mobileNavMenuBtn" type="button" aria-expanded="false"
                 aria-controls="navbarActionsMenu">
                 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
@@ -136,6 +146,16 @@
             </div>
         </div>
     </nav>
+
+    <section class="mail-fetch-tasks-panel" id="mailFetchTasksPanel" aria-label="收信任务进度" hidden>
+        <div class="mail-fetch-tasks-panel-heading">
+            <div><strong>收信任务</strong><p>完成后保留记录，点击关闭按钮收起</p></div>
+            <button class="mail-fetch-tasks-close" type="button" aria-label="关闭收信任务面板"
+                onclick="toggleMailFetchTasks(false)">×</button>
+        </div>
+        <div class="mail-fetch-tasks-empty" id="mailFetchTasksEmpty">暂无任务，手动刷新邮箱后将在这里显示真实进度。</div>
+        <div class="mail-fetch-tasks-list" id="mailFetchTasksList"></div>
+    </section>
 
     <!-- 主容器 -->
     <div class="main-container">

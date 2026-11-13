@@ -174,6 +174,7 @@
             if (!context) {
                 return false;
             }
+            if (context.viewSeq !== undefined && context.viewSeq !== mailboxViewSeq) return false;
             const contextFolder = String(context.folder || '').trim() || 'all';
             const currentViewFolder = String(currentFolder || '').trim() || 'all';
             if (contextFolder !== currentViewFolder) {
@@ -627,12 +628,12 @@
             return `${String(folder || '').trim().toLowerCase()}::${idMode}::${id}`;
         }
 
-        function buildAggregatedEmailsUrl({ skip = 0, top = 20, folder = currentFolder, source = '', status = '', keyword = '' } = {}) {
+        function buildAggregatedEmailsUrl({ skip = 0, top = 20, folder = currentFolder, source = '', status = '', keyword = '', groupId } = {}) {
             const safeFolder = ['all', 'inbox', 'junkemail'].includes(String(folder || '').toLowerCase())
                 ? String(folder || 'all')
                 : 'all';
             const query = new URLSearchParams({
-                group_id: String(aggregatedInboxGroupId || currentGroupId || ''),
+                group_id: String(groupId ?? (aggregatedInboxGroupId || currentGroupId || '')),
                 folder: safeFolder,
                 skip: String(Math.max(0, Number(skip) || 0)),
                 top: String(Math.max(0, Number(top) || 20))
@@ -1101,6 +1102,7 @@
                         top: requestTop,
                         folder: requestFolder,
                         source: options.source || '',
+                        groupId: options.groupId,
                         keyword: requestKeyword
                     })
                     : buildEmailListRequestUrl(email, {
@@ -1145,6 +1147,7 @@
             if (data.fetch_progress && typeof options.onProgress === 'function') {
                 options.onProgress(data.fetch_progress);
             }
+            if (typeof options.onResult === 'function') options.onResult(data);
             if (data.success) {
                 if (!options.context || isCurrentMailboxContext(options.context)) {
                     if (options.keepSyncStatus !== true) {
@@ -1176,6 +1179,8 @@
                 }
                 return data;
             }
+
+            if (options.context && !isCurrentMailboxContext(options.context)) return data;
 
             const fetchErrorDetails = aggregated
                 ? buildAggregatedFetchErrorDetails(data)
@@ -4807,7 +4812,14 @@
 
             const fetchTop = persistEmailFetchTop(getEmailFetchTop());
             const runSeq = mailboxViewSeq;
-            const context = getCurrentMailboxContext();
+            const context = {
+                ...getCurrentMailboxContext(),
+                viewSeq: runSeq,
+                groupId: typeof aggregatedInboxGroupId !== 'undefined'
+                    ? (aggregatedInboxGroupId || currentGroupId)
+                    : '',
+                groupName: document.getElementById('currentGroupName')?.textContent || ''
+            };
             const stillSameView = () => runSeq === mailboxViewSeq && isCurrentMailboxContext(context);
             const manualProgress = typeof startManualMailProgress === 'function'
                 ? startManualMailProgress(context, fetchTop, EMAIL_FETCH_PAGE_SIZE)
@@ -4826,15 +4838,17 @@
             try {
                 let skip = 0;
                 let pageIndex = 0;
+                const receivedIds = new Set();
+                let moreAvailable = false;
                 while (skip < fetchTop) {
-                    if (!stillSameView()) {
-                        return;
-                    }
                     const pageTop = Math.min(EMAIL_FETCH_PAGE_SIZE, fetchTop - skip);
                     const progressId = manualProgress?.beginPage(pageIndex + 1);
                     const data = await fetchRemoteEmails(account, cacheKey, {
                         progressId,
                         onProgress: progress => manualProgress?.updateSnapshot(progress),
+                        onResult: result => manualProgress?.recordResult(result),
+                        folder: context.folder,
+                        groupId: context.groupId,
                         aggregated,
                         skip,
                         top: pageTop,
@@ -4844,45 +4858,49 @@
                         method: aggregated ? 'aggregated' : undefined,
                         context
                     });
-                    if (!stillSameView()) {
-                        return;
-                    }
                     if (!data || data.success !== true) {
-                        setMailSyncStatus('获取邮件失败，请查看错误详情后重试');
+                        if (stillSameView()) setMailSyncStatus('获取邮件失败，请查看错误详情后重试');
                         manualProgress?.finish('failed', '获取失败，请查看错误详情后重试');
                         return;
                     }
-                    manualProgress?.applyResponse(data, currentEmails.length);
+                    (data.emails || []).forEach(item => receivedIds.add(
+                        `${item.account_email || context.account}:${item.folder || context.folder}:${item.id_mode || ''}:${item.id}`
+                    ));
+                    manualProgress?.applyResponse(data, receivedIds.size);
+                    moreAvailable = data.has_more === true;
                     if (data.partial) {
                         const details = aggregated
                             ? buildAggregatedFetchErrorDetails(data)
                             : (data.details || {});
                         window._lastFetchErrorDetails = details;
                         const message = '邮件未完整获取，部分文件夹或账号失败，请查看错误详情';
-                        setMailSyncStatus(message);
-                        showToast(message, 'warning');
-                        showEmailFetchErrorModal(details);
+                        if (stillSameView()) {
+                            setMailSyncStatus(message);
+                            showToast(message, 'warning');
+                            showEmailFetchErrorModal(details);
+                        }
                         manualProgress?.finish('partial', message);
                         return;
                     }
                     pageIndex += 1;
                     skip += pageTop;
-                    setMailSyncStatus(`正在获取最近 ${fetchTop} 封邮件…已 ${currentEmails.length} 封`);
-                    if (data.has_more !== true || currentEmails.length >= fetchTop) {
+                    if (stillSameView()) setMailSyncStatus(`正在获取最近 ${fetchTop} 封邮件…已 ${receivedIds.size} 封`);
+                    if (data.has_more !== true || receivedIds.size >= fetchTop) {
                         break;
                     }
                 }
-                if (!stillSameView()) {
-                    return;
-                }
-                const reachedCap = currentEmails.length >= fetchTop && hasMoreEmails;
+                const reachedCap = receivedIds.size >= fetchTop && moreAvailable;
                 const message = reachedCap
-                    ? `已获取最近 ${currentEmails.length} 封`
-                    : `已获取 ${currentEmails.length} 封邮件`;
-                setMailSyncStatus(message);
-                showToast(message);
+                    ? `已获取最近 ${receivedIds.size} 封`
+                    : `已获取 ${receivedIds.size} 封邮件`;
+                if (stillSameView()) {
+                    setMailSyncStatus(message);
+                    showToast(message);
+                }
                 manualProgress?.finish('completed', message);
             } catch (error) {
+                manualProgress?.recordResult({ success: false, details: { browser: buildBrowserMailFetchError(error) } });
+                manualProgress?.finish('failed', getFetchErrorMessage(error));
                 if (stillSameView()) {
                     const details = { browser: buildBrowserMailFetchError(error) };
                     const message = getFetchErrorMessage(error);
@@ -4890,7 +4908,6 @@
                     setMailSyncStatus(message);
                     showToast(message, 'error');
                     showEmailFetchErrorModal(details);
-                    manualProgress?.finish('failed', message);
                 }
             } finally {
                 if (!stillSameView()) manualProgress?.stop(true);
