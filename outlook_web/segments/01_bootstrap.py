@@ -788,6 +788,7 @@ INDEX_JS_FILES = (
     'js/index/13-compose.js',
     'js/index/14-mail-folders.js',
     'js/index/15-forwarding.js',
+    'js/index/16-mail-fetch-progress.js',
 )
 
 # GPTMail API 配置

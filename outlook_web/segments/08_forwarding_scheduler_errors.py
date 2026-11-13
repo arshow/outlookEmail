@@ -1966,7 +1966,7 @@ def handle_remote_email_list_request(account: Dict[str, Any], requested_email: s
         folder_id=folder_id,
         mailbox=mailbox,
     )
-    result = fetch_account_emails(
+    result = fetch_manual_account_emails(
         account,
         folder,
         skip,
@@ -2000,6 +2000,7 @@ def handle_remote_email_list_request(account: Dict[str, Any], requested_email: s
     return jsonify(result)
 
 
+@manual_mail_fetch_async
 def api_get_emails_v2(email_addr):
     requested_email = str(email_addr or '').strip()
     account = resolve_account_for_email_api(requested_email)

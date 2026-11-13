@@ -420,6 +420,15 @@
                     </div>
                     <div class="new-mail-notice" id="newMailNotice" role="status" hidden></div>
                     <div class="mail-sync-status" id="mailSyncStatus" role="status" hidden></div>
+                    <div class="mail-fetch-progress" id="mailFetchProgress" role="status" aria-live="polite" hidden>
+                        <div class="mail-fetch-progress-heading">
+                            <strong id="mailFetchProgressTitle"></strong>
+                            <span id="mailFetchProgressElapsed"></span>
+                        </div>
+                        <progress id="mailFetchProgressBar" max="1" aria-label="邮件获取进度"></progress>
+                        <div id="mailFetchProgressSummary"></div>
+                        <div id="mailFetchProgressCurrent"></div>
+                    </div>
                 </div>
                 <div class="email-list" id="emailList">
                     <div class="empty-state">

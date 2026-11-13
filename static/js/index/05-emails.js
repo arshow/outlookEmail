@@ -194,6 +194,9 @@
         }
 
         function beginMailboxViewChange() {
+            if (typeof activeManualMailProgress !== 'undefined' && activeManualMailProgress) {
+                activeManualMailProgress.stop(true);
+            }
             mailboxViewSeq += 1;
             isFetchingRecentEmails = false;
             currentEmailTotalCount = 0;
@@ -1092,8 +1095,7 @@
             const requestTop = Number.isFinite(Number(options.top)) ? Number(options.top) : 20;
             const requestKeyword = resolveEmailListKeyword(options);
             const aggregated = options.aggregated === true || isAggregatedInboxMode();
-            const response = await fetchWithTimeout(
-                aggregated
+            const requestUrl = aggregated
                     ? buildAggregatedEmailsUrl({
                         skip: requestSkip,
                         top: requestTop,
@@ -1107,7 +1109,11 @@
                         skip: requestSkip,
                         top: requestTop,
                         keyword: requestKeyword
-                    }),
+                    });
+            const response = await fetchWithTimeout(
+                options.progressId
+                    ? `${requestUrl}&progress_id=${encodeURIComponent(options.progressId)}&async=1`
+                    : requestUrl,
                 {
                     timeoutMs: EMAIL_LIST_REQUEST_TIMEOUT_MS,
                     timeoutMessage: '获取邮件超时，请检查网络、代理或账号配置后重试'
@@ -1133,6 +1139,12 @@
                 };
             }
 
+            if (data.pending && options.progressId) {
+                data = await waitForManualMailFetch(options.progressId, options);
+            }
+            if (data.fetch_progress && typeof options.onProgress === 'function') {
+                options.onProgress(data.fetch_progress);
+            }
             if (data.success) {
                 if (!options.context || isCurrentMailboxContext(options.context)) {
                     if (options.keepSyncStatus !== true) {
@@ -4797,6 +4809,9 @@
             const runSeq = mailboxViewSeq;
             const context = getCurrentMailboxContext();
             const stillSameView = () => runSeq === mailboxViewSeq && isCurrentMailboxContext(context);
+            const manualProgress = typeof startManualMailProgress === 'function'
+                ? startManualMailProgress(context, fetchTop, EMAIL_FETCH_PAGE_SIZE)
+                : null;
             isFetchingRecentEmails = true;
             setEmailListLoadingState(true);
             setMailSyncStatus(`正在获取最近 ${fetchTop} 封邮件…`);
@@ -4816,7 +4831,10 @@
                         return;
                     }
                     const pageTop = Math.min(EMAIL_FETCH_PAGE_SIZE, fetchTop - skip);
+                    const progressId = manualProgress?.beginPage(pageIndex + 1);
                     const data = await fetchRemoteEmails(account, cacheKey, {
+                        progressId,
+                        onProgress: progress => manualProgress?.updateSnapshot(progress),
                         aggregated,
                         skip,
                         top: pageTop,
@@ -4831,8 +4849,10 @@
                     }
                     if (!data || data.success !== true) {
                         setMailSyncStatus('获取邮件失败，请查看错误详情后重试');
+                        manualProgress?.finish('failed', '获取失败，请查看错误详情后重试');
                         return;
                     }
+                    manualProgress?.applyResponse(data, currentEmails.length);
                     if (data.partial) {
                         const details = aggregated
                             ? buildAggregatedFetchErrorDetails(data)
@@ -4842,6 +4862,7 @@
                         setMailSyncStatus(message);
                         showToast(message, 'warning');
                         showEmailFetchErrorModal(details);
+                        manualProgress?.finish('partial', message);
                         return;
                     }
                     pageIndex += 1;
@@ -4860,6 +4881,7 @@
                     : `已获取 ${currentEmails.length} 封邮件`;
                 setMailSyncStatus(message);
                 showToast(message);
+                manualProgress?.finish('completed', message);
             } catch (error) {
                 if (stillSameView()) {
                     const details = { browser: buildBrowserMailFetchError(error) };
@@ -4868,8 +4890,10 @@
                     setMailSyncStatus(message);
                     showToast(message, 'error');
                     showEmailFetchErrorModal(details);
+                    manualProgress?.finish('failed', message);
                 }
             } finally {
+                if (!stillSameView()) manualProgress?.stop(true);
                 if (runSeq === mailboxViewSeq) {
                     isFetchingRecentEmails = false;
                     setEmailListLoadingState(false);

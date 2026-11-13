@@ -148,3 +148,30 @@ for (const [status, expectedCode] of [[504, 'MAIL_NETWORK_TIMEOUT'], [524, 'MAIL
         assert.match(list.innerHTML, /获取邮件失败/);
     });
 }
+
+test('manual fetch submits a background job and waits for its final result', async () => {
+    let requestedUrl, waitedId, applied = false;
+    const context = vm.createContext({
+        currentFolder: 'all', EMAIL_LIST_REQUEST_TIMEOUT_MS: 130000,
+        isAggregatedInboxMode: () => false, resolveEmailListKeyword: () => '',
+        getRemoteMailboxMethodFallback: () => 'graph',
+        buildEmailListRequestUrl: () => '/api/emails/test@example.com?folder=all',
+        fetchWithTimeout: async url => {
+            requestedUrl = url;
+            return { json: async () => ({ success: true, pending: true }) };
+        },
+        waitForManualMailFetch: async id => {
+            waitedId = id;
+            return { success: true, emails: [], has_more: false };
+        },
+        setMailSyncStatus: () => {},
+        applyEmailListResponse: () => { applied = true; }
+    });
+    const start = source.indexOf('async function fetchRemoteEmails(');
+    const remoteFetch = source.slice(start, source.indexOf('function startBackgroundRemoteMailboxSync(', start));
+    const result = await vm.runInContext(remoteFetch + '\nfetchRemoteEmails("test@example.com", "test_all", {progressId:"abc"})', context);
+    assert.match(requestedUrl, /progress_id=abc&async=1/);
+    assert.equal(waitedId, 'abc');
+    assert.equal(result.success, true);
+    assert.equal(applied, true);
+});

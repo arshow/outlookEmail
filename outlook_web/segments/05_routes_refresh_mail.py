@@ -5,6 +5,34 @@ import secrets
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from flask import copy_current_request_context
+from outlook_web.mail_fetch_progress import (
+    begin_mail_fetch_progress, get_mail_fetch_progress,
+    start_async_mail_fetch, get_async_mail_fetch_result,
+)
+
+
+def manual_mail_fetch_async(handler):
+    @wraps(handler)
+    def dispatch(*args, **kwargs):
+        if request.args.get('async') != '1' or is_local_retention_request():
+            return handler(*args, **kwargs)
+        request_id = request.args.get('progress_id', '')
+
+        @copy_current_request_context
+        def run():
+            response = app.make_response(handler(*args, **kwargs))
+            payload = response.get_json(silent=True)
+            return payload if isinstance(payload, dict) else {
+                'success': False, 'error': {'code': 'MAIL_RESPONSE_INVALID', 'message': '邮件任务返回异常，请重试', 'status': response.status_code}
+            }
+
+        try:
+            start_async_mail_fetch(request_id, run)
+        except (ValueError, RuntimeError) as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 400 if isinstance(exc, ValueError) else 429
+        return jsonify({'success': True, 'pending': True, 'request_id': request_id}), 202
+    return dispatch
 
 from outlook_web.mail_identity import (
     choose_retained_mail_winner,
@@ -4742,15 +4770,27 @@ def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int,
 
 
 def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: int,
-                         folder_id: str = None, mailbox: str = None) -> Dict[str, Any]:
+                         folder_id: str = None, mailbox: str = None, progress=None) -> Dict[str, Any]:
     proxy_url = get_account_proxy_url(account)
     fallback_proxy_urls = get_account_proxy_failover_urls(account)
     explicit_folder_id = str(folder_id or '').strip()
     explicit_mailbox = str(mailbox or '').strip()
+    def fetch_folder(folder_job, *args, **kwargs):
+        if progress:
+            progress.start_unit(folder_job)
+        try:
+            result = fetch_account_folder_emails(account, folder_job, *args, **kwargs)
+        except Exception:
+            if progress:
+                progress.finish_unit(folder_job, {'success': False})
+            raise
+        if progress:
+            progress.finish_unit(folder_job, result)
+        return result
+
     if explicit_folder_id or explicit_mailbox or is_custom_mail_folder_storage_key(folder):
         return attach_email_notes_to_result(
-            fetch_account_folder_emails(
-                account,
+            fetch_folder(
                 folder,
                 skip,
                 top,
@@ -4777,8 +4817,7 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
         account['_disable_authorization_type_record'] = True
         future_map = {
             folder_job: executor.submit(
-                fetch_account_folder_emails,
-                account,
+                fetch_folder,
                 folder_job,
                 skip,
                 top,
@@ -4818,6 +4857,8 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
                         f'folder={folder_job}, timeout={mail_fetch_timeout_seconds}s'
                     )
                 }
+                if progress:
+                    progress.finish_unit(folder_job, results[folder_job])
         finally:
             account.pop('_disable_authorization_type_record', None)
             executor.shutdown(wait=False, cancel_futures=True)
@@ -4845,7 +4886,7 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
         )
 
     return attach_email_notes_to_result(
-        fetch_account_folder_emails(account, folder_name, skip, top, proxy_url, fallback_proxy_urls),
+        fetch_folder(folder_name, skip, top, proxy_url, fallback_proxy_urls),
         account,
     )
 
@@ -4921,6 +4962,13 @@ def merge_aggregated_account_results(
             total_count += int(item.get('count') or 0)
         if item.get('method'):
             summary['method'] = item.get('method')
+        if item.get('partial'):
+            summary['partial'] = True
+            account_errors.append({
+                'account_id': item.get('account_id'),
+                'account_email': item.get('account_email'),
+                'error': {'message': '部分文件夹获取失败', 'details': item.get('details') or {}},
+            })
         if not item.get('success'):
             summary['error'] = item.get('error')
             account_errors.append({
@@ -5035,6 +5083,9 @@ def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: 
             'folder_summaries': result.get('folder_summaries'),
             'source': 'local' if use_local else 'remote',
         }
+        if result.get('partial'):
+            response['partial'] = True
+            response['details'] = result.get('details') or {}
         if result.get('count') is not None:
             response['count'] = int(result.get('count') or 0)
         if new_message_ids:
@@ -5045,6 +5096,7 @@ def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: 
 
 @app.route('/api/emails/aggregated', methods=['GET'])
 @login_required
+@manual_mail_fetch_async
 def api_get_aggregated_emails():
     """聚合当前分组内普通账号的邮件列表。
 
@@ -5121,8 +5173,13 @@ def api_get_aggregated_emails():
     accounts_total = len(active_accounts)
     accounts_truncated = accounts_total > AGGREGATED_INBOX_MAX_ACCOUNTS
     selected_accounts = active_accounts[:AGGREGATED_INBOX_MAX_ACCOUNTS]
+    progress = begin_mail_fetch_progress(
+        request.args.get('progress_id'), [account['email'] for account in selected_accounts]
+    ) if not use_local else None
 
     if not selected_accounts:
+        if progress:
+            progress.finish({'success': True})
         return jsonify({
             'success': True,
             'emails': [],
@@ -5144,17 +5201,26 @@ def api_get_aggregated_emails():
     account_results: List[Dict[str, Any]] = []
     max_workers = min(AGGREGATED_INBOX_MAX_WORKERS, len(selected_accounts))
     fetch_source = 'local' if use_local else 'remote'
+    def fetch_account_with_progress(account):
+        if progress:
+            progress.start_unit(account['email'])
+        try:
+            result = fetch_aggregated_account_emails(
+                account, folder_name, skip, top, fetch_source, status_name, keyword
+            )
+        except Exception:
+            if progress:
+                progress.finish_unit(account['email'], {'success': False})
+            raise
+        if progress:
+            progress.finish_unit(account['email'], result)
+        return result
+
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix='agg-mail-fetch') as executor:
         future_map = {
             executor.submit(
-                fetch_aggregated_account_emails,
+                fetch_account_with_progress,
                 account,
-                folder_name,
-                skip,
-                top,
-                fetch_source,
-                status_name,
-                keyword,
             ): account
             for account in selected_accounts
         }
@@ -5179,6 +5245,9 @@ def api_get_aggregated_emails():
                 })
 
     merged = merge_aggregated_account_results(account_results)
+    if progress:
+        progress.finish(merged)
+        merged['fetch_progress'] = progress.snapshot()
     # 本地聚合：即使各账号本地都为空，也返回 success（空列表），便于前端提示手动刷新
     if use_local and not merged.get('success'):
         has_hard_failure = any(
@@ -5384,8 +5453,28 @@ def api_contact_history():
     return jsonify(payload)
 
 
+def fetch_manual_account_emails(account, folder, skip, top, **kwargs):
+    progress = begin_mail_fetch_progress(
+        request.args.get('progress_id'), ('inbox', 'junkemail') if folder == 'all' else (folder,)
+    )
+    try:
+        if progress:
+            result = fetch_account_emails(account, folder, skip, top, progress=progress, **kwargs)
+        else:
+            result = fetch_account_emails(account, folder, skip, top, **kwargs)
+    except Exception:
+        if progress:
+            progress.finish({'success': False})
+        raise
+    if progress:
+        progress.finish(result)
+        result['fetch_progress'] = progress.snapshot()
+    return result
+
+
 @app.route('/api/emails/<email_addr>')
 @login_required
+@manual_mail_fetch_async
 def api_get_emails(email_addr):
     """获取邮件列表（支持分页，不使用缓存）"""
     account = get_account_by_email(email_addr)
@@ -5411,8 +5500,20 @@ def api_get_emails(email_addr):
         ))
     skip = parse_non_negative_int(request.args.get('skip', 0), 0)
     top = parse_non_negative_int(request.args.get('top', 20), 20, 50)
-    result = fetch_account_emails(account, folder, skip, top)
+    result = fetch_manual_account_emails(account, folder, skip, top)
     return jsonify(result)
+
+
+@app.route('/api/emails/fetch-progress/<request_id>')
+@login_required
+def api_mail_fetch_progress(request_id):
+    progress = get_mail_fetch_progress(request_id)
+    payload = {'success': True, 'progress': progress}
+    if request.args.get('result') == '1':
+        payload.update(get_async_mail_fetch_result(request_id))
+    response = jsonify(payload)
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 @app.route('/api/emails/mark-read', methods=['POST'])

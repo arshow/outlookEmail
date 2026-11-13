@@ -2,6 +2,8 @@ import importlib
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -118,6 +120,105 @@ class AggregatedInboxTests(unittest.TestCase):
         self.assertEqual(payload['emails'][1]['account_remark'], 'Alpha 备注')
         self.assertEqual(payload['emails'][0]['account_type'], 'outlook')
         self.assertEqual(payload['emails'][1]['account_type'], 'outlook')
+
+    def test_manual_progress_reports_partial_accounts_and_can_be_polled(self):
+        request_id = 'b' * 32
+        def fake_fetch(account, folder, skip, top):
+            return {
+                'success': True, 'emails': [], 'partial': True,
+                'details': {'junkemail': {'code': 'EMAIL_FETCH_TIMEOUT'}},
+            }
+        with patch.object(web_outlook_app, 'fetch_account_emails', side_effect=fake_fetch):
+            payload = self.client.get(
+                f'/api/emails/aggregated?group_id=1&folder=all&progress_id={request_id}'
+            ).get_json()
+        self.assertTrue(payload['partial'])
+        self.assertEqual(len(payload['account_errors']), 2)
+        progress = payload['fetch_progress']
+        self.assertEqual(progress['completed'], 2)
+        self.assertEqual(progress['partial'], 2)
+        self.assertEqual(progress['timed_out'], 2)
+        polled = self.client.get(f'/api/emails/fetch-progress/{request_id}')
+        self.assertEqual(polled.get_json()['progress'], progress)
+        self.assertEqual(polled.headers['Cache-Control'], 'no-store')
+
+    def test_single_mailbox_progress_counts_folders(self):
+        request_id = 'c' * 32
+        with patch.object(web_outlook_app, 'fetch_account_folder_emails', return_value={
+            'success': True, 'emails': [], 'has_more': False,
+        }):
+            payload = self.client.get(
+                f'/api/emails/alpha@example.com?folder=all&progress_id={request_id}'
+            ).get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['fetch_progress']['completed'], 2)
+        self.assertEqual(payload['fetch_progress']['successful'], 2)
+
+    def test_progress_endpoint_requires_login(self):
+        self.assertEqual(self.app.test_client().get('/api/emails/fetch-progress/' + 'd' * 32).status_code, 401)
+
+    def test_progress_is_available_while_aggregated_request_is_running(self):
+        entered, release = threading.Event(), threading.Event()
+        request_id = 'e' * 32
+        result = {}
+        def fake_fetch(account, folder, skip, top):
+            if account['email'] == 'alpha@example.com':
+                entered.set()
+                release.wait(3)
+            return {'success': True, 'emails': [], 'has_more': False}
+        def request_mail():
+            result['response'] = self.client.get(
+                f'/api/emails/aggregated?group_id=1&folder=all&progress_id={request_id}'
+            )
+        polling_client = self.app.test_client()
+        with polling_client.session_transaction() as session:
+            session['logged_in'] = True
+        with patch.object(web_outlook_app, 'fetch_account_emails', side_effect=fake_fetch):
+            worker = threading.Thread(target=request_mail)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                snapshot = polling_client.get(f'/api/emails/fetch-progress/{request_id}').get_json()['progress']
+                self.assertEqual(snapshot['state'], 'running')
+                self.assertLess(snapshot['completed'], 2)
+                self.assertIn('alpha@example.com', snapshot['active'])
+            finally:
+                release.set()
+                worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(result['response'].get_json()['success'])
+
+    def test_async_single_and_aggregated_return_before_mail_finishes(self):
+        for url, request_id in [
+            ('/api/emails/alpha@example.com?folder=all', 'f' * 32),
+            ('/api/emails/aggregated?group_id=1&folder=all', '1' * 32),
+        ]:
+            with self.subTest(url=url):
+                entered, release = threading.Event(), threading.Event()
+                def fake_folder(*args, **kwargs):
+                    entered.set()
+                    release.wait(3)
+                    return {'success': True, 'emails': [], 'has_more': False}
+                with patch.object(web_outlook_app, 'fetch_account_folder_emails', side_effect=fake_folder):
+                    response = self.client.get(f'{url}&async=1&progress_id={request_id}')
+                    try:
+                        self.assertEqual(response.status_code, 202)
+                        self.assertTrue(response.get_json()['pending'])
+                        self.assertTrue(entered.wait(2))
+                        pending = self.client.get(f'/api/emails/fetch-progress/{request_id}?result=1').get_json()
+                        self.assertTrue(pending['pending'])
+                        self.assertIsNone(pending['result'])
+                        self.assertEqual(pending['progress']['state'], 'running')
+                    finally:
+                        release.set()
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline:
+                        final = self.client.get(f'/api/emails/fetch-progress/{request_id}?result=1').get_json()
+                        if not final['pending']:
+                            break
+                        time.sleep(0.01)
+                    self.assertFalse(final['pending'])
+                    self.assertTrue(final['result']['success'])
 
     def test_aggregated_inbox_partial_failure(self):
         def fake_fetch(account, folder, skip, top):
