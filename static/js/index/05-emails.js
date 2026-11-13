@@ -4812,7 +4812,19 @@
                         return;
                     }
                     if (!data || data.success !== true) {
-                        break;
+                        setMailSyncStatus('获取邮件失败，请查看错误详情后重试');
+                        return;
+                    }
+                    if (data.partial) {
+                        const details = aggregated
+                            ? buildAggregatedFetchErrorDetails(data)
+                            : (data.details || {});
+                        window._lastFetchErrorDetails = details;
+                        const message = '邮件未完整获取，部分文件夹或账号失败，请查看错误详情';
+                        setMailSyncStatus(message);
+                        showToast(message, 'warning');
+                        showEmailFetchErrorModal(details);
+                        return;
                     }
                     pageIndex += 1;
                     skip += pageTop;
@@ -4832,7 +4844,12 @@
                 showToast(message);
             } catch (error) {
                 if (stillSameView()) {
-                    showToast(isTimeoutAbortError(error) ? '获取最近邮件超时' : '获取最近邮件失败', 'error');
+                    const details = { browser: buildBrowserMailFetchError(error) };
+                    const message = getFetchErrorMessage(error);
+                    window._lastFetchErrorDetails = details;
+                    setMailSyncStatus(message);
+                    showToast(message, 'error');
+                    showEmailFetchErrorModal(details);
                 }
             } finally {
                 if (runSeq === mailboxViewSeq) {
