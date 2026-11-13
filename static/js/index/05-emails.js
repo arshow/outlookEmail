@@ -197,6 +197,8 @@
         function beginMailboxViewChange() {
             mailboxViewSeq += 1;
             isFetchingRecentEmails = false;
+            // Cached views may return without loading; release the previous view's controls now.
+            setEmailListLoadingState(false);
             currentEmailTotalCount = 0;
             if (typeof clearKeywordSearchResults === 'function') {
                 keywordSearchSeq += 1;

@@ -136,6 +136,58 @@ test('background pagination continues for the original group after switching vie
     assert.deepEqual(result.toasts, []);
 });
 
+for (const aggregated of [false, true]) {
+    test((aggregated ? 'aggregated' : 'single mailbox') + ' cached view clears spinner and old completion leaves a new refresh alone', async () => {
+        const classes = new Set(), attributes = new Set();
+        const button = { disabled: false, title: '',
+            classList: { toggle: (name, on) => on ? classes.add(name) : classes.delete(name) },
+            toggleAttribute: (name, on) => on ? attributes.add(name) : attributes.delete(name)
+        };
+        const input = {}, tab = {};
+        const replies = [];
+        const context = vm.createContext({
+            window: {}, document: {
+                querySelector: () => button, querySelectorAll: () => [tab],
+                getElementById: id => id === 'emailFetchTopInput' ? input : null
+            },
+            getEmailFetchTop: () => 10, persistEmailFetchTop: value => value,
+            isAggregatedInboxMode: () => aggregated,
+            getAggregatedInboxCacheAccountKey: () => 'aggregated',
+            isCurrentMailboxContext: () => true,
+            getCurrentMailboxContext: () => ({ account: 'test@example.com', folder: 'all', aggregated }),
+            setMailSyncStatus() {}, showToast() {}, showEmailFetchErrorModal() {},
+            fetchRemoteEmails: () => new Promise(resolve => replies.push(resolve))
+        });
+        const loading = source.slice(source.indexOf('function setEmailListLoadingState('), source.indexOf('function isCurrentMailboxContext('));
+        const changeView = source.slice(source.indexOf('function beginMailboxViewChange('), source.indexOf('function coerceMailReadState('));
+        vm.runInContext(`let isFetchingRecentEmails=false,mailboxViewSeq=1,currentEmailTotalCount=0;
+            let isTempEmailGroup=false,currentAccount='test@example.com',currentGroupId=18,aggregatedInboxGroupId=18;
+            const EMAIL_FETCH_PAGE_SIZE=50,AGGREGATED_INBOX_ACCOUNT_KEY='aggregated';
+            ${helpers}\n${loading}\n${changeView}\n${fetchRecent}`, context);
+        const oldRun = vm.runInContext('fetchRecentEmails()', context);
+        assert.equal(classes.has('spinning'), true);
+        assert.equal(attributes.has('aria-busy'), true);
+        vm.runInContext('beginMailboxViewChange()', context);
+        assert.equal(classes.has('spinning'), false);
+        assert.equal(attributes.has('aria-busy'), false);
+        assert.equal(button.disabled, false);
+        assert.equal(input.disabled, false);
+        assert.equal(tab.disabled, false);
+        assert.equal(button.title, '获取最近 10 封');
+        // The new mailbox is cached, so it performs no load/cleanup of its own.
+        const newRun = vm.runInContext('fetchRecentEmails()', context);
+        replies[0]({success:true,emails:[],has_more:false});
+        await oldRun;
+        assert.equal(classes.has('spinning'), true);
+        assert.equal(button.disabled, true);
+        replies[1]({success:true,emails:[],has_more:false});
+        await newRun;
+        assert.equal(classes.has('spinning'), false);
+        assert.equal(attributes.has('aria-busy'), false);
+        assert.equal(button.disabled, false);
+    });
+}
+
 for (const [status, expectedCode] of [[504, 'MAIL_NETWORK_TIMEOUT'], [524, 'MAIL_NETWORK_TIMEOUT'], [502, 'MAIL_RESPONSE_INVALID']]) {
     test('HTML HTTP ' + status + ' response uses the real fetch path and opens error details', async () => {
         const modals = [];
