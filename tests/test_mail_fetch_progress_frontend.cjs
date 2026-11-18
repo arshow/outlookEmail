@@ -214,10 +214,12 @@ for (const aggregated of [false, true]) {
         const taskId = vm.runInContext('[...manualMailTasks.keys()][0]', original.context);
         const restored = setup(aggregated, original.storage, false);
         const urls = [];
+        const methods = [];
         restored.context.buildAggregatedEmailsUrl = args => `/api/emails/aggregated?group_id=${args.groupId}&folder=${args.folder}&skip=${args.skip}&top=${args.top}`;
         restored.context.buildEmailListRequestUrl = (email,args) => `/api/emails/${email}?folder=${args.folder}&skip=${args.skip}&top=${args.top}`;
-        restored.context.fetchWithTimeout = async url => {
+        restored.context.fetchWithTimeout = async (url, options) => {
             urls.push(url);
+            methods.push(options.method || 'GET');
             return {json:async()=>url.includes('async=1') ? {success:true,pending:true} : {
                 success:true,pending:false,result:{success:true,emails:[{id:'new'}],has_more:false}
             }};
@@ -225,6 +227,7 @@ for (const aggregated of [false, true]) {
         vm.runInContext('initManualMailTasks()', restored.context);
         await settled();
         assert.equal(urls.length, 2);
+        assert.deepEqual(methods, ['POST', 'GET']);
         assert.match(urls[0], /skip=50&top=50/);
         if (aggregated) assert.match(urls[0], /group_id=18/);
         else assert.match(urls[0], /test@example.com/);

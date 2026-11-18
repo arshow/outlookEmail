@@ -2,6 +2,16 @@
 
         // ==================== 邮件相关 ====================
 
+        function invalidateTrustedJunkMoveCaches(data, accountEmail, groupId) {
+            if (typeof invalidateEmailListCache !== 'function') return;
+            if (data.trusted_junk_moved) invalidateEmailListCache(accountEmail, 'all');
+            const movedAccounts = (data.account_summaries || []).filter(summary => summary.trusted_junk_moved);
+            if (movedAccounts.length) {
+                for (const summary of movedAccounts) invalidateEmailListCache(summary.account_email, 'all');
+                invalidateEmailListCache(getAggregatedInboxCacheAccountKey(groupId), 'all');
+            }
+        }
+
         function syncCachesAfterAggregatedFetch(data, options = {}) {
             if (!data || data.success !== true) {
                 return;
@@ -1116,6 +1126,7 @@
                     ? `${requestUrl}&progress_id=${encodeURIComponent(options.progressId)}&async=1`
                     : requestUrl,
                 {
+                    method: options.progressId ? 'POST' : 'GET',
                     timeoutMs: EMAIL_LIST_REQUEST_TIMEOUT_MS,
                     timeoutMessage: '获取邮件超时，请检查网络、代理或账号配置后重试'
                 }
@@ -1142,6 +1153,9 @@
 
             if (data.pending && options.progressId) {
                 data = await waitForManualMailFetch(options.progressId, options);
+            }
+            if (options.progressId) {
+                invalidateTrustedJunkMoveCaches(data, email, options.groupId);
             }
             if (data.fetch_progress && typeof options.onProgress === 'function') {
                 options.onProgress(data.fetch_progress);

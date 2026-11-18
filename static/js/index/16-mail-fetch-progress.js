@@ -89,6 +89,9 @@ async function resumeManualMailTask(task) {
                     return;
                 }
                 result = await waitForManualMailFetch(task.requestId, { onProgress: progress => run.updateSnapshot(progress) });
+                if (typeof invalidateTrustedJunkMoveCaches === 'function') {
+                    invalidateTrustedJunkMoveCaches(result, task.context.account, task.context.groupId);
+                }
                 run.recordResult(result);
             }
             if (!result.success || result.partial) {
@@ -109,7 +112,7 @@ async function resumeManualMailTask(task) {
                 ? buildAggregatedEmailsUrl({ ...params, groupId: task.context.groupId })
                 : buildEmailListRequestUrl(task.context.account, { ...params, method: 'graph' });
             const response = await fetchWithTimeout(`${url}&async=1&progress_id=${requestId}`, {
-                timeoutMs: 10000, cache: 'no-store'
+                method: 'POST', timeoutMs: 10000, cache: 'no-store'
             });
             const submitted = await response.json();
             if (!submitted.pending) run.recordResult(submitted);

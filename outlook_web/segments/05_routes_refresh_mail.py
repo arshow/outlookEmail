@@ -2990,7 +2990,7 @@ def list_account_trusted_senders(account_id: int, db=None) -> List[str]:
 
 
 def move_imap_account_emails_to_inbox(account: Dict[str, Any], items: List[Dict[str, str]],
-                                      proxy_url: str) -> Dict[str, Any]:
+                                      proxy_url: str, *, safe_move: bool = False) -> Dict[str, Any]:
     result = move_emails_imap_generic_result(
         account['email'],
         account.get('imap_password', ''),
@@ -3000,6 +3000,7 @@ def move_imap_account_emails_to_inbox(account: Dict[str, Any], items: List[Dict[
         account.get('provider', 'custom'),
         proxy_url,
         target_folder='inbox',
+        **({'safe_move': True} if safe_move else {}),
     )
     clear_retained_rows_for_moved_emails(account, items, result, fallback_id_mode='uid')
     return result
@@ -3020,18 +3021,20 @@ def move_graph_items_to_inbox(account: Dict[str, Any], items: List[Dict[str, str
 
 
 def move_oauth_imap_items_to_inbox(account: Dict[str, Any], items: List[Dict[str, str]],
-                                   proxy_url: str, fallback_proxy_urls: List[str]) -> Dict[str, Any]:
+                                   proxy_url: str, fallback_proxy_urls: List[str], *,
+                                   safe_move: bool = False, imap_server: str = '') -> Dict[str, Any]:
     result = move_emails_imap_batch(
         account['email'],
         account['client_id'],
         account['refresh_token'],
         items,
-        IMAP_SERVER_NEW,
+        imap_server or IMAP_SERVER_NEW,
         proxy_url,
         fallback_proxy_urls,
         target_folder='inbox',
+        **({'safe_move': True} if safe_move else {}),
     )
-    if not result.get('success') and result.get('success_count', 0) == 0:
+    if not imap_server and not safe_move and not result.get('success') and result.get('success_count', 0) == 0:
         result = move_emails_imap_batch(
             account['email'],
             account['client_id'],
@@ -3060,22 +3063,62 @@ def clear_retained_rows_for_moved_emails(account: Dict[str, Any], items: List[Di
         )
         if str(message_id or '').strip()
     ]
-    if not moved_ids:
+    account_id = account.get('id')
+    if not account_id or not moved_ids:
         return 0
-    synthetic = {
-        'success': True,
-        'deleted_ids': moved_ids,
-        'updated_ids': moved_ids,
-        'success_count': len(moved_ids),
-        'failed_count': 0,
+    database = db or get_db()
+    moved_set = set(moved_ids)
+    deleted_count = 0
+    for item in items:
+        if item['id'] not in moved_set:
+            continue
+        cursor = database.execute('''
+            DELETE FROM retained_normal_mail_messages
+            WHERE account_id = ? AND folder = ? AND provider_message_id = ? AND id_mode = ?
+        ''', (account_id, item['folder'], item['id'], item.get('id_mode') or fallback_id_mode))
+        deleted_count += max(0, cursor.rowcount or 0)
+    database.commit()
+    return deleted_count
+
+
+def move_trusted_junk_emails(account, junk_result, trusted_senders, proxy_url, fallback_proxy_urls):
+    """Move only matching mail fetched from this account's remote junk folder."""
+    if not junk_result.get('success'):
+        return set(), []
+    candidates = {
+        str(item['id']): item for item in junk_result.get('emails', [])
+        if item.get('id') and item.get('folder') == 'junkemail'
+        and parse_trusted_sender_email(item.get('from')) in trusted_senders
     }
-    return delete_retained_normal_mail_rows(
-        account,
-        [item['id'] for item in items],
-        synthetic,
-        fallback_id_mode=fallback_id_mode,
-        db=db,
-    )
+    if not candidates:
+        return set(), []
+
+    items = [
+        {'id': message_id, 'folder': 'junkemail', 'id_mode': item.get('id_mode') or ''}
+        for message_id, item in candidates.items()
+    ]
+    if account.get('account_type') == 'imap':
+        result = move_imap_account_emails_to_inbox(account, items, proxy_url, safe_move=True)
+    elif junk_result.get('request_method') == 'graph':
+        result = move_graph_items_to_inbox(account, items, proxy_url, fallback_proxy_urls)
+    elif junk_result.get('request_method') == 'imap':
+        result = move_oauth_imap_items_to_inbox(
+            account, items, proxy_url, fallback_proxy_urls, safe_move=True,
+            imap_server=IMAP_SERVER_OLD if junk_result.get('method') == 'IMAP (Old)' else IMAP_SERVER_NEW,
+        )
+    else:
+        return set(), []
+
+    moved = set(result.get('moved_ids') or ()) & candidates.keys()
+    id_map = result.get('moved_id_map') or {}
+    inbox_items = [
+        {**item, 'id': id_map[message_id], 'folder': 'inbox'}
+        for message_id, item in candidates.items() if message_id in moved and id_map.get(message_id)
+    ]
+    if len(moved) < len(items):
+        app.logger.warning('Trusted junk move incomplete for account %s (%s/%s moved)',
+                           account.get('id'), len(moved), len(items))
+    return moved, inbox_items
 
 
 def coerce_mail_is_read(value: Any) -> bool:
@@ -4503,7 +4546,8 @@ def build_folder_failure_detail(result: Any) -> Any:
     }
 
 
-def merge_folder_results(results: Dict[str, Dict[str, Any]], skip: int, top: int) -> Dict[str, Any]:
+def merge_folder_results(results: Dict[str, Dict[str, Any]], skip: int, top: int, *,
+                         moved_inbox_items=()) -> Dict[str, Any]:
     successful = {folder: result for folder, result in results.items() if result.get('success')}
     if not successful:
         details = {
@@ -4516,7 +4560,7 @@ def merge_folder_results(results: Dict[str, Dict[str, Any]], skip: int, top: int
             'details': details
         }
 
-    merged = []
+    merged = list(moved_inbox_items)
     methods = []
     has_more = False
     partial_errors = {}
@@ -4770,7 +4814,8 @@ def fetch_account_folder_emails(account: Dict[str, Any], folder: str, skip: int,
 
 
 def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: int,
-                         folder_id: str = None, mailbox: str = None, progress=None) -> Dict[str, Any]:
+                         folder_id: str = None, mailbox: str = None, progress=None,
+                         move_trusted_junk: bool = False) -> Dict[str, Any]:
     proxy_url = get_account_proxy_url(account)
     fallback_proxy_urls = get_account_proxy_failover_urls(account)
     explicit_folder_id = str(folder_id or '').strip()
@@ -4808,6 +4853,39 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
             'success': False,
             'error': f'folder 参数无效，支持: {", ".join(sorted(VALID_MAIL_FOLDERS))}'
         }
+
+    trusted_senders = set()
+    if move_trusted_junk and top > 0 and (
+        folder_name in {'all', 'junkemail'} or (folder_name == 'inbox' and skip == 0)
+    ):
+        trusted_senders = set(list_account_trusted_senders(account.get('id')))
+
+    def reconcile_junk(result, refill=True):
+        if not trusted_senders:
+            return result, []
+        try:
+            moved, inbox_items = move_trusted_junk_emails(
+                account, result, trusted_senders, proxy_url, fallback_proxy_urls
+            )
+        except Exception as exc:
+            app.logger.warning('Trusted junk move failed for account %s (%s)', account.get('id'), type(exc).__name__)
+            return result, []
+        if not moved:
+            return result, []
+
+        emails = [item for item in result['emails'] if str(item['id']) not in moved]
+        result = {**result, 'emails': emails, 'trusted_junk_moved': len(moved)}
+        if refill and result.get('has_more'):
+            # Moving messages shifts the server's junk offsets. Read the same page
+            # again so the next page won't skip messages that shifted forward.
+            try:
+                fresh = fetch_account_folder_emails(account, 'junkemail', skip, top, proxy_url, fallback_proxy_urls)
+                if fresh.get('success'):
+                    fresh_emails = [item for item in fresh['emails'] if str(item['id']) not in moved]
+                    result = {**fresh, 'emails': fresh_emails, 'trusted_junk_moved': len(moved)}
+            except Exception as exc:
+                app.logger.warning('Junk refresh after move failed for account %s (%s)', account.get('id'), type(exc).__name__)
+        return result, inbox_items
 
     if folder_name == 'all':
         merged_top = max(1, min(100, top * 2))
@@ -4876,19 +4954,32 @@ def fetch_account_emails(account: Dict[str, Any], folder: str, skip: int, top: i
         ):
             record_outlook_mail_channel(account, next(iter(channels)))
 
-        return attach_email_notes_to_result(
-            merge_folder_results(
-                results,
-                0,
-                merged_top
-            ),
-            account,
-        )
-
-    return attach_email_notes_to_result(
-        fetch_folder(folder_name, skip, top, proxy_url, fallback_proxy_urls),
-        account,
-    )
+        junk_result, inbox_items = reconcile_junk(results['junkemail'])
+        moved_count = junk_result.get('trusted_junk_moved', 0)
+        if inbox_items:
+            existing_ids = {(item.get('id_mode'), item.get('id')) for item in results['inbox'].get('emails', [])}
+            inbox_items = [item for item in inbox_items if (item.get('id_mode'), item.get('id')) not in existing_ids]
+        results['junkemail'] = junk_result
+        result = merge_folder_results(results, 0, merged_top, moved_inbox_items=inbox_items)
+    elif folder_name == 'junkemail':
+        result, inbox_items = reconcile_junk(fetch_folder(folder_name, skip, top, proxy_url, fallback_proxy_urls))
+        moved_count = result.get('trusted_junk_moved', 0)
+        if inbox_items and is_normal_mail_local_retention_enabled():
+            upsert_retained_normal_mail_list_items(account, 'inbox', inbox_items)
+    else:
+        moved_count = 0
+        if trusted_senders:
+            # A refresh limited to the inbox should still rescue newly filtered mail.
+            try:
+                junk = fetch_account_folder_emails(account, 'junkemail', 0, top, proxy_url, fallback_proxy_urls)
+                junk, _ = reconcile_junk(junk, refill=False)
+                moved_count = junk.get('trusted_junk_moved', 0)
+            except Exception as exc:
+                app.logger.warning('Trusted junk lookup failed for account %s (%s)', account.get('id'), type(exc).__name__)
+        result = fetch_folder(folder_name, skip, top, proxy_url, fallback_proxy_urls)
+    if moved_count:
+        result['trusted_junk_moved'] = moved_count
+    return attach_email_notes_to_result(result, account)
 
 
 AGGREGATED_INBOX_MAX_ACCOUNTS = 50
@@ -4962,6 +5053,8 @@ def merge_aggregated_account_results(
             total_count += int(item.get('count') or 0)
         if item.get('method'):
             summary['method'] = item.get('method')
+        if item.get('trusted_junk_moved'):
+            summary['trusted_junk_moved'] = item['trusted_junk_moved']
         if item.get('partial'):
             summary['partial'] = True
             account_errors.append({
@@ -5013,7 +5106,7 @@ def merge_aggregated_account_results(
 
 def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: int, top: int,
                                     source: str = 'remote', status: str = 'all',
-                                    keyword: str = '') -> Dict[str, Any]:
+                                    keyword: str = '', *, move_trusted_junk: bool = False) -> Dict[str, Any]:
     account_id = account.get('id')
     account_email = account.get('email')
     use_local = str(source or '').strip().lower() in {'local', 'retained', 'cache'}
@@ -5024,6 +5117,8 @@ def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: 
                 result = fetch_retained_normal_mail_list(
                     account, folder, skip, top, include_body=bool(keyword), status=status, keyword=keyword
                 )
+            elif move_trusted_junk:
+                result = fetch_account_emails(account, folder, skip, top, move_trusted_junk=True)
             else:
                 result = fetch_account_emails(account, folder, skip, top)
         except Exception as exc:
@@ -5088,13 +5183,15 @@ def fetch_aggregated_account_emails(account: Dict[str, Any], folder: str, skip: 
             response['details'] = result.get('details') or {}
         if result.get('count') is not None:
             response['count'] = int(result.get('count') or 0)
+        if result.get('trusted_junk_moved'):
+            response['trusted_junk_moved'] = result['trusted_junk_moved']
         if new_message_ids:
             response['new_count'] = len(new_message_ids)
             response['new_message_ids'] = new_message_ids
         return response
 
 
-@app.route('/api/emails/aggregated', methods=['GET'])
+@app.route('/api/emails/aggregated', methods=['GET', 'POST'])
 @login_required
 @manual_mail_fetch_async
 def api_get_aggregated_emails():
@@ -5151,6 +5248,7 @@ def api_get_aggregated_emails():
         '1', 'true', 'yes', 'on'
     }
     use_local = source_raw in {'local', 'retained', 'cache'} or local_only
+    move_trusted_junk = request.method == 'POST' and not use_local
     if use_local and not is_normal_mail_local_retention_enabled():
         return jsonify({
             'success': False,
@@ -5206,7 +5304,8 @@ def api_get_aggregated_emails():
             progress.start_unit(account['email'])
         try:
             result = fetch_aggregated_account_emails(
-                account, folder_name, skip, top, fetch_source, status_name, keyword
+                account, folder_name, skip, top, fetch_source, status_name, keyword,
+                **({'move_trusted_junk': True} if move_trusted_junk else {}),
             )
         except Exception:
             if progress:
@@ -5454,6 +5553,8 @@ def api_contact_history():
 
 
 def fetch_manual_account_emails(account, folder, skip, top, **kwargs):
+    if request.method == 'POST':
+        kwargs['move_trusted_junk'] = True
     progress = begin_mail_fetch_progress(
         request.args.get('progress_id'), ('inbox', 'junkemail') if folder == 'all' else (folder,)
     )
@@ -5472,7 +5573,7 @@ def fetch_manual_account_emails(account, folder, skip, top, **kwargs):
     return result
 
 
-@app.route('/api/emails/<email_addr>')
+@app.route('/api/emails/<email_addr>', methods=['GET', 'POST'])
 @login_required
 @manual_mail_fetch_async
 def api_get_emails(email_addr):

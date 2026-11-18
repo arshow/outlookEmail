@@ -3049,8 +3049,9 @@ def delete_email_items_imap(mail, items: List[Dict[str, Any]], provider: str,
 
 
 def move_imap_message_to_mailbox(mail, message_id: Any, destination_mailbox: str,
-                                 preferred_mode: str = 'uid') -> tuple[bool, str, List[Dict[str, Any]]]:
-    """将单封邮件移到目标邮箱：只按 UID MOVE，失败则 UID COPY + \\Deleted + EXPUNGE。"""
+                                 preferred_mode: str = 'uid', *,
+                                 safe_move: bool = False) -> tuple[bool, str, List[Dict[str, Any]]]:
+    """将单封邮件移到目标邮箱；safe_move 模式只使用并验证 UID MOVE。"""
     destination = str(destination_mailbox or '').strip()
     attempts: List[Dict[str, Any]] = []
     if not destination:
@@ -3065,6 +3066,20 @@ def move_imap_message_to_mailbox(mail, message_id: Any, destination_mailbox: str
         })
         return False, '', attempts
 
+    if safe_move:
+        source_exists = imap_uid_exists(mail, uid)
+        if source_exists is not True:
+            attempts.append({
+                'mode': 'uid',
+                'action': 'VERIFY_SOURCE',
+                'status': 'NOT_FOUND' if source_exists is False else 'UNVERIFIED',
+                'response': '源 UID 不存在或无法确认，未执行移动',
+            })
+            return False, '', attempts
+
+        clear_imap_copyuid_response(mail)
+
+    status, data = '', None
     try:
         status, data = mail.uid('MOVE', uid, destination)
         attempts.append({
@@ -3073,7 +3088,7 @@ def move_imap_message_to_mailbox(mail, message_id: Any, destination_mailbox: str
             'status': str(status),
             'response': sanitize_error_details(str(data or ''))[:200],
         })
-        if status == 'OK':
+        if status == 'OK' and not safe_move:
             return True, 'uid', attempts
     except Exception as exc:
         attempts.append({
@@ -3082,6 +3097,44 @@ def move_imap_message_to_mailbox(mail, message_id: Any, destination_mailbox: str
             'status': type(exc).__name__,
             'response': sanitize_error_details(str(exc))[:200],
         })
+
+    if safe_move:
+        if attempts[-1].get('action') != 'MOVE' or status != 'OK':
+            return False, '', attempts
+        copyuid = parse_imap_copyuid_response(mail, data)
+        if copyuid is not None:
+            target_uidvalidity, source_uids, target_uids = copyuid
+            if not target_uidvalidity or source_uids != {uid} or len(target_uids) != 1:
+                attempts.append({
+                    'mode': 'uid',
+                    'action': 'VERIFY_COPYUID',
+                    'status': 'INVALID',
+                    'response': 'COPYUID 未与本次源 UID 一一对应',
+                })
+                return False, '', attempts
+            target_uid = next(iter(target_uids))
+            attempts.append({
+                'mode': 'uid',
+                'action': 'VERIFY_COPYUID',
+                'status': 'OK',
+                'moved_id': encode_imap_message_id(target_uid, target_uidvalidity),
+            })
+            return True, 'uid', attempts
+
+        if imap_uid_exists(mail, uid) is False:
+            # Some servers omit COPYUID. A vanished source UID is the strongest
+            # available confirmation, but no destination UID can be returned.
+            return True, 'uid', attempts
+        attempts.append({
+            'mode': 'uid',
+            'action': 'VERIFY_MOVE',
+            'status': 'UNCONFIRMED',
+            'response': '服务器未返回有效 COPYUID，且无法确认源邮件已移出',
+        })
+        return False, '', attempts
+
+    if attempts[-1].get('action') == 'MOVE' and status == 'OK':
+        return True, 'uid', attempts
 
     try:
         copy_status, copy_data = mail.uid('COPY', uid, destination)
@@ -3121,11 +3174,102 @@ def move_imap_message_to_mailbox(mail, message_id: Any, destination_mailbox: str
     return False, '', attempts
 
 
+def imap_uid_exists(mail, uid: str) -> Optional[bool]:
+    """验证当前选中文件夹中的 UID，None 表示服务器响应无法判定。"""
+    try:
+        status, data = mail.uid('FETCH', uid, '(UID)')
+    except Exception:
+        return None
+    if status != 'OK':
+        return None
+    response_uids = imap_response_uids(data)
+    if response_uids == {uid}:
+        return True
+    if not response_uids and not has_imap_fetch_payload(data):
+        return False
+    return None
+
+
+def imap_copyuid_response_text(value: Any) -> str:
+    """转换 imaplib 的 bytes 或 response tuple 为可解析文本。"""
+    if isinstance(value, memoryview):
+        value = value.tobytes()
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode('utf-8', errors='ignore')
+    if isinstance(value, (list, tuple)):
+        return ' '.join(imap_copyuid_response_text(item) for item in value)
+    return str(value or '')
+
+
+def parse_single_imap_uid_set(value: str) -> Optional[str]:
+    """仅接受恰好含一个 UID 的 COPYUID UID 集合。"""
+    parts = str(value or '').split(',')
+    if len(parts) != 1:
+        return None
+    endpoints = parts[0].split(':')
+    if len(endpoints) == 1:
+        uid = endpoints[0]
+        return uid if re.fullmatch(r'[1-9]\d*', uid) else None
+    if (
+        len(endpoints) == 2
+        and endpoints[0] == endpoints[1]
+        and re.fullmatch(r'[1-9]\d*', endpoints[0])
+    ):
+        return endpoints[0]
+    return None
+
+
+def clear_imap_copyuid_response(mail) -> None:
+    """丢弃上一条命令遗留的 COPYUID，避免把旧目标 UID 用到新移动上。"""
+    responses = getattr(mail, 'untagged_responses', {})
+    if isinstance(responses, dict):
+        responses.pop('COPYUID', None)
+        responses.pop(b'COPYUID', None)
+    response = getattr(mail, 'response', None)
+    if callable(response):
+        try:
+            response('COPYUID')
+        except Exception:
+            pass
+
+
+def parse_imap_copyuid_response(mail, data: Any) -> Optional[tuple[str, set[str], set[str]]]:
+    """解析 UID MOVE 返回的 COPYUID，返回目标 UIDVALIDITY、源 UID 集和目标 UID 集。"""
+    pattern = re.compile(r'\bCOPYUID\s+([1-9]\d*)\s+([0-9:,]+)\s+([0-9:,]+)', re.IGNORECASE)
+    data_text = imap_copyuid_response_text(data)
+    matches = pattern.findall(data_text)
+    if not matches:
+        response = getattr(mail, 'response', None)
+        if callable(response):
+            try:
+                response_value = response('COPYUID')
+                response_text = imap_copyuid_response_text(response_value)
+                matches = pattern.findall(response_text)
+            except Exception:
+                pass
+    matches = list(dict.fromkeys(matches))
+    if not matches:
+        if 'COPYUID' in data_text.upper():
+            return '', set(), set()
+        return None
+    if len(matches) != 1:
+        return '', set(), set()
+
+    uidvalidity, source_set, target_set = matches[0]
+    source_uid = parse_single_imap_uid_set(source_set)
+    target_uid = parse_single_imap_uid_set(target_set)
+    if not source_uid or not target_uid:
+        return uidvalidity, set(), set()
+    return uidvalidity, {source_uid}, {target_uid}
+
+
 def move_email_items_imap(mail, items: List[Dict[str, Any]], provider: str,
                           target_folder: str = 'inbox',
-                          default_mode: str = 'uid') -> Dict[str, Any]:
+                          default_mode: str = 'uid', *,
+                          safe_move: bool = False) -> Dict[str, Any]:
     """通过 IMAP 将邮件批量移动到目标文件夹。"""
     moved_ids: List[str] = []
+    moved_id_map: Dict[str, str] = {}
     errors: List[Any] = []
     grouped_items: Dict[str, List[Dict[str, Any]]] = {}
     destination_folder = str(target_folder or 'inbox').strip().lower() or 'inbox'
@@ -3181,6 +3325,7 @@ def move_email_items_imap(mail, items: List[Dict[str, Any]], provider: str,
             'updated_ids': unique_moved,
             'deleted_ids': unique_moved,
             'errors': errors,
+            **({'moved_id_map': {}} if safe_move else {}),
         }
 
     for folder, folder_items in grouped_items.items():
@@ -3207,10 +3352,18 @@ def move_email_items_imap(mail, items: List[Dict[str, Any]], provider: str,
                 item['id'],
                 destination_mailbox,
                 preferred_mode=preferred_mode,
+                safe_move=safe_move,
             )
             if success:
                 moved_ids.append(item['id'])
                 item['id_mode'] = used_mode
+                moved_id = next((
+                    attempt.get('moved_id')
+                    for attempt in reversed(attempts)
+                    if isinstance(attempt, dict) and attempt.get('moved_id')
+                ), '')
+                if moved_id:
+                    moved_id_map[item['id']] = moved_id
                 continue
 
             errors.append({
@@ -3234,7 +3387,7 @@ def move_email_items_imap(mail, items: List[Dict[str, Any]], provider: str,
     failed_count = len([item for item in errors if item.get('id')]) + sum(
         1 for item in errors if not item.get('id')
     )
-    return {
+    result = {
         'success': failed_count == 0,
         'success_count': len(unique_moved),
         'failed_count': failed_count,
@@ -3243,13 +3396,17 @@ def move_email_items_imap(mail, items: List[Dict[str, Any]], provider: str,
         'deleted_ids': unique_moved,
         'errors': errors,
     }
+    if safe_move:
+        result['moved_id_map'] = moved_id_map
+    return result
 
 
 def move_emails_imap_batch(email_addr: str, client_id: str, refresh_token: str,
                            items: List[Dict[str, Any]], server: str = IMAP_SERVER_NEW,
                            proxy_url: str = None,
                            fallback_proxy_urls: Optional[List[str]] = None,
-                           target_folder: str = 'inbox') -> Dict[str, Any]:
+                           target_folder: str = 'inbox', *,
+                           safe_move: bool = False) -> Dict[str, Any]:
     access_token = get_access_token_imap(client_id, refresh_token, proxy_url, fallback_proxy_urls)
     if not access_token:
         return {
@@ -3269,7 +3426,8 @@ def move_emails_imap_batch(email_addr: str, client_id: str, refresh_token: str,
         auth_string = f"user={email_addr}\1auth=Bearer {access_token}\1\1".encode('utf-8')
         connection.authenticate('XOAUTH2', lambda x: auth_string)
         return move_email_items_imap(
-            connection, items, 'outlook', target_folder=target_folder, default_mode='sequence'
+            connection, items, 'outlook', target_folder=target_folder, default_mode='sequence',
+            safe_move=safe_move,
         )
     except Exception as exc:
         return {
@@ -3292,7 +3450,8 @@ def move_emails_imap_batch(email_addr: str, client_id: str, refresh_token: str,
 def move_emails_imap_generic_result(email_addr: str, imap_password: str, imap_host: str,
                                     items: List[Dict[str, Any]], imap_port: int = 993,
                                     provider: str = 'custom', proxy_url: str = '',
-                                    target_folder: str = 'inbox') -> Dict[str, Any]:
+                                    target_folder: str = 'inbox', *,
+                                    safe_move: bool = False) -> Dict[str, Any]:
     mail = None
     try:
         mail = create_imap_connection(imap_host, imap_port, proxy_url)
@@ -3317,7 +3476,8 @@ def move_emails_imap_generic_result(email_addr: str, imap_password: str, imap_ho
 
         send_imap_id(mail, provider, imap_host)
         return move_email_items_imap(
-            mail, items, provider, target_folder=target_folder, default_mode='uid'
+            mail, items, provider, target_folder=target_folder, default_mode='uid',
+            safe_move=safe_move,
         )
     except Exception as exc:
         return {
