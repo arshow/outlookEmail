@@ -264,8 +264,11 @@ def discover_account_inbox_mail(account: Dict[str, Any], top: int) -> Dict[str, 
     fetched_count = 0
     folder_errors: Dict[str, str] = {}
     any_success = False
+    trusted_senders = set(list_account_trusted_senders(account_id))
+    folders = ('junkemail', 'inbox') if trusted_senders else INBOX_DISCOVERY_FOLDERS
+    rescued_inbox_items = []
 
-    for folder_name in INBOX_DISCOVERY_FOLDERS:
+    for folder_name in folders:
         fetch_result = fetch_account_folder_emails(
             account,
             folder_name,
@@ -276,10 +279,32 @@ def discover_account_inbox_mail(account: Dict[str, Any], top: int) -> Dict[str, 
         )
         if not fetch_result.get('success'):
             folder_errors[folder_name] = fetch_result.get('error') or f'抓取 {folder_name} 失败'
-            continue
+            if folder_name != 'inbox' or not rescued_inbox_items:
+                continue
 
         any_success = True
-        emails = list(fetch_result.get('emails') or [])
+        emails = list(fetch_result.get('emails') or []) if fetch_result.get('success') else []
+        if folder_name == 'junkemail' and trusted_senders:
+            try:
+                moved_ids, rescued_inbox_items = move_trusted_junk_emails(
+                    account, fetch_result, trusted_senders, proxy_url, fallback_proxy_urls
+                )
+            except Exception as exc:
+                app.logger.warning('Trusted junk move failed for account %s (%s)', account_id, type(exc).__name__)
+            else:
+                emails = [item for item in emails if str(item.get('id') or '') not in moved_ids]
+                if moved_ids:
+                    safe_console_print(f'[inbox-discovery] trusted junk moved: account_id={account_id} count={len(moved_ids)}')
+        elif folder_name == 'inbox' and rescued_inbox_items:
+            # Read after moving so servers without a destination ID can reveal it.
+            # Keep confirmed copies outside the newest inbox page as well.
+            existing_ids = {(item.get('id_mode'), item.get('id')) for item in emails}
+            internet_ids = {item['internet_message_id'] for item in emails if item.get('internet_message_id')}
+            emails.extend(
+                item for item in rescued_inbox_items
+                if (item.get('id_mode'), item.get('id')) not in existing_ids
+                and item.get('internet_message_id') not in internet_ids
+            )
         new_message_ids = find_new_retained_normal_mail_identifiers(account, folder_name, emails)
         upsert_retained_normal_mail_list_items(account, folder_name, emails)
         if new_message_ids:

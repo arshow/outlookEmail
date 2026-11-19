@@ -33,6 +33,7 @@ class InboxDiscoveryTests(unittest.TestCase):
             web_outlook_app.init_db()
             db = web_outlook_app.get_db()
             db.execute('DELETE FROM retained_normal_mail_messages')
+            db.execute('DELETE FROM account_trusted_senders')
             db.execute('DELETE FROM account_aliases')
             db.execute('DELETE FROM account_tags')
             db.execute('DELETE FROM accounts')
@@ -112,6 +113,12 @@ class InboxDiscoveryTests(unittest.TestCase):
             'method': 'Graph API',
             'has_more': False,
         }
+
+    def _trust_sender(self, sender_email):
+        with self.app.app_context():
+            return web_outlook_app.upsert_account_trusted_senders(
+                self.account['id'], [sender_email]
+            )
 
     def _fake_folder_fetch(self, inbox_emails=None, junk_emails=None, junk_error=None):
         inbox_emails = list(inbox_emails or [])
@@ -264,6 +271,197 @@ class InboxDiscoveryTests(unittest.TestCase):
         self.assertTrue(result['success'])
         self.assertEqual(result['new_count'], 1)
         self.assertIn('junkemail', result.get('folder_errors') or {})
+
+    def test_discover_moves_trusted_junk_and_caches_graph_move_in_inbox(self):
+        self._trust_sender('trusted@example.com')
+        junk_email = {
+            'id': 'junk-original-id',
+            'id_mode': 'graph',
+            'internet_message_id': '<trusted-message@example.com>',
+            'subject': 'Trusted sender mail',
+            'from': 'Trusted sender <trusted@example.com>',
+            'to': 'poll@example.com',
+            'date': '2026-08-11T12:05:00Z',
+            'is_read': False,
+            'is_flagged': False,
+            'has_attachments': False,
+            'body_preview': 'hello',
+            'folder': 'junkemail',
+        }
+        inbox_email = {**junk_email, 'id': 'inbox-new-graph-id', 'folder': 'inbox'}
+        calls = []
+        events = []
+
+        def fake_fetch(_account, folder, _skip, _top, **_kwargs):
+            calls.append(('fetch', folder))
+            if folder == 'junkemail':
+                return {
+                    **self._folder_fetch_result([junk_email]),
+                    'request_method': 'graph',
+                }
+            if folder == 'inbox':
+                return {
+                    **self._folder_fetch_result([inbox_email]),
+                    'request_method': 'graph',
+                }
+            return {'success': False, 'error': f'unexpected folder {folder}', 'emails': []}
+
+        def fake_graph_move(_client_id, _refresh_token, message_ids, **_kwargs):
+            calls.append(('move', list(message_ids)))
+            return {
+                'success': True,
+                'success_count': 1,
+                'failed_count': 0,
+                'moved_ids': list(message_ids),
+                'moved_id_map': {'junk-original-id': 'inbox-new-graph-id'},
+                'errors': [],
+            }
+
+        with self.app.app_context():
+            with patch.object(web_outlook_app, 'fetch_account_folder_emails', side_effect=fake_fetch), \
+                    patch.object(web_outlook_app, 'move_emails_graph', side_effect=fake_graph_move), \
+                    patch.object(web_outlook_app, 'publish_inbox_discovery_event', side_effect=lambda event: events.append(event) or 1):
+                result = web_outlook_app.discover_account_inbox_mail(self.account, top=20)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(calls, [
+            ('fetch', 'junkemail'),
+            ('move', ['junk-original-id']),
+            ('fetch', 'inbox'),
+        ])
+        self.assertEqual(result['new_count'], 1)
+        self.assertEqual(
+            [(item['id'], item['folder']) for item in result['emails']],
+            [('inbox-new-graph-id', 'inbox')],
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['folder'], 'inbox')
+        self.assertEqual(events[0]['emails'][0]['id'], 'inbox-new-graph-id')
+
+        with self.app.app_context():
+            rows = web_outlook_app.get_db().execute(
+                '''
+                SELECT folder, provider_message_id
+                FROM retained_normal_mail_messages
+                WHERE account_id = ? AND provider_message_id IN (?, ?)
+                ORDER BY folder, provider_message_id
+                ''',
+                (self.account['id'], 'junk-original-id', 'inbox-new-graph-id')
+            ).fetchall()
+        self.assertEqual(
+            [(str(row['folder']).lower(), row['provider_message_id']) for row in rows],
+            [('inbox', 'inbox-new-graph-id')],
+        )
+
+    def test_discover_leaves_untrusted_sender_in_junk(self):
+        junk_email = {
+            'id': 'untrusted-junk-id',
+            'id_mode': 'graph',
+            'subject': 'Untrusted sender mail',
+            'from': 'other@example.com',
+            'to': 'poll@example.com',
+            'date': '2026-08-11T12:05:00Z',
+            'is_read': False,
+            'is_flagged': False,
+            'has_attachments': False,
+            'body_preview': 'hello',
+            'folder': 'junkemail',
+        }
+        events = []
+
+        with self.app.app_context():
+            with patch.object(
+                web_outlook_app,
+                'fetch_account_folder_emails',
+                side_effect=self._fake_folder_fetch(junk_emails=[junk_email]),
+            ), patch.object(web_outlook_app, 'move_emails_graph') as move_mock, \
+                    patch.object(web_outlook_app, 'publish_inbox_discovery_event', side_effect=lambda event: events.append(event) or 1):
+                result = web_outlook_app.discover_account_inbox_mail(self.account, top=20)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['new_count'], 1)
+        self.assertEqual([(item['id'], item['folder']) for item in result['emails']],
+                         [('untrusted-junk-id', 'junkemail')])
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['folder'], 'junkemail')
+        move_mock.assert_not_called()
+        with self.app.app_context():
+            row = web_outlook_app.get_db().execute(
+                '''
+                SELECT folder FROM retained_normal_mail_messages
+                WHERE account_id = ? AND provider_message_id = ?
+                ''', (self.account['id'], 'untrusted-junk-id')
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(str(row['folder']).lower(), 'junkemail')
+
+    def test_discover_leaves_trusted_junk_when_move_fails(self):
+        self._trust_sender('trusted@example.com')
+        junk_email = {
+            'id': 'trusted-junk-move-failed',
+            'id_mode': 'graph',
+            'subject': 'Trusted sender mail',
+            'from': 'trusted@example.com',
+            'to': 'poll@example.com',
+            'date': '2026-08-11T12:05:00Z',
+            'is_read': False,
+            'is_flagged': False,
+            'has_attachments': False,
+            'body_preview': 'hello',
+            'folder': 'junkemail',
+        }
+        calls = []
+        events = []
+
+        def fake_fetch(_account, folder, _skip, _top, **_kwargs):
+            calls.append(('fetch', folder))
+            if folder == 'junkemail':
+                return {
+                    **self._folder_fetch_result([junk_email]),
+                    'request_method': 'graph',
+                }
+            return {
+                **self._folder_fetch_result([]),
+                'request_method': 'graph',
+            }
+
+        def failed_graph_move(_client_id, _refresh_token, message_ids, **_kwargs):
+            calls.append(('move', list(message_ids)))
+            return {
+                'success': False,
+                'success_count': 0,
+                'failed_count': len(message_ids),
+                'moved_ids': [],
+                'moved_id_map': {},
+                'errors': [{'id': message_id, 'error': 'move failed'} for message_id in message_ids],
+            }
+
+        with self.app.app_context():
+            with patch.object(web_outlook_app, 'fetch_account_folder_emails', side_effect=fake_fetch), \
+                    patch.object(web_outlook_app, 'move_emails_graph', side_effect=failed_graph_move), \
+                    patch.object(web_outlook_app, 'publish_inbox_discovery_event', side_effect=lambda event: events.append(event) or 1):
+                result = web_outlook_app.discover_account_inbox_mail(self.account, top=20)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(calls, [
+            ('fetch', 'junkemail'),
+            ('move', ['trusted-junk-move-failed']),
+            ('fetch', 'inbox'),
+        ])
+        self.assertEqual(result['new_count'], 1)
+        self.assertEqual([(item['id'], item['folder']) for item in result['emails']],
+                         [('trusted-junk-move-failed', 'junkemail')])
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['folder'], 'junkemail')
+        with self.app.app_context():
+            row = web_outlook_app.get_db().execute(
+                '''
+                SELECT folder FROM retained_normal_mail_messages
+                WHERE account_id = ? AND provider_message_id = ?
+                ''', (self.account['id'], 'trusted-junk-move-failed')
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(str(row['folder']).lower(), 'junkemail')
 
     def test_trigger_api_requires_retention(self):
         with self.app.app_context():
